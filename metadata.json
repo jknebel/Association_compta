@@ -1,0 +1,5 @@
+{
+  "name": "AssoCompta AI",
+  "description": "Un assistant comptable intelligent pour les associations. Fonctionnalités de traitement automatique des relevés bancaires PDF, classification intelligente, suivi des membres et un Expert Comptable IA propulsé par Gemini 3 Pro.",
+  "requestFramePermissions": []
+}
