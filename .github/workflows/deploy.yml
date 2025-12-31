@@ -34,6 +34,9 @@ jobs:
       contents: 'read'
       id-token: 'write'
 
+    outputs:
+      backend_url: ${{ steps.deploy.outputs.url }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -60,7 +63,8 @@ jobs:
           docker push gcr.io/$PROJECT_ID/$REPO_NAME:${{ github.sha }}
 
       # Deploy to Cloud Run
-      - name: 'Deploy to Cloud Run'
+      - id: 'deploy'
+        name: 'Deploy to Cloud Run'
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
           service: '${{ env.BACKEND_SERVICE_NAME }}'
@@ -85,14 +89,14 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      # Build with environment variables pointing to the Cloud Run service
-      # Note: We need the backend URL. For now, we assume it's fixed or we fetch it.
-      # A better way is to capture the output of deploy-backend, but for simplicity:
+      # Build with environment variables
+      # We prioritize the DYNAMIC URL from the backend deployment.
+      # If missing (should not happen), we fall back to the SECRET.
       - name: Build Frontend
         run: npm run build
         env:
           VITE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          VITE_API_URL: ${{ secrets.OC_BACKEND_URL }}
+          VITE_API_URL: ${{ needs.deploy-backend.outputs.backend_url }}
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
