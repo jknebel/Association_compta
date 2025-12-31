@@ -50,17 +50,17 @@ jobs:
       # Configure Docker to use gcloud as a credential helper
       - name: 'Docker Auth'
         run: |-
-          gcloud auth configure-docker gcr.io
+          gcloud auth configure-docker europe-west1-docker.pkg.dev
 
       # Build the Container
       - name: 'Build Container'
         run: |-
-          docker build -t gcr.io/$PROJECT_ID/$REPO_NAME:${{ github.sha }} ./backend
+          docker build -t europe-west1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$BACKEND_SERVICE_NAME:${{ github.sha }} ./backend
 
       # Push the Container
       - name: 'Push Container'
         run: |-
-          docker push gcr.io/$PROJECT_ID/$REPO_NAME:${{ github.sha }}
+          docker push europe-west1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$BACKEND_SERVICE_NAME:${{ github.sha }}
 
       # Deploy to Cloud Run
       - id: 'deploy'
@@ -68,7 +68,7 @@ jobs:
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
           service: '${{ env.BACKEND_SERVICE_NAME }}'
-          image: 'gcr.io/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}:${{ github.sha }}'
+          image: 'europe-west1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.BACKEND_SERVICE_NAME }}:${{ github.sha }}'
           region: '${{ env.REGION }}'
           flags: '--allow-unauthenticated'
           env_vars: |
