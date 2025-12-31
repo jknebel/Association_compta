@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { Account, Transaction, AccountType, TransactionStatus } from '../types';
+import { Account, Transaction, AccountType, TransactionStatus } from '../../types';
 
 /**
  * Generates a full accounting report (Bilan + Journal)
@@ -9,10 +9,10 @@ export const generateAccountingReport = (transactions: Transaction[], accounts: 
   const wb = XLSX.utils.book_new();
 
   // --- SHEET 1: BILAN (Summary) ---
-  
+
   // 1. Initialize a map for all accounts to hold totals
   const totalsMap = new Map<string, { income: number, expense: number, balance: number }>();
-  
+
   accounts.forEach(acc => {
     totalsMap.set(acc.id, { income: 0, expense: 0, balance: 0 });
   });
@@ -30,11 +30,11 @@ export const generateAccountingReport = (transactions: Transaction[], accounts: 
   // 3. Roll up Child totals into Parents
   // We first identify children and add their values to their parent
   const processedMap = new Map<string, { income: number, expense: number, balance: number }>();
-  
+
   // Initialize processed map with direct totals first
   accounts.forEach(acc => {
-      const direct = totalsMap.get(acc.id)!;
-      processedMap.set(acc.id, { ...direct });
+    const direct = totalsMap.get(acc.id)!;
+    processedMap.set(acc.id, { ...direct });
   });
 
   // Now aggregate children into parents
@@ -54,11 +54,11 @@ export const generateAccountingReport = (transactions: Transaction[], accounts: 
 
   // 4. Filter for Bilan: Only show Parents and Independent accounts (skip children)
   const bilanAccounts = accounts.filter(acc => !acc.parentId);
-  
+
   // Prepare rows
   const accountSummaries = bilanAccounts.map(acc => {
     const totals = processedMap.get(acc.id)!;
-    
+
     return {
       Code: acc.code,
       Account: acc.label,
@@ -82,11 +82,11 @@ export const generateAccountingReport = (transactions: Transaction[], accounts: 
     [""],
     ["CODE", "COMPTE", "TYPE", "RECETTES (INCOME)", "DÉPENSES (EXPENSE)", "BALANCE"],
     ...accountSummaries.map(a => [
-      a.Code, 
-      a.Account, 
-      a.Type, 
-      a.Income, 
-      a.Expense, 
+      a.Code,
+      a.Account,
+      a.Type,
+      a.Income,
+      a.Expense,
       a.Balance
     ]),
     [""],
@@ -101,18 +101,18 @@ export const generateAccountingReport = (transactions: Transaction[], accounts: 
   // --- SHEET 2: JOURNAL (Transactions) ---
 
   const journalData = transactions.map(t => {
-     const acc = accounts.find(a => a.id === t.accountId);
-     const parent = acc?.parentId ? accounts.find(p => p.id === acc.parentId) : null;
-     
-     return {
-        Date: t.date,
-        Libellé: t.description,
-        Montant: t.amount,
-        CodeCompte: acc?.code || 'Non Catégorisé',
-        NomCompte: acc?.label || '',
-        Parent: parent ? `${parent.code} - ${parent.label}` : '-', // Show parent context in journal too
-        Membre: t.detectedMemberName || '',
-        Statut: t.status
+    const acc = accounts.find(a => a.id === t.accountId);
+    const parent = acc?.parentId ? accounts.find(p => p.id === acc.parentId) : null;
+
+    return {
+      Date: t.date,
+      Libellé: t.description,
+      Montant: t.amount,
+      CodeCompte: acc?.code || 'Non Catégorisé',
+      NomCompte: acc?.label || '',
+      Parent: parent ? `${parent.code} - ${parent.label}` : '-', // Show parent context in journal too
+      Membre: t.detectedMemberName || '',
+      Statut: t.status
     };
   });
 
@@ -135,14 +135,14 @@ export const parseExcelLedger = async (file: File): Promise<Transaction[]> => {
         const workbook = XLSX.read(data, { type: 'binary' });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
-        
+
         // Get raw JSON
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        
+
         // Simple heuristic: Assume headers are in row 0
         // Look for common column names
         const headers = (jsonData[0] as string[]).map(h => h.toLowerCase());
-        
+
         const dateIdx = headers.findIndex(h => h.includes('date'));
         const descIdx = headers.findIndex(h => h.includes('libell') || h.includes('desc') || h.includes('label'));
         const debitIdx = headers.findIndex(h => h.includes('debit') || h.includes('dépense'));
@@ -155,20 +155,20 @@ export const parseExcelLedger = async (file: File): Promise<Transaction[]> => {
         }
 
         const transactions: Transaction[] = [];
-        
+
         // Iterate rows (skip header)
         for (let i = 1; i < jsonData.length; i++) {
           const row = jsonData[i] as any[];
           if (!row || row.length === 0) continue;
 
           let amount = 0;
-          
+
           // Logic 1: Debit/Credit columns
           if (debitIdx !== -1 && creditIdx !== -1) {
             const debit = parseFloat(row[debitIdx]) || 0;
             const credit = parseFloat(row[creditIdx]) || 0;
             amount = credit - debit; // Credit is positive, Debit is negative
-          } 
+          }
           // Logic 2: Single Amount column
           else if (amountIdx !== -1) {
             amount = parseFloat(row[amountIdx]) || 0;

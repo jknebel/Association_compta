@@ -1,5 +1,5 @@
 import React from 'react';
-import { Account, Transaction, AccountType } from '../types';
+import { Account, Transaction, AccountType } from '../../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 interface DashboardProps {
@@ -86,7 +86,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts }) 
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip 
+              <Tooltip
                 formatter={(value: number) => `CHF ${value.toFixed(2)}`}
                 contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f1f5f9' }}
               />
@@ -102,18 +102,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts }) 
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                 <XAxis dataKey="name" stroke="#94a3b8" />
                 <YAxis stroke="#94a3b8" />
-                <Tooltip 
-                  formatter={(value: number) => `CHF ${value.toFixed(2)}`} 
+                <Tooltip
+                  formatter={(value: number) => `CHF ${value.toFixed(2)}`}
                   contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f1f5f9' }}
-                  cursor={{fill: '#334155', opacity: 0.4}}
+                  cursor={{ fill: '#334155', opacity: 0.4 }}
                 />
                 <Bar dataKey="value" fill="#10B981" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
-             <div className="h-full flex items-center justify-center text-slate-500">
-               Aucune recette enregistrée pour le moment.
-             </div>
+            <div className="h-full flex items-center justify-center text-slate-500">
+              Aucune recette enregistrée pour le moment.
+            </div>
           )}
         </div>
       </div>

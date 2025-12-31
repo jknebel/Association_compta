@@ -1,6 +1,6 @@
 
 import React, { useState, useRef } from 'react';
-import { Transaction, Account, TransactionStatus, AccountType } from '../types';
+import { Transaction, Account, TransactionStatus, AccountType } from '../../types';
 import { generateAccountingReport } from '../services/excelService';
 import { uploadReceipt } from '../services/storageService';
 import { Check, X, AlertTriangle, Search, Filter, Calendar, DollarSign, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2 } from 'lucide-react';
@@ -12,9 +12,9 @@ interface LedgerViewProps {
   onDeleteTransaction: (id: string) => void;
 }
 
-export const LedgerView: React.FC<LedgerViewProps> = ({ 
-  transactions, 
-  accounts, 
+export const LedgerView: React.FC<LedgerViewProps> = ({
+  transactions,
+  accounts,
   onUpdateTransaction,
   onDeleteTransaction
 }) => {
@@ -36,13 +36,13 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
   const filteredTransactions = transactions.filter(t => {
     // Basic Status & Search
-    const matchesFilter = filter === 'ALL' || 
-                          (filter === 'UNCATEGORIZED' ? !t.accountId : t.status === filter);
-    
-    const matchesSearch = t.description.toLowerCase().includes(search.toLowerCase()) || 
-                          t.amount.toString().includes(search) ||
-                          (t.detectedMemberName && t.detectedMemberName.toLowerCase().includes(search.toLowerCase()));
-    
+    const matchesFilter = filter === 'ALL' ||
+      (filter === 'UNCATEGORIZED' ? !t.accountId : t.status === filter);
+
+    const matchesSearch = t.description.toLowerCase().includes(search.toLowerCase()) ||
+      t.amount.toString().includes(search) ||
+      (t.detectedMemberName && t.detectedMemberName.toLowerCase().includes(search.toLowerCase()));
+
     // Date Range
     let matchesDate = true;
     if (startDate && t.date < startDate) matchesDate = false;
@@ -104,34 +104,34 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     const txnId = selectedTxnRef.current;
 
     if (!file || !txnId) return;
-    
+
     // For demo purposes, we limit size because LocalStorage is small
     if (file.size > 1024 * 1024) {
-        alert("Pour cette démo sans Firebase, l'image doit faire moins de 1 Mo.");
-        return;
+      alert("Pour cette démo sans Firebase, l'image doit faire moins de 1 Mo.");
+      return;
     }
 
     setUploadingId(txnId);
     try {
-        const url = await uploadReceipt(file);
-        const txn = transactions.find(t => t.id === txnId);
-        if (txn) {
-            onUpdateTransaction({ ...txn, receiptUrl: url });
-        }
+      const url = await uploadReceipt(file);
+      const txn = transactions.find(t => t.id === txnId);
+      if (txn) {
+        onUpdateTransaction({ ...txn, receiptUrl: url });
+      }
     } catch (err) {
-        alert("Erreur lors de l'upload du justificatif.");
-        console.error(err);
+      alert("Erreur lors de l'upload du justificatif.");
+      console.error(err);
     } finally {
-        setUploadingId(null);
-        selectedTxnRef.current = null;
-        if (fileInputRef.current) fileInputRef.current.value = "";
+      setUploadingId(null);
+      selectedTxnRef.current = null;
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
   const handleRemoveReceipt = (txn: Transaction) => {
-      if (window.confirm("Supprimer ce justificatif ?")) {
-          onUpdateTransaction({ ...txn, receiptUrl: undefined });
-      }
+    if (window.confirm("Supprimer ce justificatif ?")) {
+      onUpdateTransaction({ ...txn, receiptUrl: undefined });
+    }
   };
 
   const getStatusBadge = (status: TransactionStatus) => {
@@ -181,13 +181,13 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           <p className="text-slate-400">Vérifiez, modifiez et classez vos transactions importées.</p>
         </div>
         <div className="flex gap-2">
-           <button 
-             className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
-             onClick={() => generateAccountingReport(filteredTransactions, accounts)}
-           >
-             <FileSpreadsheet size={16} />
-             Exporter Bilan & Journal (.xlsx)
-           </button>
+          <button
+            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+            onClick={() => generateAccountingReport(filteredTransactions, accounts)}
+          >
+            <FileSpreadsheet size={16} />
+            Exporter Bilan & Journal (.xlsx)
+          </button>
         </div>
       </header>
 
@@ -197,8 +197,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         <div className="flex flex-col md:flex-row gap-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-2.5 text-slate-500" size={18} />
-            <input 
-              type="text" 
+            <input
+              type="text"
               placeholder="Rechercher libellé, montant ou membre..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -207,7 +207,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           </div>
           <div className="flex items-center gap-2">
             <Filter size={18} className="text-slate-500" />
-            <select 
+            <select
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               className="border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-slate-950 text-slate-200 min-w-[150px]"
@@ -224,70 +224,70 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
         {/* Bottom Row: Date & Amount Range */}
         <div className="flex flex-wrap items-center gap-6 pt-4 border-t border-slate-800">
-           {/* Date Range */}
-           <div className="flex items-center gap-2">
-             <div className="flex items-center gap-2 text-slate-500 min-w-fit">
-               <Calendar size={16} />
-               <span className="text-sm font-medium">Date:</span>
-             </div>
-             <input 
-               type="date" 
-               value={startDate}
-               onChange={(e) => setStartDate(e.target.value)}
-               className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
-             />
-             <span className="text-slate-600">-</span>
-             <input 
-               type="date" 
-               value={endDate}
-               onChange={(e) => setEndDate(e.target.value)}
-               className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
-             />
-           </div>
+          {/* Date Range */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 text-slate-500 min-w-fit">
+              <Calendar size={16} />
+              <span className="text-sm font-medium">Date:</span>
+            </div>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
+            />
+            <span className="text-slate-600">-</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
+            />
+          </div>
 
-           <div className="hidden md:block w-px h-6 bg-slate-800"></div>
+          <div className="hidden md:block w-px h-6 bg-slate-800"></div>
 
-           {/* Amount Range */}
-           <div className="flex items-center gap-2">
-             <div className="flex items-center gap-2 text-slate-500 min-w-fit">
-               <DollarSign size={16} />
-               <span className="text-sm font-medium">Montant:</span>
-             </div>
-             <input 
-               type="number" 
-               placeholder="Min"
-               value={minAmount}
-               onChange={(e) => setMinAmount(e.target.value)}
-               className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
-             />
-             <span className="text-slate-600">-</span>
-             <input 
-               type="number" 
-               placeholder="Max"
-               value={maxAmount}
-               onChange={(e) => setMaxAmount(e.target.value)}
-               className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
-             />
-           </div>
+          {/* Amount Range */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 text-slate-500 min-w-fit">
+              <DollarSign size={16} />
+              <span className="text-sm font-medium">Montant:</span>
+            </div>
+            <input
+              type="number"
+              placeholder="Min"
+              value={minAmount}
+              onChange={(e) => setMinAmount(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
+            />
+            <span className="text-slate-600">-</span>
+            <input
+              type="number"
+              placeholder="Max"
+              value={maxAmount}
+              onChange={(e) => setMaxAmount(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
+            />
+          </div>
 
-           {/* Active Filters Clear Button */}
-           {(startDate || endDate || minAmount || maxAmount || search || filter !== 'ALL') && (
-             <button 
-               onClick={clearFilters}
-               className="ml-auto flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg transition-colors"
-             >
-               <XCircle size={14} />
-               Tout Effacer
-             </button>
-           )}
+          {/* Active Filters Clear Button */}
+          {(startDate || endDate || minAmount || maxAmount || search || filter !== 'ALL') && (
+            <button
+              onClick={clearFilters}
+              className="ml-auto flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg transition-colors"
+            >
+              <XCircle size={14} />
+              Tout Effacer
+            </button>
+          )}
         </div>
       </div>
 
       {/* Hidden File Input for Receipt Upload */}
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        className="hidden" 
+      <input
+        type="file"
+        ref={fileInputRef}
+        className="hidden"
         accept="image/*,application/pdf"
         onChange={handleFileChange}
       />
@@ -309,29 +309,29 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           </thead>
           <tbody className="divide-y divide-slate-800">
             {filteredTransactions.map((t) => {
-               const badge = getStatusBadge(t.status);
-               const isEditing = editingId === t.id;
-               const isUploading = uploadingId === t.id;
-               
-               // Filter valid accounts
-               const validAccounts = accounts.filter(a => {
-                   if (a.type === AccountType.MIXED) return false;
-                   if (t.amount > 0) return a.type === AccountType.INCOME;
-                   if (t.amount < 0) return a.type === AccountType.EXPENSE;
-                   return true;
-               });
-               validAccounts.sort((a,b) => a.code.localeCompare(b.code));
+              const badge = getStatusBadge(t.status);
+              const isEditing = editingId === t.id;
+              const isUploading = uploadingId === t.id;
 
-               return (
+              // Filter valid accounts
+              const validAccounts = accounts.filter(a => {
+                if (a.type === AccountType.MIXED) return false;
+                if (t.amount > 0) return a.type === AccountType.INCOME;
+                if (t.amount < 0) return a.type === AccountType.EXPENSE;
+                return true;
+              });
+              validAccounts.sort((a, b) => a.code.localeCompare(b.code));
+
+              return (
                 <tr key={t.id} className={`transition-colors ${isEditing ? 'bg-blue-900/20' : 'hover:bg-slate-800/50'}`}>
-                  
+
                   {/* DATE */}
                   <td className="px-6 py-4 text-slate-300 whitespace-nowrap">
                     {isEditing ? (
-                      <input 
-                        type="date" 
-                        value={editForm.date || ''} 
-                        onChange={e => setEditForm({...editForm, date: e.target.value})}
+                      <input
+                        type="date"
+                        value={editForm.date || ''}
+                        onChange={e => setEditForm({ ...editForm, date: e.target.value })}
                         className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white"
                       />
                     ) : t.date}
@@ -340,10 +340,10 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                   {/* DESCRIPTION */}
                   <td className="px-6 py-4 font-medium text-slate-200">
                     {isEditing ? (
-                      <input 
-                        type="text" 
-                        value={editForm.description || ''} 
-                        onChange={e => setEditForm({...editForm, description: e.target.value})}
+                      <input
+                        type="text"
+                        value={editForm.description || ''}
+                        onChange={e => setEditForm({ ...editForm, description: e.target.value })}
                         className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white"
                       />
                     ) : t.description}
@@ -351,48 +351,48 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
                   {/* RECEIPT / JUSTIFICATIF */}
                   <td className="px-6 py-4">
-                     {isUploading ? (
-                        <Loader2 className="animate-spin text-blue-500" size={16} />
-                     ) : t.receiptUrl ? (
-                        <div className="flex items-center gap-2">
-                           <a 
-                             href={t.receiptUrl} 
-                             target="_blank" 
-                             rel="noopener noreferrer"
-                             className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 bg-blue-900/20 px-2 py-1 rounded text-xs transition-colors"
-                             title="Voir le justificatif"
-                           >
-                              <ImageIcon size={14} />
-                              Voir
-                           </a>
-                           {isEditing && (
-                               <button 
-                                 onClick={() => handleRemoveReceipt(t)}
-                                 className="text-rose-400 hover:text-rose-300 p-1"
-                                 title="Supprimer le justificatif"
-                               >
-                                   <Trash2 size={14} />
-                               </button>
-                           )}
-                        </div>
-                     ) : (
-                        <button 
-                           onClick={() => handleAttachClick(t.id)}
-                           className="text-slate-500 hover:text-blue-400 transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-800 text-xs"
+                    {isUploading ? (
+                      <Loader2 className="animate-spin text-blue-500" size={16} />
+                    ) : t.receiptUrl ? (
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={t.receiptUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 bg-blue-900/20 px-2 py-1 rounded text-xs transition-colors"
+                          title="Voir le justificatif"
                         >
-                            <Paperclip size={14} />
-                            Joindre
-                        </button>
-                     )}
+                          <ImageIcon size={14} />
+                          Voir
+                        </a>
+                        {isEditing && (
+                          <button
+                            onClick={() => handleRemoveReceipt(t)}
+                            className="text-rose-400 hover:text-rose-300 p-1"
+                            title="Supprimer le justificatif"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleAttachClick(t.id)}
+                        className="text-slate-500 hover:text-blue-400 transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-800 text-xs"
+                      >
+                        <Paperclip size={14} />
+                        Joindre
+                      </button>
+                    )}
                   </td>
 
                   {/* AMOUNT */}
                   <td className={`px-6 py-4 font-bold ${t.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                     {isEditing ? (
-                      <input 
-                        type="number" 
-                        value={editForm.amount} 
-                        onChange={e => setEditForm({...editForm, amount: parseFloat(e.target.value)})}
+                      <input
+                        type="number"
+                        value={editForm.amount}
+                        onChange={e => setEditForm({ ...editForm, amount: parseFloat(e.target.value) })}
                         className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-24 focus:outline-none text-white"
                         step="0.01"
                       />
@@ -404,11 +404,11 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                     <select
                       value={isEditing ? (editForm.accountId || '') : (t.accountId || '')}
                       onChange={(e) => {
-                         if(isEditing) {
-                            setEditForm({...editForm, accountId: e.target.value})
-                         } else {
-                            onUpdateTransaction({ ...t, accountId: e.target.value, status: TransactionStatus.REVIEW_NEEDED })
-                         }
+                        if (isEditing) {
+                          setEditForm({ ...editForm, accountId: e.target.value })
+                        } else {
+                          onUpdateTransaction({ ...t, accountId: e.target.value, status: TransactionStatus.REVIEW_NEEDED })
+                        }
                       }}
                       className={`bg-transparent border-b border-dashed border-slate-600 focus:border-blue-500 focus:outline-none py-1 max-w-[200px] truncate ${!(isEditing ? editForm.accountId : t.accountId) ? 'text-rose-400 font-semibold' : 'text-slate-300'} [&>option]:bg-slate-900 [&>option]:text-white`}
                     >
@@ -419,9 +419,9 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                         <option key={a.id} value={a.id}>{a.code} - {renderAccountOption(a)}</option>
                       ))}
                       {t.accountId && !validAccounts.find(a => a.id === t.accountId) && accounts.find(a => a.id === t.accountId) && (
-                         <option value={t.accountId} disabled>
-                           ⚠️ {accounts.find(a => a.id === t.accountId)?.code} - {renderAccountOption(accounts.find(a => a.id === t.accountId)!)} (Invalide)
-                         </option>
+                        <option value={t.accountId} disabled>
+                          ⚠️ {accounts.find(a => a.id === t.accountId)?.code} - {renderAccountOption(accounts.find(a => a.id === t.accountId)!)} (Invalide)
+                        </option>
                       )}
                     </select>
                   </td>
@@ -429,11 +429,11 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                   {/* MEMBER */}
                   <td className="px-6 py-4">
                     {isEditing ? (
-                       <input 
-                        type="text" 
-                        value={editForm.detectedMemberName || ''} 
+                      <input
+                        type="text"
+                        value={editForm.detectedMemberName || ''}
                         placeholder="Nom du membre"
-                        onChange={e => setEditForm({...editForm, detectedMemberName: e.target.value})}
+                        onChange={e => setEditForm({ ...editForm, detectedMemberName: e.target.value })}
                         className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-sm text-white"
                       />
                     ) : (
@@ -460,58 +460,58 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                   {/* ACTIONS */}
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
-                       {isEditing ? (
-                          <>
-                            <button onClick={saveEditing} className="p-1.5 bg-blue-900/30 text-blue-400 rounded-md hover:bg-blue-900/50 transition-colors" title="Enregistrer">
-                              <Save size={16} />
-                            </button>
-                            <button onClick={cancelEditing} className="p-1.5 bg-slate-800 text-slate-400 rounded-md hover:bg-slate-700 transition-colors" title="Annuler">
-                              <X size={16} />
-                            </button>
-                          </>
-                       ) : (
-                          <>
-                             {/* Edit Button */}
-                             <button 
-                                onClick={() => startEditing(t)}
-                                className="p-1.5 hover:bg-blue-900/30 text-blue-400 rounded-md transition-colors"
-                                title="Modifier"
-                             >
-                               <Edit2 size={16} />
-                             </button>
+                      {isEditing ? (
+                        <>
+                          <button onClick={saveEditing} className="p-1.5 bg-blue-900/30 text-blue-400 rounded-md hover:bg-blue-900/50 transition-colors" title="Enregistrer">
+                            <Save size={16} />
+                          </button>
+                          <button onClick={cancelEditing} className="p-1.5 bg-slate-800 text-slate-400 rounded-md hover:bg-slate-700 transition-colors" title="Annuler">
+                            <X size={16} />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          {/* Edit Button */}
+                          <button
+                            onClick={() => startEditing(t)}
+                            className="p-1.5 hover:bg-blue-900/30 text-blue-400 rounded-md transition-colors"
+                            title="Modifier"
+                          >
+                            <Edit2 size={16} />
+                          </button>
 
-                             {/* Move to Pending Review Button */}
-                             {t.status !== TransactionStatus.APPROVED && t.status !== TransactionStatus.PENDING_REVIEW && (
-                              <button 
-                                onClick={() => onUpdateTransaction({ ...t, status: TransactionStatus.PENDING_REVIEW })}
-                                className="p-1.5 hover:bg-indigo-900/30 text-indigo-400 rounded-md transition-colors"
-                                title="Marquer pour Revue"
-                              >
-                                <Eye size={16} />
-                              </button>
-                            )}
-
-                            {/* Approve Button */}
-                            {t.status !== TransactionStatus.APPROVED && (
-                              <button 
-                                onClick={() => onUpdateTransaction({ ...t, status: TransactionStatus.APPROVED })}
-                                className="p-1.5 hover:bg-green-900/30 text-green-400 rounded-md transition-colors"
-                                title="Approuver"
-                              >
-                                <Check size={16} />
-                              </button>
-                            )}
-                            
-                            {/* Delete Button */}
-                            <button 
-                              onClick={() => onDeleteTransaction(t.id)}
-                              className="p-1.5 hover:bg-rose-900/30 text-rose-400 rounded-md transition-colors"
-                              title="Supprimer"
+                          {/* Move to Pending Review Button */}
+                          {t.status !== TransactionStatus.APPROVED && t.status !== TransactionStatus.PENDING_REVIEW && (
+                            <button
+                              onClick={() => onUpdateTransaction({ ...t, status: TransactionStatus.PENDING_REVIEW })}
+                              className="p-1.5 hover:bg-indigo-900/30 text-indigo-400 rounded-md transition-colors"
+                              title="Marquer pour Revue"
                             >
-                              <X size={16} />
+                              <Eye size={16} />
                             </button>
-                          </>
-                       )}
+                          )}
+
+                          {/* Approve Button */}
+                          {t.status !== TransactionStatus.APPROVED && (
+                            <button
+                              onClick={() => onUpdateTransaction({ ...t, status: TransactionStatus.APPROVED })}
+                              className="p-1.5 hover:bg-green-900/30 text-green-400 rounded-md transition-colors"
+                              title="Approuver"
+                            >
+                              <Check size={16} />
+                            </button>
+                          )}
+
+                          {/* Delete Button */}
+                          <button
+                            onClick={() => onDeleteTransaction(t.id)}
+                            className="p-1.5 hover:bg-rose-900/30 text-rose-400 rounded-md transition-colors"
+                            title="Supprimer"
+                          >
+                            <X size={16} />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

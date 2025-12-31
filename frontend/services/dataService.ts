@@ -4,14 +4,14 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 // @ts-ignore
 import type { FirebaseApp } from 'firebase/app';
-import { 
-  getFirestore, collection, doc, onSnapshot, 
-  setDoc, deleteDoc, updateDoc, query, orderBy, writeBatch, getDocs
+import {
+    getFirestore, collection, doc, onSnapshot,
+    setDoc, deleteDoc, updateDoc, query, orderBy, writeBatch, getDocs
 } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import type { FirebaseStorage } from 'firebase/storage';
-import { Account, Transaction, Receipt } from '../types';
+import { Account, Transaction, Receipt } from '../../types';
 import { useState, useEffect } from 'react';
 import type { User } from 'firebase/auth';
 
@@ -19,12 +19,12 @@ import type { User } from 'firebase/auth';
 // Les valeurs sont injectées par Vite (import.meta.env) au moment du build
 // Elles ne sont plus hardcodées dans le fichier source.
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 // --- INITIALIZATION ---
@@ -68,11 +68,11 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             const savedAcc = localStorage.getItem('asso_compta_accounts_v5');
             const savedTxn = localStorage.getItem('asso_compta_transactions_v5');
             const savedRcpt = localStorage.getItem('asso_compta_receipts_v5');
-            
+
             if (savedAcc) setAccounts(JSON.parse(savedAcc));
             if (savedTxn) setTransactions(JSON.parse(savedTxn));
             if (savedRcpt) setReceipts(JSON.parse(savedRcpt));
-            
+
             setLoading(false);
             return;
         }
@@ -88,7 +88,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
 
         // CASE 3: Firebase Firestore
         const unsubAccounts = onSnapshot(
-            query(collection(db, "users", user.uid, "accounts"), orderBy("code")), 
+            query(collection(db, "users", user.uid, "accounts"), orderBy("code")),
             (snapshot) => {
                 const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Account));
                 setAccounts(data);
@@ -127,7 +127,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
     const saveAccount = async (account: Account) => {
         if (shouldUseLocalStorage) {
             setAccounts(prev => {
-                const newAccs = prev.some(a => a.id === account.id) 
+                const newAccs = prev.some(a => a.id === account.id)
                     ? prev.map(a => a.id === account.id ? account : a)
                     : [...prev, account];
                 localStorage.setItem('asso_compta_accounts_v5', JSON.stringify(newAccs));
@@ -142,7 +142,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
 
     const replaceAllAccounts = async (newAccounts: Account[]) => {
         if (shouldUseLocalStorage) {
-            const safeAccounts = newAccounts.map(a => ({...a}));
+            const safeAccounts = newAccounts.map(a => ({ ...a }));
             localStorage.setItem('asso_compta_accounts_v5', JSON.stringify(safeAccounts));
             setAccounts(safeAccounts);
             return;
@@ -193,7 +193,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            const cleanTxn = JSON.parse(JSON.stringify(txn)); 
+            const cleanTxn = JSON.parse(JSON.stringify(txn));
             await setDoc(doc(db, "users", user.uid, "transactions", txn.id), cleanTxn);
         }
     };
@@ -218,8 +218,8 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         if (user) {
             const batch = writeBatch(db);
             newTxnsList.forEach(txn => {
-                 const cleanTxn = JSON.parse(JSON.stringify(txn));
-                 batch.set(doc(db, "users", user.uid, "transactions", txn.id), cleanTxn);
+                const cleanTxn = JSON.parse(JSON.stringify(txn));
+                batch.set(doc(db, "users", user.uid, "transactions", txn.id), cleanTxn);
             });
             await batch.commit();
         }
@@ -285,10 +285,10 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         if (shouldUseLocalStorage) {
             return toBase64(file);
         }
-        
+
         // Try Firebase Storage first
         try {
-            const path = user 
+            const path = user
                 ? `receipts/${user.uid}/${Date.now()}_${file.name}`
                 : `receipts/public/${Date.now()}_${file.name}`;
 
@@ -297,11 +297,11 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return await getDownloadURL(snapshot.ref);
         } catch (error) {
             console.warn("Firebase Storage indisponible (non activé ?). Fallback sur Base64.", error);
-            
+
             if (file.size > 800 * 1024) {
                 throw new Error("Le stockage cloud n'est pas activé et l'image est trop lourde pour la base de données (Max 800Ko).");
             }
-            
+
             return toBase64(file);
         }
     };
