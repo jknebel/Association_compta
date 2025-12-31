@@ -87,7 +87,7 @@ jobs:
           node-version: '20'
 
       - name: Install Dependencies
-        run: npm ci
+        run: npm install
 
       # Build with environment variables
       # We prioritize the DYNAMIC URL from the backend deployment.
