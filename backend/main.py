@@ -71,10 +71,12 @@ class Transaction(BaseModel):
 class TransactionList(BaseModel):
     transactions: List[Transaction]
 
-# --- LLM ---
-# Gemini Flash is sufficient and fast for history analysis
-# Ensure GOOGLE_API_KEY is allowed in your environment
-flash_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
+# --- LLM HELPERS ---
+def get_llm():
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        print("⚠️ GOOGLE_API_KEY missing. LLM calls will fail.")
+    return ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
 
 # --- UTILITY FUNCTIONS ---
 
@@ -143,14 +145,22 @@ def ingest_node(state: AgentState):
         ]
     )
     
-    # Use with_structured_output for robust JSON parsing
-    structured_llm = flash_llm.with_structured_output(TransactionList)
-    result = structured_llm.invoke([message])
-    
-    return {
-        "extracted_transactions": result.transactions,
-        "logs": [f"Extraction terminée: {len(result.transactions)} lignes trouvées."]
-    }
+    try:
+        flash_llm = get_llm()
+        # Use with_structured_output for robust JSON parsing
+        structured_llm = flash_llm.with_structured_output(TransactionList)
+        result = structured_llm.invoke([message])
+        
+        return {
+            "extracted_transactions": result.transactions,
+            "logs": [f"Extraction terminée: {len(result.transactions)} lignes trouvées."]
+        }
+    except Exception as e:
+        print(f"Ingestion Error: {e}")
+        return {
+            "extracted_transactions": [],
+            "logs": [f"Erreur d'extraction: {str(e)}"]
+        }
 
 def classification_node(state: AgentState):
     """
@@ -199,13 +209,20 @@ def classification_node(state: AgentState):
     Retourne la liste des transactions avec le champ 'accountId' rempli (ou null si incertain).
     """
     
-    structured_llm = flash_llm.with_structured_output(TransactionList)
-    result = structured_llm.invoke(prompt)
-    
-    return {
-        "extracted_transactions": result.transactions,
-        "logs": ["Classification intelligente terminée avec historique."]
-    }
+    try:
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(TransactionList)
+        result = structured_llm.invoke(prompt)
+        
+        return {
+            "extracted_transactions": result.transactions,
+            "logs": ["Classification intelligente terminée avec historique."]
+        }
+    except Exception as e:
+        print(f"Classification Error: {e}")
+        return {
+            "logs": [f"Erreur de classification: {str(e)}"]
+        }
 
 # Build Graph
 workflow = StateGraph(AgentState)
