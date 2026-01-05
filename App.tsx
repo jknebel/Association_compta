@@ -82,8 +82,8 @@ function App() {
         deleteTransaction(id);
     };
 
-    const handleUpdateAccounts = (updatedAccounts: Account[]) => {
-        replaceAllAccounts(updatedAccounts);
+    const handleUpdateAccounts = async (updatedAccounts: Account[]) => {
+        await replaceAllAccounts(updatedAccounts);
     };
 
     // Receipts Logic

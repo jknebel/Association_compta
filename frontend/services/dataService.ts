@@ -124,6 +124,11 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
 
     // --- ACTIONS ---
 
+    // Helper to sanitize objects for Firestore (removes undefined)
+    const sanitize = <T extends object>(obj: T): T => {
+        return JSON.parse(JSON.stringify(obj));
+    };
+
     const saveAccount = async (account: Account) => {
         if (shouldUseLocalStorage) {
             setAccounts(prev => {
@@ -136,7 +141,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            await setDoc(doc(db, "users", user.uid, "accounts", account.id), account);
+            await setDoc(doc(db, "users", user.uid, "accounts", account.id), sanitize(account));
         }
     };
 
@@ -160,7 +165,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             });
 
             newAccounts.forEach(acc => {
-                batch.set(doc(db, "users", user.uid, "accounts", acc.id), acc);
+                batch.set(doc(db, "users", user.uid, "accounts", acc.id), sanitize(acc));
             });
 
             await batch.commit();
