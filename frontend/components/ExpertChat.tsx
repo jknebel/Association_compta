@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Transaction, Account } from '../types';
+import { Transaction, Account } from '../../types';
 import { auditLedger, chatWithAccountant } from '../services/geminiService';
 import { Send, Bot, User, Sparkles, BrainCircuit } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -48,7 +48,7 @@ export const ExpertChat: React.FC<ExpertChatProps> = ({ transactions, accounts }
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
-    
+
     const userText = input;
     setInput('');
     setIsLoading(true);
@@ -73,35 +73,34 @@ export const ExpertChat: React.FC<ExpertChatProps> = ({ transactions, accounts }
               <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? 'bg-blue-600' : 'bg-indigo-600'}`}>
                 {msg.role === 'user' ? <User size={16} className="text-white" /> : <Bot size={16} className="text-white" />}
               </div>
-              
-              <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed ${
-                msg.role === 'user' 
-                  ? 'bg-blue-600 text-white rounded-tr-none' 
+
+              <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed ${msg.role === 'user'
+                  ? 'bg-blue-600 text-white rounded-tr-none'
                   : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-700'
-              }`}>
-                 {msg.isThinking && (
-                   <div className="flex items-center gap-2 text-xs font-semibold text-indigo-400 mb-2 pb-2 border-b border-indigo-500/30">
-                     <BrainCircuit size={14} />
-                     <span>Analyse Approfondie (Gemini 3 Pro)</span>
-                   </div>
-                 )}
-                 {msg.role === 'model' ? (
-                   <div className="prose prose-sm prose-invert max-w-none">
-                     <ReactMarkdown>{msg.text}</ReactMarkdown>
-                   </div>
-                 ) : (
-                   msg.text
-                 )}
+                }`}>
+                {msg.isThinking && (
+                  <div className="flex items-center gap-2 text-xs font-semibold text-indigo-400 mb-2 pb-2 border-b border-indigo-500/30">
+                    <BrainCircuit size={14} />
+                    <span>Analyse Approfondie (Gemini 3 Pro)</span>
+                  </div>
+                )}
+                {msg.role === 'model' ? (
+                  <div className="prose prose-sm prose-invert max-w-none">
+                    <ReactMarkdown>{msg.text}</ReactMarkdown>
+                  </div>
+                ) : (
+                  msg.text
+                )}
               </div>
             </div>
           </div>
         ))}
         {isLoading && (
           <div className="flex justify-start">
-             <div className="bg-slate-800 p-4 rounded-2xl rounded-tl-none shadow-sm border border-slate-700 flex items-center gap-2">
-                <LoaderDots />
-                <span className="text-xs text-slate-400 font-medium animate-pulse">Réflexion en cours...</span>
-             </div>
+            <div className="bg-slate-800 p-4 rounded-2xl rounded-tl-none shadow-sm border border-slate-700 flex items-center gap-2">
+              <LoaderDots />
+              <span className="text-xs text-slate-400 font-medium animate-pulse">Réflexion en cours...</span>
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -109,20 +108,20 @@ export const ExpertChat: React.FC<ExpertChatProps> = ({ transactions, accounts }
 
       <div className="p-4 bg-slate-900 border-t border-slate-800">
         <div className="max-w-4xl mx-auto flex flex-col gap-3">
-           {/* Quick Actions */}
-           <div className="flex gap-2">
-             <button 
-               onClick={handleAudit}
-               disabled={isLoading}
-               className="flex items-center gap-2 px-3 py-1.5 bg-indigo-900/30 text-indigo-400 rounded-full text-xs font-medium hover:bg-indigo-900/50 transition-colors disabled:opacity-50"
-             >
-               <Sparkles size={14} />
-               Lancer l'Audit Complet
-             </button>
-           </div>
+          {/* Quick Actions */}
+          <div className="flex gap-2">
+            <button
+              onClick={handleAudit}
+              disabled={isLoading}
+              className="flex items-center gap-2 px-3 py-1.5 bg-indigo-900/30 text-indigo-400 rounded-full text-xs font-medium hover:bg-indigo-900/50 transition-colors disabled:opacity-50"
+            >
+              <Sparkles size={14} />
+              Lancer l'Audit Complet
+            </button>
+          </div>
 
-           {/* Input Area */}
-           <div className="flex gap-2">
+          {/* Input Area */}
+          <div className="flex gap-2">
             <input
               type="text"
               value={input}

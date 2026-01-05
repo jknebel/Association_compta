@@ -1,0 +1,117 @@
+name: Deploy to Production
+
+on:
+  pull_request:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: europe-west1 # Configure your region (e.g., us-central1, europe-west1)
+  BACKEND_SERVICE_NAME: assocompta-backend
+  REPO_NAME: assocompta-backend
+
+jobs:
+  # 1. TEST & LINT (Optional but recommended)
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          # Add actual tests here: pytest backend/tests
+
+  # 2. BUILD & DEPLOY BACKEND (Cloud Run)
+  deploy-backend:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    outputs:
+      backend_url: ${{ steps.deploy.outputs.url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Authenticate to Google Cloud
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      # Configure Docker to use gcloud as a credential helper
+      - name: 'Docker Auth'
+        run: |-
+          gcloud auth configure-docker europe-west1-docker.pkg.dev
+
+      # Build the Container
+      - name: 'Build Container'
+        run: |-
+          docker build -t europe-west1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$BACKEND_SERVICE_NAME:${{ github.sha }} ./backend
+
+      # Push the Container
+      - name: 'Push Container'
+        run: |-
+          docker push europe-west1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$BACKEND_SERVICE_NAME:${{ github.sha }}
+
+      # Deploy to Cloud Run
+      - id: 'deploy'
+        name: 'Deploy to Cloud Run'
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+          service: '${{ env.BACKEND_SERVICE_NAME }}'
+          image: 'europe-west1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.BACKEND_SERVICE_NAME }}:${{ github.sha }}'
+          region: '${{ env.REGION }}'
+          flags: '--allow-unauthenticated'
+          env_vars: |
+            GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+
+  # 3. BUILD & DEPLOY FRONTEND (Firebase Hosting)
+  deploy-frontend:
+    needs: deploy-backend
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+      # Build with environment variables
+      # We prioritize the DYNAMIC URL from the backend deployment.
+      # If missing (should not happen), we fall back to the SECRET.
+      - name: Build Frontend
+        run: npm run build
+        env:
+          VITE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          VITE_API_URL: ${{ needs.deploy-backend.outputs.backend_url }}
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }} 
+
+      - name: Deploy to Firebase
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.GCP_SA_KEY }}' # Firebase often accepts the full GCP SA Key
+          channelId: live
+          projectId: '${{ secrets.GCP_PROJECT_ID }}'
