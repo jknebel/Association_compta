@@ -430,17 +430,52 @@ async def chat_agent(request: ChatRequest):
 @app.post("/suggest-category")
 async def suggest_category(request: SuggestCategoryRequest):
     try:
-        # 1. Prepare Account Context (Lightweight)
-        accounts_context = [
-            {"id": a.id, "label": a.label, "isMembership": getattr(a, 'isMembership', False)} 
-            for a in request.accounts
-        ]
+    try:
+        # 1. Build Account Map for easy parent lookup
+        account_map = {a.id: a for a in request.accounts}
+
+        # 2. Helper to get full path
+        def get_account_path(account):
+            path = [account.label]
+            current = account
+            # Walk up the tree (max 3 levels to avoid infinite loops if cycle)
+            for _ in range(3):
+                if hasattr(current, 'parentId') and current.parentId and current.parentId in account_map:
+                    parent = account_map[current.parentId]
+                    path.insert(0, parent.label)
+                    current = parent
+                else:
+                    break
+            return " > ".join(path)
+
+        # 3. Prepare Context with Path and Description
+        accounts_context = []
+        for a in request.accounts:
+            # Safe attribute access + optional description
+            desc = getattr(a, 'description', '')
+            full_path = get_account_path(a)
+            
+            context_entry = {
+                "id": a.id, 
+                "label": a.label,
+                "path": full_path,
+                "description": desc,
+                "isMembership": getattr(a, 'isMembership', False)
+            }
+            accounts_context.append(context_entry)
         
         prompt = f"""
         Analyze the transaction description: "{request.description}"
         
         Task 1: Select the best matching Account ID from the list below.
+        CRITICAL INSTRUCTIONS FOR MATCHING:
+        - Use the 'path' field to understand the account hierarchy (Parent > Child).
+        - Use the 'description' field (if present) to understand the intended use of the account.
+        - Pay attention to specific keywords in the 'description' or 'path' that match the transaction.
+        
         Task 2: If the chosen account has 'isMembership': true, OR if the description clearly contains a person's name (Payer), extract that name.
+        
+        SPECIAL RULE: If the description contains "VIRT CPTE" (which means Account Transfer), the text following it is likely the Payer's Name. Extract it as 'memberName', especially if the account is a Product class (Class 7).
         
         Accounts: {json.dumps(accounts_context)}
         

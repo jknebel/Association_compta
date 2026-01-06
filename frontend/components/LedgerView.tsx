@@ -3,7 +3,7 @@ import React, { useState, useRef } from 'react';
 import { Transaction, Account, TransactionStatus, AccountType } from '../../types';
 import { generateAccountingReport } from '../services/excelService';
 import { uploadReceipt } from '../services/storageService';
-import { Check, X, AlertTriangle, Search, Filter, Calendar, DollarSign, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw } from 'lucide-react';
+import { Check, X, AlertTriangle, Search, Filter, Calendar, DollarSign, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw } from 'lucide-react';
 
 interface LedgerViewProps {
   transactions: Transaction[];
@@ -11,6 +11,8 @@ interface LedgerViewProps {
   onUpdateTransaction: (transaction: Transaction) => void;
   onDeleteTransaction: (id: string) => void;
   onAutoMatch: () => void;
+  onReanalyzeAll: () => void;
+  onClearAll: () => void;
   autoMatchProgress: { current: number, total: number, message: string } | null;
 }
 
@@ -20,6 +22,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   onUpdateTransaction,
   onDeleteTransaction,
   onAutoMatch,
+  onReanalyzeAll,
+  onClearAll,
   autoMatchProgress
 }) => {
   const [filter, setFilter] = useState('ALL');
@@ -208,6 +212,25 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                 Auto-Match
               </>
             )}
+          </button>
+          <button
+            className={`px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
+            onClick={onReanalyzeAll}
+            disabled={!!autoMatchProgress}
+            title="Relancer l'analyse IA sur toutes les transactions (écrase les catégories existantes)"
+          >
+            <RotateCcw size={16} />
+            Re-Scan Complet
+          </button>
+
+          <button
+            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ml-2"
+            onClick={onClearAll}
+            disabled={!!autoMatchProgress}
+            title="Supprimer TOUTES les transactions pour recommencer"
+          >
+            <Trash2 size={16} />
+            Tout Effacer
           </button>
         </div>
       </header>
