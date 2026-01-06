@@ -42,15 +42,54 @@ function App() {
     } = useDataService(user, guestMode);
 
     // Handle new transactions from Upload Agent
-    const handleProcessComplete = (newTxns: Transaction[], newAccounts: Account[], matchedReceiptIds: string[] = []) => {
-        saveTransactions(newTxns);
+    const handleProcessComplete = async (newTxns: Transaction[], newAccounts: Account[], matchedReceiptIds: string[] = []) => {
+
+        let txnsToSave = [...newTxns];
+        let receiptIdsToUpdate = [...matchedReceiptIds];
+
+        // 1. Auto-Match with Receipts (if not already done by backend, usually backend doesn't do receipt matching)
+        // We match against existing receipts that are not linked
+        const { processedTxns, matchedReceiptIds: newMatchedIds } = matchTransactionsWithReceipts(txnsToSave, receipts);
+        txnsToSave = processedTxns;
+        receiptIdsToUpdate = [...receiptIdsToUpdate, ...newMatchedIds]; // Merge potential Backend matches (if any) with Client matches
+
+        // 2. Auto-Suggest Categories for those missing accountId
+        const uncategorized = txnsToSave.filter(t => !t.accountId);
+        if (uncategorized.length > 0) {
+            console.log("Auto-categorizing", uncategorized.length, "transactions...");
+            const categorized = await Promise.all(uncategorized.map(async (t) => {
+                try {
+                    const result = await suggestCategory(t.description, accounts);
+                    if (result.accountId) {
+                        return {
+                            ...t,
+                            accountId: result.accountId || undefined,
+                            detectedMemberName: result.memberName || undefined,
+                            status: TransactionStatus.REVIEW_NEEDED
+                        };
+                    }
+                } catch (err) {
+                    console.warn("Auto-cat failed for", t.description, err);
+                }
+                return t;
+            }));
+
+            // Merge back
+            txnsToSave = txnsToSave.map(t => {
+                const found = categorized.find(c => c.id === t.id);
+                return found || t;
+            });
+        }
+
+        // 3. Save Everything
+        saveTransactions(txnsToSave);
 
         // Update linked receipts status
-        if (matchedReceiptIds.length > 0) {
-            matchedReceiptIds.forEach(id => {
+        if (receiptIdsToUpdate.length > 0) {
+            receiptIdsToUpdate.forEach(id => {
                 const r = receipts.find(receipt => receipt.id === id);
                 // We find the txn that linked it
-                const txn = newTxns.find(t => t.receiptUrl === r?.url);
+                const txn = txnsToSave.find(t => t.receiptUrl === r?.url);
                 if (r && txn) {
                     saveReceipt({ ...r, linkedTransactionId: txn.id });
                 }
@@ -62,7 +101,7 @@ function App() {
             newAccounts.forEach(na => {
                 if (!allAccounts.find(a => a.id === na.id)) allAccounts.push(na);
             });
-            replaceAllAccounts(allAccounts);
+            await replaceAllAccounts(allAccounts);
         }
 
         setActiveTab('ledger');
@@ -109,7 +148,12 @@ function App() {
         }
     };
 
+    const [autoMatchProgress, setAutoMatchProgress] = useState<{ current: number, total: number, message: string } | null>(null);
+
     const handleRunAutoMatching = async () => {
+        // Initial feedback
+        setAutoMatchProgress({ current: 0, total: 0, message: "Recherche de reçus..." });
+
         // 1. Match Receipts (Sync)
         const { processedTxns, matchedReceiptIds } = matchTransactionsWithReceipts(transactions, receipts);
 
@@ -118,16 +162,36 @@ function App() {
 
         // 2. Suggest Categories (Async - for uncategorized only)
         const uncategorized = txnsToUpdate.filter(t => !t.accountId);
-        if (uncategorized.length > 0) {
-            // Process in parallel but limit concurrency if needed, here we just do Promise.all
-            // We map new array to avoid mutating state directly
-            const categorized = await Promise.all(uncategorized.map(async (t) => {
-                const suggestedId = await suggestCategory(t.description, accounts);
-                if (suggestedId) {
-                    return { ...t, accountId: suggestedId, status: TransactionStatus.REVIEW_NEEDED };
+        const totalToCategorize = uncategorized.length;
+
+        if (totalToCategorize > 0) {
+            setAutoMatchProgress({ current: 0, total: totalToCategorize, message: "Analyse IA..." });
+
+            const categorized: Transaction[] = [];
+            let completed = 0;
+
+            // Process sequentially to update progress
+            for (const t of uncategorized) {
+                try {
+                    // Slow down slightly to show progress if needed, or just await
+                    const result = await suggestCategory(t.description, accounts);
+                    if (result.accountId) {
+                        categorized.push({
+                            ...t,
+                            accountId: result.accountId || undefined,
+                            detectedMemberName: result.memberName || undefined,
+                            status: TransactionStatus.REVIEW_NEEDED
+                        });
+                    } else {
+                        categorized.push(t);
+                    }
+                } catch (e) {
+                    console.error("Auto-match fail for " + t.id, e);
+                    categorized.push(t);
                 }
-                return t;
-            }));
+                completed++;
+                setAutoMatchProgress({ current: completed, total: totalToCategorize, message: `IA : ${completed}/${totalToCategorize}` });
+            }
 
             // Merge back
             txnsToUpdate = txnsToUpdate.map(t => {
@@ -140,6 +204,7 @@ function App() {
         }
 
         if (hasUpdates) {
+            setAutoMatchProgress({ current: 0, total: 0, message: "Sauvegarde..." });
             await saveTransactions(txnsToUpdate); // Batch update
 
             // Also update receipts linkage
@@ -152,10 +217,11 @@ function App() {
                     }
                 });
             }
-            alert("Matching automatique terminé !");
-        } else {
-            alert("Aucune nouvelle correspondance trouvée.");
         }
+
+        // Final "Done" state
+        setAutoMatchProgress({ current: 100, total: 100, message: "Terminé !" });
+        setTimeout(() => setAutoMatchProgress(null), 1000);
     };
 
     // Membership View Component (Keep existing code...)
@@ -509,6 +575,7 @@ function App() {
                     onUpdateTransaction={handleUpdateTransaction}
                     onDeleteTransaction={handleDeleteTransaction}
                     onAutoMatch={handleRunAutoMatching}
+                    autoMatchProgress={autoMatchProgress}
                 />
             )}
 

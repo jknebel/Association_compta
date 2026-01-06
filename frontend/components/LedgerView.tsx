@@ -11,6 +11,7 @@ interface LedgerViewProps {
   onUpdateTransaction: (transaction: Transaction) => void;
   onDeleteTransaction: (id: string) => void;
   onAutoMatch: () => void;
+  autoMatchProgress: { current: number, total: number, message: string } | null;
 }
 
 export const LedgerView: React.FC<LedgerViewProps> = ({
@@ -18,7 +19,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   accounts,
   onUpdateTransaction,
   onDeleteTransaction,
-  onAutoMatch
+  onAutoMatch,
+  autoMatchProgress
 }) => {
   const [filter, setFilter] = useState('ALL');
   const [search, setSearch] = useState('');
@@ -191,11 +193,21 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             Exporter Bilan & Journal (.xlsx)
           </button>
           <button
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+            className={`px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
             onClick={onAutoMatch}
+            disabled={!!autoMatchProgress}
           >
-            <RefreshCw size={16} />
-            Auto-Match
+            {autoMatchProgress ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                {autoMatchProgress.message}
+              </>
+            ) : (
+              <>
+                <RefreshCw size={16} />
+                Auto-Match
+              </>
+            )}
           </button>
         </div>
       </header>

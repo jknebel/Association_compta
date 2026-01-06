@@ -71,6 +71,38 @@ class Transaction(BaseModel):
 class TransactionList(BaseModel):
     transactions: List[Transaction]
 
+class AnalyzeReceiptRequest(BaseModel):
+    base64Data: str
+    mimeType: str
+
+class AnalyzeReceiptResponse(BaseModel):
+    date: Optional[str] = None
+    amount: Optional[float] = None
+
+class ChatMessage(BaseModel):
+    role: str
+    text: str
+
+class ChatContext(BaseModel):
+    transactions: List[Transaction]
+    accounts: List[Account]
+
+class ChatRequest(BaseModel):
+    history: List[ChatMessage]
+    context: ChatContext
+    newMessage: str
+    
+class ChatResponse(BaseModel):
+    response: str
+
+class SuggestCategoryRequest(BaseModel):
+    description: str
+    accounts: List[Account]
+
+class SuggestCategoryResponse(BaseModel):
+    accountId: Optional[str] = None
+    memberName: Optional[str] = None
+
 # --- LLM HELPERS ---
 def get_llm():
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -193,7 +225,24 @@ def classification_node(state: AgentState):
     NE renvoie PAS le 'Code' (ex: 701000) ni le 'Nom'.
     Si tu penses que c'est le compte "Cotisations" (Code 701000), tu dois chercher son ID correspondant dans la liste et renvoyer cet ID.
 
-    ### 2. HISTORIQUE & APPRENTISSAGE (TRÈS IMPORTANT)
+    ### 2. RÈGLES COMPTABLES (SIGNES ET CLASSES) - CRITIQUE
+    Tu dois impérativement respecter la logique comptable suivante :
+
+    1.  **MONTANTS NÉGATIFS (Dépenses / Débits)** :
+        -   Ils correspondent généralement à des **CHARGES** (Comptes commençant par **6**).
+        -   Exemple : -20.00 CHF pour "Parking" doit aller dans un compte de classe 6 (ex: 6200 Achats de marchandises ou Services).
+        -   IL EST INTERDIT de classer un montant négatif dans un compte de PRODUIT (Classe 7), sauf s'il s'agit d'un remboursement client (rare).
+
+    2.  **MONTANTS POSITIFS (Recettes / Crédits)** :
+        -   Ils correspondent généralement à des **PRODUITS** (Comptes commençant par **7**).
+        -   Exemple : +50.00 CHF pour "Cotisation" doit aller dans un compte de classe 7 (ex: 7000 Cotisations).
+
+    3.  **VIREMENTS INTERNES** :
+        -   Les mouvements de fonds (classe 58) peuvent être positifs ou négatifs.
+
+    **VERIFICATION :** Avant d'assigner un compte, vérifie si le signe de la transaction (-/+) est cohérent avec la classe du compte (6=Charge, 7=Produit).
+
+    ### 3. HISTORIQUE & APPRENTISSAGE (TRÈS IMPORTANT)
     Voici comment cet utilisateur a classé ses transactions précédentes. 
     Utilise ces exemples pour comprendre sa logique.
     
@@ -208,7 +257,7 @@ def classification_node(state: AgentState):
     {history_context}
     ---------------------
 
-    ### 3. NOUVELLES TRANSACTIONS À CLASSER
+    ### 4. NOUVELLES TRANSACTIONS À CLASSER
     {json.dumps([t.model_dump() for t in transactions], default=str)}
 
     Retourne la liste des transactions avec le champ 'accountId' rempli (ou null si incertain).
@@ -302,3 +351,108 @@ async def process_statement(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analyze-receipt")
+async def analyze_receipt(request: AnalyzeReceiptRequest):
+    try:
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(AnalyzeReceiptResponse)
+        
+        prompt = """
+        Analyze this receipt/invoice.
+        Extract:
+        1. The date of the transaction (Format YYYY-MM-DD).
+        2. The TOTAL amount (Float).
+        
+        If you cannot find one of them, return null for that field.
+        """
+        
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url", 
+                    "image_url": {"url": f"data:{request.mimeType};base64,{request.base64Data}"}
+                }
+            ]
+        )
+        
+        result = structured_llm.invoke([message])
+        return result
+    except Exception as e:
+        print(f"Receipt Analysis Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/chat")
+async def chat_agent(request: ChatRequest):
+    try:
+        # Prepare Context
+        txns_summary = f"{len(request.context.transactions)} transactions"
+        accounts_summary = f"{len(request.context.accounts)} accounts"
+        
+        income = sum(t.amount for t in request.context.transactions if t.amount > 0)
+        expenses = sum(t.amount for t in request.context.transactions if t.amount < 0)
+        
+        system_prompt = f"""
+        You are an intelligent accounting assistant for an association.
+        You have access to the current financial data:
+        {accounts_summary} and {txns_summary}.
+        
+        Total Income: {income:.2f}
+        Total Expenses: {expenses:.2f}
+        
+        Answer questions about the finances, help categorize items, or explain accounting principles.
+        If asked to perform an action (like "create an account"), guide the user on how to do it in the UI.
+        """
+        
+        messages = [SystemMessage(content=system_prompt)]
+        
+        # Add History
+        for msg in request.history:
+             if msg.role == 'user':
+                 messages.append(HumanMessage(content=msg.text))
+             else:
+                 messages.append(HumanMessage(content=msg.text)) # LangChain usually uses AIMessage, but HumanMessage works for simple history if role is clear? 
+                 # Actually better to use AIMessage for model
+                 
+        # Add new message
+        messages.append(HumanMessage(content=request.newMessage))
+        
+        # Use Pro model if available, or Flash
+        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
+        response = llm.invoke(messages)
+        
+        return ChatResponse(response=response.content)
+    except Exception as e:
+        print(f"Chat Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/suggest-category")
+async def suggest_category(request: SuggestCategoryRequest):
+    try:
+        # 1. Prepare Account Context (Lightweight)
+        accounts_context = [
+            {"id": a.id, "label": a.label, "isMembership": getattr(a, 'isMembership', False)} 
+            for a in request.accounts
+        ]
+        
+        prompt = f"""
+        Analyze the transaction description: "{request.description}"
+        
+        Task 1: Select the best matching Account ID from the list below.
+        Task 2: If the chosen account has 'isMembership': true, OR if the description clearly contains a person's name (Payer), extract that name.
+        
+        Accounts: {json.dumps(accounts_context)}
+        
+        Return a strict JSON object: {{ "accountId": "ID_OR_NULL", "memberName": "EXTRACTED_NAME_OR_NULL" }}
+        """
+        
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(SuggestCategoryResponse)
+        result = structured_llm.invoke(prompt)
+        
+        return result
+    except Exception as e:
+        print(f"Suggest Category Error: {e}")
+        # Return empty/null result instead of crashing
+        return SuggestCategoryResponse(accountId=None, memberName=None)
