@@ -37,6 +37,8 @@ jobs:
               - 'src/**'
               - '*.json'
               - '*.html'
+              - '*.tsx'
+              - '*.ts'
 
   # 2. TEST & LINT (Optional)
   test:

@@ -9,7 +9,7 @@ import { SettingsView } from './frontend/components/SettingsView';
 import { LoginView } from './frontend/components/LoginView';
 import { ReceiptsView } from './frontend/components/ReceiptsView';
 
-import { Account, Transaction, AccountType, Receipt, TransactionStatus } from '../types';
+import { Account, Transaction, AccountType, Receipt, TransactionStatus } from './types';
 import { Edit2, Save, X, AlertTriangle, CloudOff, Loader2, Download, Upload, CheckCircle, XCircle, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { useDataService } from './frontend/services/dataService';
 import { useAuth } from './frontend/services/authService';
