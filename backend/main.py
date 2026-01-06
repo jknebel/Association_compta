@@ -188,6 +188,11 @@ def classification_node(state: AgentState):
     ### 1. PLAN COMPTABLE ACTUEL
     {accounts_info}
 
+    !!! TRÈS IMPORTANT !!!
+    Pour le champ 'accountId', tu DOIS utiliser UNIQUEMENT la valeur 'ID' (souvent un UUID ou une chaîne complexe) fournie dans la liste ci-dessus.
+    NE renvoie PAS le 'Code' (ex: 701000) ni le 'Nom'.
+    Si tu penses que c'est le compte "Cotisations" (Code 701000), tu dois chercher son ID correspondant dans la liste et renvoyer cet ID.
+
     ### 2. HISTORIQUE & APPRENTISSAGE (TRÈS IMPORTANT)
     Voici comment cet utilisateur a classé ses transactions précédentes. 
     Utilise ces exemples pour comprendre sa logique.
@@ -214,9 +219,29 @@ def classification_node(state: AgentState):
         structured_llm = flash_llm.with_structured_output(TransactionList)
         result = structured_llm.invoke(prompt)
         
+        # Post-processing: Validate and Correct Account IDs
+        validated_transactions = []
+        account_map = {a.id: a for a in accounts}
+        code_map = {a.code: a for a in accounts} # Fallback map
+
+        for txn in result.transactions:
+            if txn.accountId:
+                # 1. Check if ID is valid
+                if txn.accountId in account_map:
+                    # All good
+                    pass
+                # 2. Fallback: Check if AI returned a Code instead
+                elif txn.accountId in code_map:
+                    print(f"Correction Auto: Code '{txn.accountId}' remplacé par ID '{code_map[txn.accountId].id}'")
+                    txn.accountId = code_map[txn.accountId].id
+                else:
+                    # Invalid ID, reset
+                    txn.accountId = None
+            validated_transactions.append(txn)
+
         return {
-            "extracted_transactions": result.transactions,
-            "logs": ["Classification intelligente terminée avec historique."]
+            "extracted_transactions": validated_transactions,
+            "logs": ["Classification intelligente terminée avec historique et validation."]
         }
     except Exception as e:
         print(f"Classification Error: {e}")

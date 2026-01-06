@@ -8,12 +8,14 @@ import { ExpertChat } from './frontend/components/ExpertChat';
 import { SettingsView } from './frontend/components/SettingsView';
 import { LoginView } from './frontend/components/LoginView';
 import { ReceiptsView } from './frontend/components/ReceiptsView';
-import { DeploymentView } from './frontend/components/DeploymentView'; // Import
-import { Account, Transaction, AccountType, Receipt } from '../types';
+
+import { Account, Transaction, AccountType, Receipt, TransactionStatus } from '../types';
 import { Edit2, Save, X, AlertTriangle, CloudOff, Loader2, Download, Upload, CheckCircle, XCircle, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { useDataService } from './frontend/services/dataService';
 import { useAuth } from './frontend/services/authService';
 import * as XLSX from 'xlsx';
+import { matchTransactionsWithReceipts } from './frontend/services/matchingService';
+import { suggestCategory } from './frontend/services/geminiService';
 
 function App() {
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -104,6 +106,55 @@ function App() {
             saveTransaction({ ...txn, receiptUrl: receipt.url });
             // Update Receipt
             saveReceipt({ ...receipt, linkedTransactionId: txn.id });
+        }
+    };
+
+    const handleRunAutoMatching = async () => {
+        // 1. Match Receipts (Sync)
+        const { processedTxns, matchedReceiptIds } = matchTransactionsWithReceipts(transactions, receipts);
+
+        let txnsToUpdate = processedTxns;
+        let hasUpdates = matchedReceiptIds.length > 0;
+
+        // 2. Suggest Categories (Async - for uncategorized only)
+        const uncategorized = txnsToUpdate.filter(t => !t.accountId);
+        if (uncategorized.length > 0) {
+            // Process in parallel but limit concurrency if needed, here we just do Promise.all
+            // We map new array to avoid mutating state directly
+            const categorized = await Promise.all(uncategorized.map(async (t) => {
+                const suggestedId = await suggestCategory(t.description, accounts);
+                if (suggestedId) {
+                    return { ...t, accountId: suggestedId, status: TransactionStatus.REVIEW_NEEDED };
+                }
+                return t;
+            }));
+
+            // Merge back
+            txnsToUpdate = txnsToUpdate.map(t => {
+                const found = categorized.find(c => c.id === t.id);
+                return found || t;
+            });
+
+            // Check if any actually changed
+            if (categorized.some(c => c.accountId)) hasUpdates = true;
+        }
+
+        if (hasUpdates) {
+            await saveTransactions(txnsToUpdate); // Batch update
+
+            // Also update receipts linkage
+            if (matchedReceiptIds.length > 0) {
+                matchedReceiptIds.forEach(id => {
+                    const r = receipts.find(receipt => receipt.id === id);
+                    const txn = txnsToUpdate.find(t => t.receiptUrl === r?.url);
+                    if (r && txn) {
+                        saveReceipt({ ...r, linkedTransactionId: txn.id });
+                    }
+                });
+            }
+            alert("Matching automatique terminé !");
+        } else {
+            alert("Aucune nouvelle correspondance trouvée.");
         }
     };
 
@@ -457,6 +508,7 @@ function App() {
                     accounts={accounts}
                     onUpdateTransaction={handleUpdateTransaction}
                     onDeleteTransaction={handleDeleteTransaction}
+                    onAutoMatch={handleRunAutoMatching}
                 />
             )}
 
@@ -471,10 +523,6 @@ function App() {
             )}
 
             {/* View Python removed */}
-
-            {activeTab === 'deploy' && (
-                <DeploymentView />
-            )}
         </Layout>
     );
 }

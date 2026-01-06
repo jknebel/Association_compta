@@ -3,20 +3,22 @@ import React, { useState, useRef } from 'react';
 import { Transaction, Account, TransactionStatus, AccountType } from '../../types';
 import { generateAccountingReport } from '../services/excelService';
 import { uploadReceipt } from '../services/storageService';
-import { Check, X, AlertTriangle, Search, Filter, Calendar, DollarSign, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2 } from 'lucide-react';
+import { Check, X, AlertTriangle, Search, Filter, Calendar, DollarSign, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw } from 'lucide-react';
 
 interface LedgerViewProps {
   transactions: Transaction[];
   accounts: Account[];
   onUpdateTransaction: (transaction: Transaction) => void;
   onDeleteTransaction: (id: string) => void;
+  onAutoMatch: () => void;
 }
 
 export const LedgerView: React.FC<LedgerViewProps> = ({
   transactions,
   accounts,
   onUpdateTransaction,
-  onDeleteTransaction
+  onDeleteTransaction,
+  onAutoMatch
 }) => {
   const [filter, setFilter] = useState('ALL');
   const [search, setSearch] = useState('');
@@ -187,6 +189,13 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           >
             <FileSpreadsheet size={16} />
             Exporter Bilan & Journal (.xlsx)
+          </button>
+          <button
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+            onClick={onAutoMatch}
+          >
+            <RefreshCw size={16} />
+            Auto-Match
           </button>
         </div>
       </header>

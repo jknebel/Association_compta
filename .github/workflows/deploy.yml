@@ -4,16 +4,41 @@ on:
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - main
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  REGION: europe-west1 # Configure your region (e.g., us-central1, europe-west1)
+  REGION: europe-west1
   BACKEND_SERVICE_NAME: assocompta-backend
   REPO_NAME: assocompta-backend
 
 jobs:
-  # 1. TEST & LINT (Optional but recommended)
+  # 1. CHANGE DETECTION
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+              - 'src/**'
+              - '*.json'
+              - '*.html'
+
+  # 2. TEST & LINT (Optional)
   test:
+    needs: changes
+    if: ${{ needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,18 +49,17 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install -r backend/requirements.txt
-          # Add actual tests here: pytest backend/tests
 
-  # 2. BUILD & DEPLOY BACKEND (Cloud Run)
+  # 3. BUILD & DEPLOY BACKEND (Cloud Run)
   deploy-backend:
-    needs: test
+    needs: changes
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
       id-token: 'write'
 
     outputs:
-      backend_url: ${{ steps.deploy.outputs.url }}
+      backend_url: ${{ steps.get-url.outputs.url }}
 
     steps:
       - uses: actions/checkout@v4
@@ -47,24 +71,28 @@ jobs:
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-      # Configure Docker to use gcloud as a credential helper
+      # Configure Docker (Only if backend changed)
       - name: 'Docker Auth'
+        if: ${{ needs.changes.outputs.backend == 'true' }}
         run: |-
           gcloud auth configure-docker europe-west1-docker.pkg.dev
 
-      # Build the Container
+      # Build the Container (Only if backend changed)
       - name: 'Build Container'
+        if: ${{ needs.changes.outputs.backend == 'true' }}
         run: |-
           docker build -t europe-west1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$BACKEND_SERVICE_NAME:${{ github.sha }} ./backend
 
-      # Push the Container
+      # Push the Container (Only if backend changed)
       - name: 'Push Container'
+        if: ${{ needs.changes.outputs.backend == 'true' }}
         run: |-
           docker push europe-west1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$BACKEND_SERVICE_NAME:${{ github.sha }}
 
-      # Deploy to Cloud Run
+      # Deploy to Cloud Run (Only if backend changed)
       - id: 'deploy'
         name: 'Deploy to Cloud Run'
+        if: ${{ needs.changes.outputs.backend == 'true' }}
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
           service: '${{ env.BACKEND_SERVICE_NAME }}'
@@ -74,9 +102,22 @@ jobs:
           env_vars: |
             GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
 
-  # 3. BUILD & DEPLOY FRONTEND (Firebase Hosting)
+      # ALWAYS GET URL (Even if we didn't deploy, we need the URL for frontend)
+      - id: 'get-url'
+        name: 'Get Service URL'
+        run: |
+          if [ "${{ steps.deploy.outputs.url }}" != "" ]; then
+             echo "url=${{ steps.deploy.outputs.url }}" >> $GITHUB_OUTPUT
+          else
+             # Fetch existing URL if we didn't deploy
+             EXISTING_URL=$(gcloud run services describe ${{ env.BACKEND_SERVICE_NAME }} --region ${{ env.REGION }} --format 'value(status.url)')
+             echo "url=$EXISTING_URL" >> $GITHUB_OUTPUT
+          fi
+
+  # 4. BUILD & DEPLOY FRONTEND (Firebase Hosting)
   deploy-frontend:
-    needs: deploy-backend
+    needs: [changes, deploy-backend]
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       checks: write
@@ -94,8 +135,6 @@ jobs:
         run: npm install
 
       # Build with environment variables
-      # We prioritize the DYNAMIC URL from the backend deployment.
-      # If missing (should not happen), we fall back to the SECRET.
       - name: Build Frontend
         run: npm run build
         env:
@@ -112,6 +151,6 @@ jobs:
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.GCP_SA_KEY }}' # Firebase often accepts the full GCP SA Key
+          firebaseServiceAccount: '${{ secrets.GCP_SA_KEY }}'
           channelId: live
           projectId: '${{ secrets.GCP_PROJECT_ID }}'
