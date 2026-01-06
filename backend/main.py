@@ -430,7 +430,6 @@ async def chat_agent(request: ChatRequest):
 @app.post("/suggest-category")
 async def suggest_category(request: SuggestCategoryRequest):
     try:
-    try:
         # 1. Build Account Map for easy parent lookup
         account_map = {a.id: a for a in request.accounts}
 
