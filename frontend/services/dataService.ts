@@ -244,6 +244,24 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         }
     };
 
+    const deleteAllTransactions = async () => {
+        if (shouldUseLocalStorage) {
+            localStorage.removeItem('asso_compta_transactions_v5');
+            setTransactions([]);
+            return;
+        }
+        if (user) {
+            const batch = writeBatch(db);
+            const q = query(collection(db, "users", user.uid, "transactions"));
+            const snapshot = await getDocs(q);
+            snapshot.docs.forEach((doc) => {
+                batch.delete(doc.ref);
+            });
+            await batch.commit();
+            // Local state update listener will handle UI update
+        }
+    };
+
     // --- RECEIPTS ACTIONS ---
 
     const saveReceipt = async (receipt: Receipt) => {
@@ -324,6 +342,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         saveTransaction,
         saveTransactions,
         deleteTransaction,
+        deleteAllTransactions,
         saveReceipt, // Exposed
         deleteReceipt, // Exposed
         uploadReceiptFile

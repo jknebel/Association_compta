@@ -38,7 +38,8 @@ function App() {
         saveTransactions,
         deleteTransaction,
         saveReceipt,
-        deleteReceipt
+        deleteReceipt,
+        deleteAllTransactions
     } = useDataService(user, guestMode);
 
     // Handle new transactions from Upload Agent
@@ -258,26 +259,33 @@ function App() {
     };
 
     const handleClearAllTransactions = async () => {
-        if (!confirm("ATTENTION : Vous êtes sur le point de supprimer TOUTES les transactions.\n\nCette action est irréversible. Voulez-vous continuer ?")) {
+        if (!confirm("ATTENTION : Vous êtes sur le point de supprimer DÉFINITIVEMENT toutes les transactions.\n\nCette action est irréversible. Voulez-vous continuer ?")) {
             return;
         }
 
-        if (!confirm("Êtes-vous vraiment sûr ? Cela effacera tout l'historique des transactions.")) {
+        if (!confirm("Êtes-vous vraiment sûr ? Cela effacera tout l'historique des transactions de la base de données.")) {
             return;
         }
 
-        // Create empty array to replace all transactions
-        await saveTransactions([]);
-
-        // Also clear linkedTransactionId from receipts
-        const unlinkedReceipts = receipts.map(r => ({ ...r, linkedTransactionId: undefined }));
-        // Note: Ideally we would batch update receipts too, but we can just un-link them locally by re-matching or let the user re-match.
-        // For now, let's just clear transactions. The receipts will remain but be unlinked visually.
-
-        // Actually we should prob un-link receipts in the backend/storage.
-        // Assuming saveReceipts exists or we loop.
-        // For safety, let's just clear transactions.
+        await deleteAllTransactions();
         alert("Toutes les transactions ont été supprimées.");
+    };
+
+    const handleArchiveAllTransactions = async () => {
+        const activeTransactions = transactions.filter(t => t.status !== TransactionStatus.ARCHIVED);
+        if (activeTransactions.length === 0) return;
+
+        if (!confirm(`Voulez-vous vraiment archiver ${activeTransactions.length} transactions ?\n\nElles ne seront plus visibles dans la vue par défaut mais resteront accessibles via le filtre "Archives".`)) {
+            return;
+        }
+
+        // Archive all non-archived transactions
+        const archived = activeTransactions.map(t => ({
+            ...t,
+            status: TransactionStatus.ARCHIVED
+        }));
+
+        await saveTransactions(archived);
     };
 
     // Membership View Component (Keep existing code...)
@@ -633,6 +641,7 @@ function App() {
                     onAutoMatch={handleRunAutoMatching}
                     onReanalyzeAll={handleReanalyzeAll}
                     onClearAll={handleClearAllTransactions}
+                    onArchiveAll={handleArchiveAllTransactions}
                     autoMatchProgress={autoMatchProgress}
                 />
             )}

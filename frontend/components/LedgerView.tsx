@@ -3,7 +3,7 @@ import React, { useState, useRef } from 'react';
 import { Transaction, Account, TransactionStatus, AccountType } from '../../types';
 import { generateAccountingReport } from '../services/excelService';
 import { uploadReceipt } from '../services/storageService';
-import { Check, X, AlertTriangle, Search, Filter, Calendar, DollarSign, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw } from 'lucide-react';
+import { Check, X, AlertTriangle, Search, Filter, Calendar, DollarSign, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive } from 'lucide-react';
 
 interface LedgerViewProps {
   transactions: Transaction[];
@@ -13,6 +13,7 @@ interface LedgerViewProps {
   onAutoMatch: () => void;
   onReanalyzeAll: () => void;
   onClearAll: () => void;
+  onArchiveAll: () => void;
   autoMatchProgress: { current: number, total: number, message: string } | null;
 }
 
@@ -24,6 +25,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   onAutoMatch,
   onReanalyzeAll,
   onClearAll,
+  onArchiveAll,
   autoMatchProgress
 }) => {
   const [filter, setFilter] = useState('ALL');
@@ -44,8 +46,9 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
   const filteredTransactions = transactions.filter(t => {
     // Basic Status & Search
-    const matchesFilter = filter === 'ALL' ||
-      (filter === 'UNCATEGORIZED' ? !t.accountId : t.status === filter);
+    const matchesFilter = filter === 'ALL'
+      ? t.status !== TransactionStatus.ARCHIVED // Hide archives by default
+      : (filter === 'UNCATEGORIZED' ? !t.accountId : t.status === filter);
 
     const matchesSearch = t.description.toLowerCase().includes(search.toLowerCase()) ||
       t.amount.toString().includes(search) ||
@@ -142,6 +145,13 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     }
   };
 
+  const handleDeleteClick = (id: string) => {
+    if (window.confirm("Voulez-vous vraiment supprimer cette transaction ? Cette action est irréversible.")) {
+      onDeleteTransaction(id);
+    }
+  };
+
+
   const getStatusBadge = (status: TransactionStatus) => {
     switch (status) {
       case TransactionStatus.APPROVED:
@@ -161,6 +171,12 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           className: 'bg-amber-900/30 text-amber-400 border-amber-800',
           icon: <AlertTriangle size={12} />,
           label: 'À Vérifier'
+        };
+      case TransactionStatus.ARCHIVED:
+        return {
+          className: 'bg-slate-700/30 text-slate-400 border-slate-600',
+          icon: <Check size={12} />, // Or another icon
+          label: 'Archivé'
         };
       default:
         return {
@@ -223,22 +239,35 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             Re-Scan Complet
           </button>
 
-          <button
-            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ml-2"
-            onClick={onClearAll}
-            disabled={!!autoMatchProgress}
-            title="Supprimer TOUTES les transactions pour recommencer"
-          >
-            <Trash2 size={16} />
-            Tout Effacer
-          </button>
-        </div>
-      </header>
+          Re-Scan Complet
+        </button>
 
-      {/* Filters Container */}
-      <div className="mb-6 bg-slate-900 p-5 rounded-xl shadow-sm border border-slate-800 space-y-4">
-        {/* Top Row: Search & Status */}
-        <div className="flex flex-col md:flex-row gap-4">
+        <button
+          className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ml-2"
+          onClick={onArchiveAll}
+          disabled={!!autoMatchProgress}
+          title="Archiver toutes les transactions visibles"
+        >
+          <Archive size={16} />
+          Archiver Tout
+        </button>
+
+        <button
+          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+          onClick={onClearAll}
+          disabled={!!autoMatchProgress}
+          title="Supprimer TOUTES les transactions pour recommencer"
+        >
+          <Trash2 size={16} />
+          Tout Effacer
+        </button>
+    </div>
+      </header >
+
+  {/* Filters Container */ }
+  < div className = "mb-6 bg-slate-900 p-5 rounded-xl shadow-sm border border-slate-800 space-y-4" >
+    {/* Top Row: Search & Status */ }
+    < div className = "flex flex-col md:flex-row gap-4" >
           <div className="relative flex-1">
             <Search className="absolute left-3 top-2.5 text-slate-500" size={18} />
             <input
@@ -262,14 +291,15 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               <option value={TransactionStatus.REVIEW_NEEDED}>À Vérifier</option>
               <option value={TransactionStatus.PENDING_REVIEW}>En Attente de Revue</option>
               <option value={TransactionStatus.APPROVED}>Approuvé</option>
+              <option value={TransactionStatus.ARCHIVED}>📦 Archives</option>
             </select>
           </div>
-        </div>
+        </div >
 
-        {/* Bottom Row: Date & Amount Range */}
-        <div className="flex flex-wrap items-center gap-6 pt-4 border-t border-slate-800">
-          {/* Date Range */}
-          <div className="flex items-center gap-2">
+  {/* Bottom Row: Date & Amount Range */ }
+  < div className = "flex flex-wrap items-center gap-6 pt-4 border-t border-slate-800" >
+    {/* Date Range */ }
+    < div className = "flex items-center gap-2" >
             <div className="flex items-center gap-2 text-slate-500 min-w-fit">
               <Calendar size={16} />
               <span className="text-sm font-medium">Date:</span>
@@ -287,288 +317,292 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               onChange={(e) => setEndDate(e.target.value)}
               className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
             />
-          </div>
+          </div >
 
-          <div className="hidden md:block w-px h-6 bg-slate-800"></div>
+  <div className="hidden md:block w-px h-6 bg-slate-800"></div>
 
-          {/* Amount Range */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 text-slate-500 min-w-fit">
-              <DollarSign size={16} />
-              <span className="text-sm font-medium">Montant:</span>
-            </div>
-            <input
-              type="number"
-              placeholder="Min"
-              value={minAmount}
-              onChange={(e) => setMinAmount(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
-            />
-            <span className="text-slate-600">-</span>
-            <input
-              type="number"
-              placeholder="Max"
-              value={maxAmount}
-              onChange={(e) => setMaxAmount(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
-            />
-          </div>
+{/* Amount Range */ }
+<div className="flex items-center gap-2">
+  <div className="flex items-center gap-2 text-slate-500 min-w-fit">
+    <DollarSign size={16} />
+    <span className="text-sm font-medium">Montant:</span>
+  </div>
+  <input
+    type="number"
+    placeholder="Min"
+    value={minAmount}
+    onChange={(e) => setMinAmount(e.target.value)}
+    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
+  />
+  <span className="text-slate-600">-</span>
+  <input
+    type="number"
+    placeholder="Max"
+    value={maxAmount}
+    onChange={(e) => setMaxAmount(e.target.value)}
+    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
+  />
+</div>
 
-          {/* Active Filters Clear Button */}
-          {(startDate || endDate || minAmount || maxAmount || search || filter !== 'ALL') && (
-            <button
-              onClick={clearFilters}
-              className="ml-auto flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg transition-colors"
-            >
-              <XCircle size={14} />
-              Tout Effacer
-            </button>
-          )}
-        </div>
-      </div>
+{/* Active Filters Clear Button */ }
+{
+  (startDate || endDate || minAmount || maxAmount || search || filter !== 'ALL') && (
+    <button
+      onClick={clearFilters}
+      className="ml-auto flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg transition-colors"
+    >
+      <XCircle size={14} />
+      Tout Effacer
+    </button>
+  )
+}
+        </div >
+      </div >
 
-      {/* Hidden File Input for Receipt Upload */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        className="hidden"
-        accept="image/*,application/pdf"
-        onChange={handleFileChange}
-      />
+  {/* Hidden File Input for Receipt Upload */ }
+  < input
+type = "file"
+ref = { fileInputRef }
+className = "hidden"
+accept = "image/*,application/pdf"
+onChange = { handleFileChange }
+  />
 
-      {/* Table Section */}
-      <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-hidden flex-1 overflow-y-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
-            <tr>
-              <th className="px-6 py-3 font-semibold text-slate-400 w-32">Date</th>
-              <th className="px-6 py-3 font-semibold text-slate-400">Libellé</th>
-              <th className="px-6 py-3 font-semibold text-slate-400 w-32">Justificatif</th>
-              <th className="px-6 py-3 font-semibold text-slate-400 w-32">Montant</th>
-              <th className="px-6 py-3 font-semibold text-slate-400 w-48">Compte</th>
-              <th className="px-6 py-3 font-semibold text-slate-400 w-32">Membre</th>
-              <th className="px-6 py-3 font-semibold text-slate-400 w-32">Statut</th>
-              <th className="px-6 py-3 font-semibold text-slate-400 text-right w-40">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800">
-            {filteredTransactions.map((t) => {
-              const badge = getStatusBadge(t.status);
-              const isEditing = editingId === t.id;
-              const isUploading = uploadingId === t.id;
+  {/* Table Section */ }
+  < div className = "bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-hidden flex-1 overflow-y-auto" >
+    <table className="w-full text-left text-sm">
+      <thead className="bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
+        <tr>
+          <th className="px-6 py-3 font-semibold text-slate-400 w-32">Date</th>
+          <th className="px-6 py-3 font-semibold text-slate-400">Libellé</th>
+          <th className="px-6 py-3 font-semibold text-slate-400 w-32">Justificatif</th>
+          <th className="px-6 py-3 font-semibold text-slate-400 w-32">Montant</th>
+          <th className="px-6 py-3 font-semibold text-slate-400 w-48">Compte</th>
+          <th className="px-6 py-3 font-semibold text-slate-400 w-32">Membre</th>
+          <th className="px-6 py-3 font-semibold text-slate-400 w-32">Statut</th>
+          <th className="px-6 py-3 font-semibold text-slate-400 text-right w-40">Actions</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-800">
+        {filteredTransactions.map((t) => {
+          const badge = getStatusBadge(t.status);
+          const isEditing = editingId === t.id;
+          const isUploading = uploadingId === t.id;
 
-              // Filter valid accounts
-              const validAccounts = accounts.filter(a => {
-                if (a.type === AccountType.MIXED) return false;
-                if (t.amount > 0) return a.type === AccountType.INCOME;
-                if (t.amount < 0) return a.type === AccountType.EXPENSE;
-                return true;
-              });
-              validAccounts.sort((a, b) => a.code.localeCompare(b.code));
+          // Filter valid accounts
+          const validAccounts = accounts.filter(a => {
+            if (a.type === AccountType.MIXED) return false;
+            if (t.amount > 0) return a.type === AccountType.INCOME;
+            if (t.amount < 0) return a.type === AccountType.EXPENSE;
+            return true;
+          });
+          validAccounts.sort((a, b) => a.code.localeCompare(b.code));
 
-              return (
-                <tr key={t.id} className={`transition-colors ${isEditing ? 'bg-blue-900/20' : 'hover:bg-slate-800/50'}`}>
+          return (
+            <tr key={t.id} className={`transition-colors ${isEditing ? 'bg-blue-900/20' : 'hover:bg-slate-800/50'}`}>
 
-                  {/* DATE */}
-                  <td className="px-6 py-4 text-slate-300 whitespace-nowrap">
-                    {isEditing ? (
-                      <input
-                        type="date"
-                        value={editForm.date || ''}
-                        onChange={e => setEditForm({ ...editForm, date: e.target.value })}
-                        className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white"
-                      />
-                    ) : t.date}
-                  </td>
+              {/* DATE */}
+              <td className="px-6 py-4 text-slate-300 whitespace-nowrap">
+                {isEditing ? (
+                  <input
+                    type="date"
+                    value={editForm.date || ''}
+                    onChange={e => setEditForm({ ...editForm, date: e.target.value })}
+                    className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white"
+                  />
+                ) : t.date}
+              </td>
 
-                  {/* DESCRIPTION */}
-                  <td className="px-6 py-4 font-medium text-slate-200">
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editForm.description || ''}
-                        onChange={e => setEditForm({ ...editForm, description: e.target.value })}
-                        className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white"
-                      />
-                    ) : t.description}
-                  </td>
+              {/* DESCRIPTION */}
+              <td className="px-6 py-4 font-medium text-slate-200">
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={editForm.description || ''}
+                    onChange={e => setEditForm({ ...editForm, description: e.target.value })}
+                    className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white"
+                  />
+                ) : t.description}
+              </td>
 
-                  {/* RECEIPT / JUSTIFICATIF */}
-                  <td className="px-6 py-4">
-                    {isUploading ? (
-                      <Loader2 className="animate-spin text-blue-500" size={16} />
-                    ) : t.receiptUrl ? (
-                      <div className="flex items-center gap-2">
-                        <a
-                          href={t.receiptUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 bg-blue-900/20 px-2 py-1 rounded text-xs transition-colors"
-                          title="Voir le justificatif"
-                        >
-                          <ImageIcon size={14} />
-                          Voir
-                        </a>
-                        {isEditing && (
-                          <button
-                            onClick={() => handleRemoveReceipt(t)}
-                            className="text-rose-400 hover:text-rose-300 p-1"
-                            title="Supprimer le justificatif"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        )}
-                      </div>
-                    ) : (
+              {/* RECEIPT / JUSTIFICATIF */}
+              <td className="px-6 py-4">
+                {isUploading ? (
+                  <Loader2 className="animate-spin text-blue-500" size={16} />
+                ) : t.receiptUrl ? (
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={t.receiptUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 bg-blue-900/20 px-2 py-1 rounded text-xs transition-colors"
+                      title="Voir le justificatif"
+                    >
+                      <ImageIcon size={14} />
+                      Voir
+                    </a>
+                    {isEditing && (
                       <button
-                        onClick={() => handleAttachClick(t.id)}
-                        className="text-slate-500 hover:text-blue-400 transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-800 text-xs"
+                        onClick={() => handleRemoveReceipt(t)}
+                        className="text-rose-400 hover:text-rose-300 p-1"
+                        title="Supprimer le justificatif"
                       >
-                        <Paperclip size={14} />
-                        Joindre
+                        <Trash2 size={14} />
                       </button>
                     )}
-                  </td>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleAttachClick(t.id)}
+                    className="text-slate-500 hover:text-blue-400 transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-800 text-xs"
+                  >
+                    <Paperclip size={14} />
+                    Joindre
+                  </button>
+                )}
+              </td>
 
-                  {/* AMOUNT */}
-                  <td className={`px-6 py-4 font-bold ${t.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {isEditing ? (
-                      <input
-                        type="number"
-                        value={editForm.amount}
-                        onChange={e => setEditForm({ ...editForm, amount: parseFloat(e.target.value) })}
-                        className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-24 focus:outline-none text-white"
-                        step="0.01"
-                      />
-                    ) : `CHF ${t.amount.toFixed(2)}`}
-                  </td>
+              {/* AMOUNT */}
+              <td className={`px-6 py-4 font-bold ${t.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {isEditing ? (
+                  <input
+                    type="number"
+                    value={editForm.amount}
+                    onChange={e => setEditForm({ ...editForm, amount: parseFloat(e.target.value) })}
+                    className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-24 focus:outline-none text-white"
+                    step="0.01"
+                  />
+                ) : `CHF ${t.amount.toFixed(2)}`}
+              </td>
 
-                  {/* ACCOUNT */}
-                  <td className="px-6 py-4">
-                    <select
-                      value={isEditing ? (editForm.accountId || '') : (t.accountId || '')}
-                      onChange={(e) => {
-                        if (isEditing) {
-                          setEditForm({ ...editForm, accountId: e.target.value })
-                        } else {
-                          onUpdateTransaction({ ...t, accountId: e.target.value, status: TransactionStatus.REVIEW_NEEDED })
-                        }
-                      }}
-                      className={`bg-transparent border-b border-dashed border-slate-600 focus:border-blue-500 focus:outline-none py-1 max-w-[200px] truncate ${!(isEditing ? editForm.accountId : t.accountId) ? 'text-rose-400 font-semibold' : 'text-slate-300'} [&>option]:bg-slate-900 [&>option]:text-white`}
-                    >
-                      <option value="">
-                        {validAccounts.length === 0 ? "Aucun compte correspondant" : "Sélectionner Compte..."}
-                      </option>
-                      {validAccounts.map(a => (
-                        <option key={a.id} value={a.id}>{a.code} - {renderAccountOption(a)}</option>
-                      ))}
-                      {t.accountId && !validAccounts.find(a => a.id === t.accountId) && accounts.find(a => a.id === t.accountId) && (
-                        <option value={t.accountId} disabled>
-                          ⚠️ {accounts.find(a => a.id === t.accountId)?.code} - {renderAccountOption(accounts.find(a => a.id === t.accountId)!)} (Invalide)
-                        </option>
+              {/* ACCOUNT */}
+              <td className="px-6 py-4">
+                <select
+                  value={isEditing ? (editForm.accountId || '') : (t.accountId || '')}
+                  onChange={(e) => {
+                    if (isEditing) {
+                      setEditForm({ ...editForm, accountId: e.target.value })
+                    } else {
+                      onUpdateTransaction({ ...t, accountId: e.target.value, status: TransactionStatus.REVIEW_NEEDED })
+                    }
+                  }}
+                  className={`bg-transparent border-b border-dashed border-slate-600 focus:border-blue-500 focus:outline-none py-1 max-w-[200px] truncate ${!(isEditing ? editForm.accountId : t.accountId) ? 'text-rose-400 font-semibold' : 'text-slate-300'} [&>option]:bg-slate-900 [&>option]:text-white`}
+                >
+                  <option value="">
+                    {validAccounts.length === 0 ? "Aucun compte correspondant" : "Sélectionner Compte..."}
+                  </option>
+                  {validAccounts.map(a => (
+                    <option key={a.id} value={a.id}>{a.code} - {renderAccountOption(a)}</option>
+                  ))}
+                  {t.accountId && !validAccounts.find(a => a.id === t.accountId) && accounts.find(a => a.id === t.accountId) && (
+                    <option value={t.accountId} disabled>
+                      ⚠️ {accounts.find(a => a.id === t.accountId)?.code} - {renderAccountOption(accounts.find(a => a.id === t.accountId)!)} (Invalide)
+                    </option>
+                  )}
+                </select>
+              </td>
+
+              {/* MEMBER */}
+              <td className="px-6 py-4">
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={editForm.detectedMemberName || ''}
+                    placeholder="Nom du membre"
+                    onChange={e => setEditForm({ ...editForm, detectedMemberName: e.target.value })}
+                    className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-sm text-white"
+                  />
+                ) : (
+                  t.detectedMemberName ? (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-900/30 text-purple-300 border border-purple-800">
+                      {t.detectedMemberName}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">-</span>
+                  )
+                )}
+              </td>
+
+              {/* STATUS */}
+              <td className="px-6 py-4">
+                {!isEditing && (
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${badge.className}`}>
+                    {badge.icon}
+                    {badge.label}
+                  </span>
+                )}
+              </td>
+
+              {/* ACTIONS */}
+              <td className="px-6 py-4 text-right">
+                <div className="flex items-center justify-end gap-2">
+                  {isEditing ? (
+                    <>
+                      <button onClick={saveEditing} className="p-1.5 bg-blue-900/30 text-blue-400 rounded-md hover:bg-blue-900/50 transition-colors" title="Enregistrer">
+                        <Save size={16} />
+                      </button>
+                      <button onClick={cancelEditing} className="p-1.5 bg-slate-800 text-slate-400 rounded-md hover:bg-slate-700 transition-colors" title="Annuler">
+                        <X size={16} />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {/* Edit Button */}
+                      <button
+                        onClick={() => startEditing(t)}
+                        className="p-1.5 hover:bg-blue-900/30 text-blue-400 rounded-md transition-colors"
+                        title="Modifier"
+                      >
+                        <Edit2 size={16} />
+                      </button>
+
+                      {/* Move to Pending Review Button */}
+                      {t.status !== TransactionStatus.APPROVED && t.status !== TransactionStatus.PENDING_REVIEW && (
+                        <button
+                          onClick={() => onUpdateTransaction({ ...t, status: TransactionStatus.PENDING_REVIEW })}
+                          className="p-1.5 hover:bg-indigo-900/30 text-indigo-400 rounded-md transition-colors"
+                          title="Marquer pour Revue"
+                        >
+                          <Eye size={16} />
+                        </button>
                       )}
-                    </select>
-                  </td>
 
-                  {/* MEMBER */}
-                  <td className="px-6 py-4">
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editForm.detectedMemberName || ''}
-                        placeholder="Nom du membre"
-                        onChange={e => setEditForm({ ...editForm, detectedMemberName: e.target.value })}
-                        className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-sm text-white"
-                      />
-                    ) : (
-                      t.detectedMemberName ? (
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-900/30 text-purple-300 border border-purple-800">
-                          {t.detectedMemberName}
-                        </span>
-                      ) : (
-                        <span className="text-slate-500">-</span>
-                      )
-                    )}
-                  </td>
-
-                  {/* STATUS */}
-                  <td className="px-6 py-4">
-                    {!isEditing && (
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${badge.className}`}>
-                        {badge.icon}
-                        {badge.label}
-                      </span>
-                    )}
-                  </td>
-
-                  {/* ACTIONS */}
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {isEditing ? (
-                        <>
-                          <button onClick={saveEditing} className="p-1.5 bg-blue-900/30 text-blue-400 rounded-md hover:bg-blue-900/50 transition-colors" title="Enregistrer">
-                            <Save size={16} />
-                          </button>
-                          <button onClick={cancelEditing} className="p-1.5 bg-slate-800 text-slate-400 rounded-md hover:bg-slate-700 transition-colors" title="Annuler">
-                            <X size={16} />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          {/* Edit Button */}
-                          <button
-                            onClick={() => startEditing(t)}
-                            className="p-1.5 hover:bg-blue-900/30 text-blue-400 rounded-md transition-colors"
-                            title="Modifier"
-                          >
-                            <Edit2 size={16} />
-                          </button>
-
-                          {/* Move to Pending Review Button */}
-                          {t.status !== TransactionStatus.APPROVED && t.status !== TransactionStatus.PENDING_REVIEW && (
-                            <button
-                              onClick={() => onUpdateTransaction({ ...t, status: TransactionStatus.PENDING_REVIEW })}
-                              className="p-1.5 hover:bg-indigo-900/30 text-indigo-400 rounded-md transition-colors"
-                              title="Marquer pour Revue"
-                            >
-                              <Eye size={16} />
-                            </button>
-                          )}
-
-                          {/* Approve Button */}
-                          {t.status !== TransactionStatus.APPROVED && (
-                            <button
-                              onClick={() => onUpdateTransaction({ ...t, status: TransactionStatus.APPROVED })}
-                              className="p-1.5 hover:bg-green-900/30 text-green-400 rounded-md transition-colors"
-                              title="Approuver"
-                            >
-                              <Check size={16} />
-                            </button>
-                          )}
-
-                          {/* Delete Button */}
-                          <button
-                            onClick={() => onDeleteTransaction(t.id)}
-                            className="p-1.5 hover:bg-rose-900/30 text-rose-400 rounded-md transition-colors"
-                            title="Supprimer"
-                          >
-                            <X size={16} />
-                          </button>
-                        </>
+                      {/* Approve Button */}
+                      {t.status !== TransactionStatus.APPROVED && (
+                        <button
+                          onClick={() => onUpdateTransaction({ ...t, status: TransactionStatus.APPROVED })}
+                          className="p-1.5 hover:bg-green-900/30 text-green-400 rounded-md transition-colors"
+                          title="Approuver"
+                        >
+                          <Check size={16} />
+                        </button>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {filteredTransactions.length === 0 && (
-          <div className="p-12 text-center text-slate-500">
-            Aucune transaction trouvée correspondant à vos critères.
-          </div>
-        )}
-      </div>
+
+                      {/* Delete Button */}
+                      <button
+                        onClick={() => handleDeleteClick(t.id)}
+                        className="p-1.5 hover:bg-rose-900/30 text-rose-400 rounded-md transition-colors"
+                        title="Supprimer"
+                      >
+                        <X size={16} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+{
+  filteredTransactions.length === 0 && (
+    <div className="p-12 text-center text-slate-500">
+      Aucune transaction trouvée correspondant à vos critères.
     </div>
+  )
+}
+      </div >
+    </div >
   );
 };
