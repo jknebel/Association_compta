@@ -288,6 +288,16 @@ function App() {
         await saveTransactions(archived);
     };
 
+    const handleGuessMember = async (t: Transaction): Promise<string | null> => {
+        try {
+            const result = await suggestCategory(t.description, accounts);
+            return result.memberName || null;
+        } catch (e) {
+            console.error("Manual AI Guess failed", e);
+            return null;
+        }
+    };
+
     // Membership View Component (Keep existing code...)
     const MembersView = () => {
         const [editingTxnId, setEditingTxnId] = useState<string | null>(null);
@@ -643,6 +653,7 @@ function App() {
                     onClearAll={handleClearAllTransactions}
                     onArchiveAll={handleArchiveAllTransactions}
                     autoMatchProgress={autoMatchProgress}
+                    onGuessMember={handleGuessMember}
                 />
             )}
 

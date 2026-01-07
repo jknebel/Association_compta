@@ -15,6 +15,7 @@ interface LedgerViewProps {
   onClearAll: () => void;
   onArchiveAll: () => void;
   autoMatchProgress: { current: number, total: number, message: string } | null;
+  onGuessMember?: (t: Transaction) => Promise<string | null>;
 }
 
 export const LedgerView: React.FC<LedgerViewProps> = ({
@@ -26,7 +27,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   onReanalyzeAll,
   onClearAll,
   onArchiveAll,
-  autoMatchProgress
+  autoMatchProgress,
+  onGuessMember
 }) => {
   const [filter, setFilter] = useState('ALL');
   const [search, setSearch] = useState('');
@@ -38,6 +40,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   // Editing State
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Transaction>>({});
+  const [isGuessing, setIsGuessing] = useState<string | null>(null); // AI loading state
 
   // Receipt Upload State
   const [uploadingId, setUploadingId] = useState<string | null>(null);
@@ -586,24 +589,48 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                           {/* Approve Button */}
                           {t.status !== TransactionStatus.APPROVED && (
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 // On Approve, if Membership Account + No Member Name, try extraction
                                 let finalMemberName = t.detectedMemberName;
                                 const currentAccount = accounts.find(a => a.id === t.accountId);
 
                                 if (currentAccount?.isMembership && !finalMemberName) {
-                                  const virtMatch = t.description.match(/(?:VIRT\s+CPTE|VIREMENT\s+DE|VIREMENT)\s+(?:DE\s+)?([A-Z\s\.]+)/i);
-                                  if (virtMatch && virtMatch[1]) {
-                                    finalMemberName = virtMatch[1].trim();
+                                  // 1. Try AI (Server-Side, Slow but Smart)
+                                  if (onGuessMember) {
+                                    setIsGuessing(t.id);
+                                    try {
+                                      const aiName = await onGuessMember(t);
+                                      if (aiName) {
+                                        finalMemberName = aiName;
+                                      } else {
+                                        // 2. Fallback to Regex if AI found nothing
+                                        throw new Error("AI returned null");
+                                      }
+                                    } catch (e) {
+                                      // 3. Fallback to Regex (Client-Side, Fast) on error or empty AI
+                                      const virtMatch = t.description.match(/(?:VIRT\s+CPTE|VIREMENT\s+DE|VIREMENT)\s+(?:DE\s+)?([A-Z\s\.]+)/i);
+                                      if (virtMatch && virtMatch[1]) {
+                                        finalMemberName = virtMatch[1].trim();
+                                      }
+                                    } finally {
+                                      setIsGuessing(null);
+                                    }
+                                  } else {
+                                    // No AI available, just Regex
+                                    const virtMatch = t.description.match(/(?:VIRT\s+CPTE|VIREMENT\s+DE|VIREMENT)\s+(?:DE\s+)?([A-Z\s\.]+)/i);
+                                    if (virtMatch && virtMatch[1]) {
+                                      finalMemberName = virtMatch[1].trim();
+                                    }
                                   }
                                 }
 
                                 onUpdateTransaction({ ...t, detectedMemberName: finalMemberName, status: TransactionStatus.APPROVED });
                               }}
-                              className="p-1.5 hover:bg-green-900/30 text-green-400 rounded-md transition-colors"
-                              title="Approuver"
+                              disabled={isGuessing === t.id}
+                              className={`p-1.5 rounded-md transition-colors ${isGuessing === t.id ? 'bg-slate-800 text-slate-500 cursor-wait' : 'hover:bg-green-900/30 text-green-400'}`}
+                              title={isGuessing === t.id ? "Recherche IA en cours..." : "Approuver (avec recherche membre)"}
                             >
-                              <Check size={16} />
+                              {isGuessing === t.id ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                             </button>
                           )}
 
