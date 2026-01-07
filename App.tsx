@@ -263,7 +263,7 @@ function App() {
             return;
         }
 
-        if (!confirm("Êtes-vous vraiment sûr ? Cela effacera tout l'historique des transactions de la base de données.")) {
+        if (!confirm("Êtes-vous vraiment sûr ? Cela effacera toutes les transactions, ainsi que les membres détectés associés et les liens avec les justificatifs.")) {
             return;
         }
 

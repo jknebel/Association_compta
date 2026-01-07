@@ -6,7 +6,7 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import type { FirebaseApp } from 'firebase/app';
 import {
     getFirestore, collection, doc, onSnapshot,
-    setDoc, deleteDoc, updateDoc, query, orderBy, writeBatch, getDocs
+    setDoc, deleteDoc, updateDoc, query, orderBy, writeBatch, getDocs, deleteField
 } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -248,15 +248,35 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         if (shouldUseLocalStorage) {
             localStorage.removeItem('asso_compta_transactions_v5');
             setTransactions([]);
+
+            // Unlink receipts in local storage
+            setReceipts(prev => {
+                const newR = prev.map(r => r.linkedTransactionId ? { ...r, linkedTransactionId: undefined } : r);
+                localStorage.setItem('asso_compta_receipts_v5', JSON.stringify(newR));
+                return newR;
+            });
             return;
         }
         if (user) {
             const batch = writeBatch(db);
-            const q = query(collection(db, "users", user.uid, "transactions"));
-            const snapshot = await getDocs(q);
-            snapshot.docs.forEach((doc) => {
+
+            // 1. Delete all transactions
+            const qTxns = query(collection(db, "users", user.uid, "transactions"));
+            const snapshotTxns = await getDocs(qTxns);
+            snapshotTxns.docs.forEach((doc) => {
                 batch.delete(doc.ref);
             });
+
+            // 2. Unlink all receipts that were linked
+            const qReceipts = query(collection(db, "users", user.uid, "receipts"));
+            const snapshotReceipts = await getDocs(qReceipts);
+            snapshotReceipts.docs.forEach((doc) => {
+                const data = doc.data();
+                if (data.linkedTransactionId) {
+                    batch.update(doc.ref, { linkedTransactionId: deleteField() });
+                }
+            });
+
             await batch.commit();
             // Local state update listener will handle UI update
         }

@@ -477,10 +477,29 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                     <select
                       value={isEditing ? (editForm.accountId || '') : (t.accountId || '')}
                       onChange={(e) => {
+                        const newAccountId = e.target.value;
+                        const selectedAccount = accounts.find(a => a.id === newAccountId);
+                        let detectedMemberName = isEditing ? editForm.detectedMemberName : t.detectedMemberName;
+
+                        // Auto-extract member name if account is a Membership account (Class 7 + isMembership)
+                        if (selectedAccount?.isMembership) {
+                          // REFINED LOGIC: VIRT CPTE as "Last Resort".
+                          // If we already have a name (from AI or previous edit), we KEEP it (Strategy 1).
+                          // We only search if detectedMemberName is empty.
+                          if (!detectedMemberName) {
+                            const desc = isEditing ? (editForm.description || t.description) : t.description;
+                            // Last Resort: VIRT CPTE
+                            const virtMatch = desc.match(/(?:VIRT\s+CPTE|VIREMENT\s+DE|VIREMENT)\s+(?:DE\s+)?([A-Z\s\.]+)/i);
+                            if (virtMatch && virtMatch[1]) {
+                              detectedMemberName = virtMatch[1].trim();
+                            }
+                          }
+                        }
+
                         if (isEditing) {
-                          setEditForm({ ...editForm, accountId: e.target.value })
+                          setEditForm({ ...editForm, accountId: newAccountId, detectedMemberName })
                         } else {
-                          onUpdateTransaction({ ...t, accountId: e.target.value, status: TransactionStatus.REVIEW_NEEDED })
+                          onUpdateTransaction({ ...t, accountId: newAccountId, detectedMemberName, status: TransactionStatus.REVIEW_NEEDED })
                         }
                       }}
                       className={`bg-transparent border-b border-dashed border-slate-600 focus:border-blue-500 focus:outline-none py-1 max-w-[200px] truncate ${!(isEditing ? editForm.accountId : t.accountId) ? 'text-rose-400 font-semibold' : 'text-slate-300'} [&>option]:bg-slate-900 [&>option]:text-white`}
@@ -567,7 +586,20 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                           {/* Approve Button */}
                           {t.status !== TransactionStatus.APPROVED && (
                             <button
-                              onClick={() => onUpdateTransaction({ ...t, status: TransactionStatus.APPROVED })}
+                              onClick={() => {
+                                // On Approve, if Membership Account + No Member Name, try extraction
+                                let finalMemberName = t.detectedMemberName;
+                                const currentAccount = accounts.find(a => a.id === t.accountId);
+
+                                if (currentAccount?.isMembership && !finalMemberName) {
+                                  const virtMatch = t.description.match(/(?:VIRT\s+CPTE|VIREMENT\s+DE|VIREMENT)\s+(?:DE\s+)?([A-Z\s\.]+)/i);
+                                  if (virtMatch && virtMatch[1]) {
+                                    finalMemberName = virtMatch[1].trim();
+                                  }
+                                }
+
+                                onUpdateTransaction({ ...t, detectedMemberName: finalMemberName, status: TransactionStatus.APPROVED });
+                              }}
                               className="p-1.5 hover:bg-green-900/30 text-green-400 rounded-md transition-colors"
                               title="Approuver"
                             >
