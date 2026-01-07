@@ -258,27 +258,55 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            const batch = writeBatch(db);
+            // Function to commit batches in chunks
+            const commitBatch = async (batchOp: any) => {
+                await batchOp.commit();
+            };
 
-            // 1. Delete all transactions
             const qTxns = query(collection(db, "users", user.uid, "transactions"));
             const snapshotTxns = await getDocs(qTxns);
-            snapshotTxns.docs.forEach((doc) => {
-                batch.delete(doc.ref);
-            });
 
-            // 2. Unlink all receipts that were linked
+            let batch = writeBatch(db);
+            let count = 0;
+            const validBatches = [];
+
+            // 1. Delete Transactions
+            for (const doc of snapshotTxns.docs) {
+                batch.delete(doc.ref);
+                count++;
+                if (count >= 400) {
+                    validBatches.push(batch);
+                    batch = writeBatch(db);
+                    count = 0;
+                }
+            }
+
+            // 2. Unlink Receipts
             const qReceipts = query(collection(db, "users", user.uid, "receipts"));
             const snapshotReceipts = await getDocs(qReceipts);
-            snapshotReceipts.docs.forEach((doc) => {
+
+            for (const doc of snapshotReceipts.docs) {
                 const data = doc.data();
                 if (data.linkedTransactionId) {
                     batch.update(doc.ref, { linkedTransactionId: deleteField() });
+                    count++;
+                    if (count >= 400) {
+                        validBatches.push(batch);
+                        batch = writeBatch(db);
+                        count = 0;
+                    }
                 }
-            });
+            }
 
-            await batch.commit();
-            // Local state update listener will handle UI update
+            // Commit pending
+            if (count > 0) {
+                validBatches.push(batch);
+            }
+
+            // Execute all batches
+            for (const b of validBatches) {
+                await b.commit();
+            }
         }
     };
 
