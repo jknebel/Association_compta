@@ -490,3 +490,58 @@ async def suggest_category(request: SuggestCategoryRequest):
         print(f"Suggest Category Error: {e}")
         # Return empty/null result instead of crashing
         return SuggestCategoryResponse(accountId=None, memberName=None)
+
+# --- AUDIT ENDPOINT ---
+
+class AuditRequest(BaseModel):
+    transactions: List[Transaction]
+    accounts: List[Account]
+
+@app.post("/audit")
+async def audit_ledger_endpoint(request: AuditRequest):
+    try:
+        # Pre-calc totals
+        income = sum(t.amount for t in request.transactions if t.amount > 0)
+        expenses = sum(t.amount for t in request.transactions if t.amount < 0)
+        balance = income + expenses
+        
+        # Format data for AI
+        txns_text = "\n".join([f"{t.date} | {t.description} | {t.amount} | ID: {t.accountId}" for t in request.transactions])
+        accounts_text = "\n".join([f"ID: {a.id} | {a.code} - {a.label} ({a.type})" for a in request.accounts])
+        
+        prompt = f"""
+        Tu es un Expert Comptable IA certifié. Ta mission est d'auditer la comptabilité de cette association pour la clôture.
+        
+        DONNÉES FINANCIÈRES :
+        ---------------------
+        Comptes :
+        {accounts_text}
+        
+        Transactions (Toutes validées) :
+        {txns_text}
+        
+        RÉSUMÉ :
+        Total Recettes : {income:.2f}
+        Total Dépenses : {expenses:.2f}
+        Résultat Net : {balance:.2f}
+        
+        TA MISSION (Réponds en FORMAT MARKDOWN) :
+        1.  **Synthèse Financière** : Rédige un paragraphe professionnel résumant la situation (bénéficiaire ou déficitaire) et les grandes masses.
+        2.  **Audit des Anomalies** : Analyse les transactions ligne par ligne. Si tu vois :
+            - Des gros montants (> 200) sans description claire.
+            - Des dépenses qui semblent bizarres pour une association.
+            - Des incohérences de compte (ex: 'Loyer' classé en 'Recettes').
+            Lyste-les dans une section "⚠️ Points de Vigilance". Sinon, dis "R.A.S - Comptabilité cohérente".
+        3.  **Certification** : Termine par une phrase solennelle : "Je, soussigné l'Assistant IA, certifie la cohérence arithmétique de ces écritures au [Date du Jour]."
+        
+        Le ton doit être formel, précis et rassurant. Fais une mise en page propre avec des titres.
+        """
+        
+        flash_llm = get_llm() # Using Flash for speed, or Pro for better reasoning if needed. Flash is usually fine for this volume.
+        response = flash_llm.invoke(prompt)
+        
+        return {"report": response.content}
+    
+    except Exception as e:
+        print(f"Audit Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

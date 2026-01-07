@@ -87,15 +87,22 @@ export const parseBankStatementPDF = async (
 
 /**
  * AGENT 2: The Expert Auditor
- * TODO: Move to backend if needed. Currently disabled/placeholder.
+ * Calls the backend to generate a formal audit report.
  */
 export const auditLedger = async (
   transactions: Transaction[],
   accounts: Account[]
 ): Promise<string> => {
-  // Placeholder implementation or todo: implement /audit endpoint
-  console.warn("Audit Ledger moved to backend (not yet implemented in main.py)");
-  return "Audit functionality is currently being migrated to the backend.";
+  try {
+    const result = await callApi<{ report: string }>("/audit", {
+      transactions,
+      accounts
+    });
+    return result.report;
+  } catch (error) {
+    console.error("Audit Failed:", error);
+    return "Erreur lors de la génération de l'audit. Veuillez vérifier que le backend est bien lancé.";
+  }
 };
 
 /**
