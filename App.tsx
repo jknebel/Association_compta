@@ -267,8 +267,13 @@ function App() {
             return;
         }
 
-        await deleteAllTransactions();
-        alert("Toutes les transactions ont été supprimées.");
+        try {
+            await deleteAllTransactions();
+            alert("Toutes les transactions ont été supprimées.");
+        } catch (error) {
+            console.error(error);
+            alert("Une erreur est survenue lors de la suppression. Vérifiez la console.");
+        }
     };
 
     const handleArchiveAllTransactions = async () => {

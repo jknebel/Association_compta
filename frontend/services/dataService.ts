@@ -270,25 +270,10 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             let count = 0;
             const validBatches = [];
 
-            // 1. Delete Transactions
-            for (const doc of snapshotTxns.docs) {
-                batch.delete(doc.ref);
-                count++;
-                if (count >= 400) {
-                    validBatches.push(batch);
-                    batch = writeBatch(db);
-                    count = 0;
-                }
-            }
-
-            // 2. Unlink Receipts
-            const qReceipts = query(collection(db, "users", user.uid, "receipts"));
-            const snapshotReceipts = await getDocs(qReceipts);
-
-            for (const doc of snapshotReceipts.docs) {
-                const data = doc.data();
-                if (data.linkedTransactionId) {
-                    batch.update(doc.ref, { linkedTransactionId: deleteField() });
+            try {
+                // 1. Delete Transactions
+                for (const documentSnapshot of snapshotTxns.docs) {
+                    batch.delete(documentSnapshot.ref);
                     count++;
                     if (count >= 400) {
                         validBatches.push(batch);
@@ -296,16 +281,39 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
                         count = 0;
                     }
                 }
-            }
 
-            // Commit pending
-            if (count > 0) {
-                validBatches.push(batch);
-            }
+                // 2. Unlink Receipts
+                const qReceipts = query(collection(db, "users", user.uid, "receipts"));
+                const snapshotReceipts = await getDocs(qReceipts);
 
-            // Execute all batches
-            for (const b of validBatches) {
-                await b.commit();
+                for (const documentSnapshot of snapshotReceipts.docs) {
+                    const data = documentSnapshot.data();
+                    if (data.linkedTransactionId) {
+                        batch.update(documentSnapshot.ref, { linkedTransactionId: deleteField() });
+                        count++;
+                        if (count >= 400) {
+                            validBatches.push(batch);
+                            batch = writeBatch(db);
+                            count = 0;
+                        }
+                    }
+                }
+
+                // Commit pending
+                if (count > 0) {
+                    validBatches.push(batch);
+                }
+
+                console.log(`Deleting ${snapshotTxns.size} transactions and unlinking receipts in ${validBatches.length} batches.`);
+
+                // Execute all batches
+                for (const b of validBatches) {
+                    await b.commit();
+                }
+                console.log("Deletion complete.");
+            } catch (error) {
+                console.error("Error deleting transactions:", error);
+                throw error; // Propagate to caller
             }
         }
     };
