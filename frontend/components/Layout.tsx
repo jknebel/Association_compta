@@ -10,9 +10,10 @@ interface LayoutProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
   user?: User | null;
+  disabled?: boolean;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange, user }) => {
+export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange, user, disabled = false }) => {
   const { isConfigured } = useDataService(user || null);
 
   const navItems = [
@@ -36,7 +37,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100">
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col shadow-lg z-10">
+      <aside className={`w-64 bg-slate-900 border-r border-slate-800 flex flex-col shadow-lg z-10 ${disabled ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
         <div className="p-6 border-b border-slate-800">
           <h1 className="text-xl font-bold flex items-center gap-2">
             <span className="text-blue-500">Asso</span>Compta AI
@@ -48,11 +49,12 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
           {navItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => onTabChange(item.id)}
+              onClick={() => !disabled && onTabChange(item.id)}
+              disabled={disabled}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors duration-200 ${activeTab === item.id
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}
+                } ${disabled ? 'cursor-not-allowed' : ''}`}
             >
               <item.icon size={20} />
               <span className="font-medium">{item.label}</span>

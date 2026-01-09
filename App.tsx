@@ -601,6 +601,8 @@ function App() {
         );
     };
 
+    const [isUploading, setIsUploading] = useState(false);
+
     // LOADING STATE
     if (authLoading || (user && dataLoading)) {
         return (
@@ -617,7 +619,7 @@ function App() {
     }
 
     return (
-        <Layout activeTab={activeTab} onTabChange={setActiveTab} user={user}>
+        <Layout activeTab={activeTab} onTabChange={setActiveTab} user={user} disabled={isUploading}>
             {(!isConfigured || guestMode) && (
                 <div className="bg-orange-900/20 border-b border-orange-900/50 text-orange-200 px-4 py-2 text-xs flex items-center justify-center gap-2">
                     <CloudOff size={14} />
@@ -634,6 +636,7 @@ function App() {
                     receipts={receipts}
                     user={user}
                     onProcessComplete={handleProcessComplete}
+                    onProcessingChange={setIsUploading}
                 />
             )}
 
