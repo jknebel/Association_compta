@@ -623,9 +623,29 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                           {t.status !== TransactionStatus.APPROVED && (
                             <button
                               onClick={async () => {
+                                // VALIDATION LOGIC
+                                if (!t.accountId) {
+                                  alert("Impossible de valider : Aucun compte sélectionné.");
+                                  return;
+                                }
+                                const currentAccount = accounts.find(a => a.id === t.accountId);
+                                if (!currentAccount) {
+                                  alert("Impossible de valider : Compte introuvable.");
+                                  return;
+                                }
+                                // Check Charge (Negative) vs Product (Positive)
+                                if (t.amount < 0 && currentAccount.type !== AccountType.EXPENSE) {
+                                  alert(`Erreur de validation : Une dépense (montant négatif) doit être associée à un compte de CHARGE (Type 6).\nCompte actuel : ${currentAccount.type}`);
+                                  return;
+                                }
+                                if (t.amount > 0 && currentAccount.type !== AccountType.INCOME) {
+                                  alert(`Erreur de validation : Une recette (montant positif) doit être associée à un compte de PRODUIT (Type 7).\nCompte actuel : ${currentAccount.type}`);
+                                  return;
+                                }
+
                                 // On Approve, if Membership Account + No Member Name, try extraction
                                 let finalMemberName = t.detectedMemberName;
-                                const currentAccount = accounts.find(a => a.id === t.accountId);
+
 
                                 if (currentAccount?.isMembership && !finalMemberName) {
                                   // 1. Try AI (Server-Side, Slow but Smart)
@@ -698,6 +718,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         onClose={() => setIsAuditOpen(false)}
         report={auditReport}
         loading={isAuditing}
+        transactions={transactions}
+        accounts={accounts}
       />
     </div >
   );
