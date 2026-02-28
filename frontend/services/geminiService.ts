@@ -81,8 +81,6 @@ export const processReceiptBackend = async (
  * Uses Gemini Flash to extract data from PDF bank statements.
  * NOW ENHANCED: Takes matchedHistory to learn from user's past habits.
  */
-// --- API CONFIGURATION ---
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 /**
  * AGENT 1: The Ingestion Agent (SERVER-SIDE)
