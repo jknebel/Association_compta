@@ -71,6 +71,38 @@ class Transaction(BaseModel):
 class TransactionList(BaseModel):
     transactions: List[Transaction]
 
+class AnalyzeReceiptRequest(BaseModel):
+    base64Data: str
+    mimeType: str
+
+class AnalyzeReceiptResponse(BaseModel):
+    date: Optional[str] = None
+    amount: Optional[float] = None
+
+class ChatMessage(BaseModel):
+    role: str
+    text: str
+
+class ChatContext(BaseModel):
+    transactions: List[Transaction]
+    accounts: List[Account]
+
+class ChatRequest(BaseModel):
+    history: List[ChatMessage]
+    context: ChatContext
+    newMessage: str
+    
+class ChatResponse(BaseModel):
+    response: str
+
+class SuggestCategoryRequest(BaseModel):
+    description: str
+    accounts: List[Account]
+
+class SuggestCategoryResponse(BaseModel):
+    accountId: Optional[str] = None
+    memberName: Optional[str] = None
+
 # --- LLM HELPERS ---
 def get_llm():
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -188,7 +220,29 @@ def classification_node(state: AgentState):
     ### 1. PLAN COMPTABLE ACTUEL
     {accounts_info}
 
-    ### 2. HISTORIQUE & APPRENTISSAGE (TRÈS IMPORTANT)
+    !!! TRÈS IMPORTANT !!!
+    Pour le champ 'accountId', tu DOIS utiliser UNIQUEMENT la valeur 'ID' (souvent un UUID ou une chaîne complexe) fournie dans la liste ci-dessus.
+    NE renvoie PAS le 'Code' (ex: 701000) ni le 'Nom'.
+    Si tu penses que c'est le compte "Cotisations" (Code 701000), tu dois chercher son ID correspondant dans la liste et renvoyer cet ID.
+
+    ### 2. RÈGLES COMPTABLES (SIGNES ET CLASSES) - CRITIQUE
+    Tu dois impérativement respecter la logique comptable suivante :
+
+    1.  **MONTANTS NÉGATIFS (Dépenses / Débits)** :
+        -   Ils correspondent généralement à des **CHARGES** (Comptes commençant par **6**).
+        -   Exemple : -20.00 CHF pour "Parking" doit aller dans un compte de classe 6 (ex: 6200 Achats de marchandises ou Services).
+        -   IL EST INTERDIT de classer un montant négatif dans un compte de PRODUIT (Classe 7), sauf s'il s'agit d'un remboursement client (rare).
+
+    2.  **MONTANTS POSITIFS (Recettes / Crédits)** :
+        -   Ils correspondent généralement à des **PRODUITS** (Comptes commençant par **7**).
+        -   Exemple : +50.00 CHF pour "Cotisation" doit aller dans un compte de classe 7 (ex: 7000 Cotisations).
+
+    3.  **VIREMENTS INTERNES** :
+        -   Les mouvements de fonds (classe 58) peuvent être positifs ou négatifs.
+
+    **VERIFICATION :** Avant d'assigner un compte, vérifie si le signe de la transaction (-/+) est cohérent avec la classe du compte (6=Charge, 7=Produit).
+
+    ### 3. HISTORIQUE & APPRENTISSAGE (TRÈS IMPORTANT)
     Voici comment cet utilisateur a classé ses transactions précédentes. 
     Utilise ces exemples pour comprendre sa logique.
     
@@ -203,7 +257,7 @@ def classification_node(state: AgentState):
     {history_context}
     ---------------------
 
-    ### 3. NOUVELLES TRANSACTIONS À CLASSER
+    ### 4. NOUVELLES TRANSACTIONS À CLASSER
     {json.dumps([t.model_dump() for t in transactions], default=str)}
 
     Retourne la liste des transactions avec le champ 'accountId' rempli (ou null si incertain).
@@ -214,9 +268,29 @@ def classification_node(state: AgentState):
         structured_llm = flash_llm.with_structured_output(TransactionList)
         result = structured_llm.invoke(prompt)
         
+        # Post-processing: Validate and Correct Account IDs
+        validated_transactions = []
+        account_map = {a.id: a for a in accounts}
+        code_map = {a.code: a for a in accounts} # Fallback map
+
+        for txn in result.transactions:
+            if txn.accountId:
+                # 1. Check if ID is valid
+                if txn.accountId in account_map:
+                    # All good
+                    pass
+                # 2. Fallback: Check if AI returned a Code instead
+                elif txn.accountId in code_map:
+                    print(f"Correction Auto: Code '{txn.accountId}' remplacé par ID '{code_map[txn.accountId].id}'")
+                    txn.accountId = code_map[txn.accountId].id
+                else:
+                    # Invalid ID, reset
+                    txn.accountId = None
+            validated_transactions.append(txn)
+
         return {
-            "extracted_transactions": result.transactions,
-            "logs": ["Classification intelligente terminée avec historique."]
+            "extracted_transactions": validated_transactions,
+            "logs": ["Classification intelligente terminée avec historique et validation."]
         }
     except Exception as e:
         print(f"Classification Error: {e}")
@@ -276,4 +350,198 @@ async def process_statement(
     except Exception as e:
         import traceback
         traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analyze-receipt")
+async def analyze_receipt(request: AnalyzeReceiptRequest):
+    try:
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(AnalyzeReceiptResponse)
+        
+        prompt = """
+        Analyze this receipt/invoice.
+        Extract:
+        1. The date of the transaction (Format YYYY-MM-DD).
+        2. The TOTAL amount (Float).
+        
+        If you cannot find one of them, return null for that field.
+        """
+        
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url", 
+                    "image_url": {"url": f"data:{request.mimeType};base64,{request.base64Data}"}
+                }
+            ]
+        )
+        
+        result = structured_llm.invoke([message])
+        return result
+    except Exception as e:
+        print(f"Receipt Analysis Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/chat")
+async def chat_agent(request: ChatRequest):
+    try:
+        # Prepare Context
+        txns_summary = f"{len(request.context.transactions)} transactions"
+        accounts_summary = f"{len(request.context.accounts)} accounts"
+        
+        income = sum(t.amount for t in request.context.transactions if t.amount > 0)
+        expenses = sum(t.amount for t in request.context.transactions if t.amount < 0)
+        
+        system_prompt = f"""
+        You are an intelligent accounting assistant for an association.
+        You have access to the current financial data:
+        {accounts_summary} and {txns_summary}.
+        
+        Total Income: {income:.2f}
+        Total Expenses: {expenses:.2f}
+        
+        Answer questions about the finances, help categorize items, or explain accounting principles.
+        If asked to perform an action (like "create an account"), guide the user on how to do it in the UI.
+        """
+        
+        messages = [SystemMessage(content=system_prompt)]
+        
+        # Add History
+        for msg in request.history:
+             if msg.role == 'user':
+                 messages.append(HumanMessage(content=msg.text))
+             else:
+                 messages.append(HumanMessage(content=msg.text)) # LangChain usually uses AIMessage, but HumanMessage works for simple history if role is clear? 
+                 # Actually better to use AIMessage for model
+                 
+        # Add new message
+        messages.append(HumanMessage(content=request.newMessage))
+        
+        # Use Pro model if available, or Flash
+        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
+        response = llm.invoke(messages)
+        
+        return ChatResponse(response=response.content)
+    except Exception as e:
+        print(f"Chat Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/suggest-category")
+async def suggest_category(request: SuggestCategoryRequest):
+    try:
+        # 1. Build Account Map for easy parent lookup
+        account_map = {a.id: a for a in request.accounts}
+
+        # 2. Helper to get full path
+        def get_account_path(account):
+            path = [account.label]
+            current = account
+            # Walk up the tree (max 3 levels to avoid infinite loops if cycle)
+            for _ in range(3):
+                if hasattr(current, 'parentId') and current.parentId and current.parentId in account_map:
+                    parent = account_map[current.parentId]
+                    path.insert(0, parent.label)
+                    current = parent
+                else:
+                    break
+            return " > ".join(path)
+
+        # 3. Prepare Context with Path and Description
+        accounts_context = []
+        for a in request.accounts:
+            # Safe attribute access + optional description
+            desc = getattr(a, 'description', '')
+            full_path = get_account_path(a)
+            
+            context_entry = {
+                "id": a.id, 
+                "label": a.label,
+                "path": full_path,
+                "description": desc,
+                "isMembership": getattr(a, 'isMembership', False)
+            }
+            accounts_context.append(context_entry)
+        
+        prompt = f"""
+        Analyze the transaction description: "{request.description}"
+        
+        Task 1: Select the best matching Account ID from the list below.
+        CRITICAL INSTRUCTIONS FOR MATCHING:
+        - Use the 'path' field to understand the account hierarchy (Parent > Child).
+        - Use the 'description' field (if present) to understand the intended use of the account.
+        - Pay attention to specific keywords in the 'description' or 'path' that match the transaction.
+        
+        Task 2: If the chosen account has 'isMembership': true, OR if the description clearly contains a person's name (Payer), extract that name.
+        
+        SPECIAL RULE: If the description contains "VIRT CPTE" (which means Account Transfer), the text following it is likely the Payer's Name. Extract it as 'memberName', especially if the account is a Product class (Class 7).
+        
+        Accounts: {json.dumps(accounts_context)}
+        
+        Return a strict JSON object: {{ "accountId": "ID_OR_NULL", "memberName": "EXTRACTED_NAME_OR_NULL" }}
+        """
+        
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(SuggestCategoryResponse)
+        result = structured_llm.invoke(prompt)
+        
+        return result
+    except Exception as e:
+        print(f"Suggest Category Error: {e}")
+        # Return empty/null result instead of crashing
+        return SuggestCategoryResponse(accountId=None, memberName=None)
+
+# --- AUDIT ENDPOINT ---
+
+class AuditRequest(BaseModel):
+    transactions: List[Transaction]
+    accounts: List[Account]
+
+@app.post("/audit")
+async def audit_ledger_endpoint(request: AuditRequest):
+    try:
+        # Pre-calc totals
+        income = sum(t.amount for t in request.transactions if t.amount > 0)
+        expenses = sum(t.amount for t in request.transactions if t.amount < 0)
+        balance = income + expenses
+        
+        # Format data for AI
+        txns_text = "\n".join([f"{t.date} | {t.description} | {t.amount} | ID: {t.accountId}" for t in request.transactions])
+        accounts_text = "\n".join([f"ID: {a.id} | {a.code} - {a.label} ({a.type})" for a in request.accounts])
+        
+        prompt = f"""
+        Tu es un Expert Comptable IA certifié. Ta mission est d'auditer la comptabilité de cette association pour la clôture.
+        
+        DONNÉES FINANCIÈRES :
+        ---------------------
+        Comptes :
+        {accounts_text}
+        
+        Transactions (Toutes validées) :
+        {txns_text}
+        
+        RÉSUMÉ :
+        Total Recettes : {income:.2f}
+        Total Dépenses : {expenses:.2f}
+        Résultat Net : {balance:.2f}
+        
+        TA MISSION (Réponds en FORMAT MARKDOWN) :
+        1.  **Synthèse Financière** : Rédige un paragraphe professionnel résumant la situation (bénéficiaire ou déficitaire) et les grandes masses.
+        2.  **Audit des Anomalies** : Analyse les transactions ligne par ligne. Si tu vois :
+            - Des gros montants (> 200) sans description claire.
+            - Des dépenses qui semblent bizarres pour une association.
+            - Des incohérences de compte (ex: 'Loyer' classé en 'Recettes').
+            Lyste-les dans une section "⚠️ Points de Vigilance". Sinon, dis "R.A.S - Comptabilité cohérente".
+        3.  **Certification** : Termine par une phrase solennelle : "Je, soussigné l'Assistant IA, certifie la cohérence arithmétique de ces écritures au [Date du Jour]."
+        
+        Le ton doit être formel, précis et rassurant. Fais une mise en page propre avec des titres.
+        """
+        
+        flash_llm = get_llm() # Using Flash for speed, or Pro for better reasoning if needed. Flash is usually fine for this volume.
+        response = flash_llm.invoke(prompt)
+        
+        return {"report": response.content}
+    
+    except Exception as e:
+        print(f"Audit Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

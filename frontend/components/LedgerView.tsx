@@ -3,20 +3,34 @@ import React, { useState, useRef } from 'react';
 import { Transaction, Account, TransactionStatus, AccountType } from '../../types';
 import { generateAccountingReport } from '../services/excelService';
 import { uploadReceipt } from '../services/storageService';
-import { Check, X, AlertTriangle, Search, Filter, Calendar, DollarSign, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2 } from 'lucide-react';
+import { auditLedger } from '../services/geminiService';
+import { AuditModal } from './AuditModal';
+import { Check, X, AlertTriangle, Search, Filter, Calendar, DollarSign, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck } from 'lucide-react';
 
 interface LedgerViewProps {
   transactions: Transaction[];
   accounts: Account[];
   onUpdateTransaction: (transaction: Transaction) => void;
   onDeleteTransaction: (id: string) => void;
+  onAutoMatch: () => void;
+  onReanalyzeAll: () => void;
+  onClearAll: () => void;
+  onArchiveAll: () => void;
+  autoMatchProgress: { current: number, total: number, message: string } | null;
+  onGuessMember?: (t: Transaction) => Promise<string | null>;
 }
 
 export const LedgerView: React.FC<LedgerViewProps> = ({
   transactions,
   accounts,
   onUpdateTransaction,
-  onDeleteTransaction
+  onDeleteTransaction,
+  onAutoMatch,
+  onReanalyzeAll,
+  onClearAll,
+  onArchiveAll,
+  autoMatchProgress,
+  onGuessMember
 }) => {
   const [filter, setFilter] = useState('ALL');
   const [search, setSearch] = useState('');
@@ -28,6 +42,27 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   // Editing State
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Transaction>>({});
+  const [isGuessing, setIsGuessing] = useState<string | null>(null); // AI loading state
+
+  // Audit State
+  const [isAuditOpen, setIsAuditOpen] = useState(false);
+  const [auditReport, setAuditReport] = useState("");
+  const [isAuditing, setIsAuditing] = useState(false);
+
+  const handleRunAudit = async () => {
+    setIsAuditOpen(true);
+    setIsAuditing(true);
+    try {
+      const report = await auditLedger(transactions, accounts);
+      setAuditReport(report);
+    } catch (e) {
+      setAuditReport("Erreur critique lors de l'audit.");
+    } finally {
+      setIsAuditing(false);
+    }
+  };
+
+  const allApproved = transactions.length > 0 && transactions.every(t => t.status === TransactionStatus.APPROVED);
 
   // Receipt Upload State
   const [uploadingId, setUploadingId] = useState<string | null>(null);
@@ -36,8 +71,9 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
   const filteredTransactions = transactions.filter(t => {
     // Basic Status & Search
-    const matchesFilter = filter === 'ALL' ||
-      (filter === 'UNCATEGORIZED' ? !t.accountId : t.status === filter);
+    const matchesFilter = filter === 'ALL'
+      ? t.status !== TransactionStatus.ARCHIVED // Hide archives by default
+      : (filter === 'UNCATEGORIZED' ? !t.accountId : t.status === filter);
 
     const matchesSearch = t.description.toLowerCase().includes(search.toLowerCase()) ||
       t.amount.toString().includes(search) ||
@@ -134,6 +170,13 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     }
   };
 
+  const handleDeleteClick = (id: string) => {
+    if (window.confirm("Voulez-vous vraiment supprimer cette transaction ? Cette action est irréversible.")) {
+      onDeleteTransaction(id);
+    }
+  };
+
+
   const getStatusBadge = (status: TransactionStatus) => {
     switch (status) {
       case TransactionStatus.APPROVED:
@@ -153,6 +196,12 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           className: 'bg-amber-900/30 text-amber-400 border-amber-800',
           icon: <AlertTriangle size={12} />,
           label: 'À Vérifier'
+        };
+      case TransactionStatus.ARCHIVED:
+        return {
+          className: 'bg-slate-700/30 text-slate-400 border-slate-600',
+          icon: <Check size={12} />, // Or another icon
+          label: 'Archivé'
         };
       default:
         return {
@@ -188,6 +237,63 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             <FileSpreadsheet size={16} />
             Exporter Bilan & Journal (.xlsx)
           </button>
+          <button
+            className={`px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
+            onClick={onAutoMatch}
+            disabled={!!autoMatchProgress}
+          >
+            {autoMatchProgress ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                {autoMatchProgress.message}
+              </>
+            ) : (
+              <>
+                <RefreshCw size={16} />
+                Auto-Match
+              </>
+            )}
+          </button>
+          <button
+            className={`px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
+            onClick={onReanalyzeAll}
+            disabled={!!autoMatchProgress}
+            title="Relancer l'analyse IA sur toutes les transactions (écrase les catégories existantes)"
+          >
+            <RotateCcw size={16} />
+            Re-Scan Complet
+          </button>
+
+          <button
+            className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ml-2"
+            onClick={onArchiveAll}
+            disabled={!!autoMatchProgress}
+            title="Archiver toutes les transactions visibles"
+          >
+            <Archive size={16} />
+            Archiver Tout
+          </button>
+
+          <button
+            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+            onClick={onClearAll}
+            disabled={!!autoMatchProgress}
+            title="Supprimer TOUTES les transactions pour recommencer"
+          >
+            <Trash2 size={16} />
+            Tout Effacer
+          </button>
+
+          <div className="w-px h-8 bg-slate-700 mx-2"></div>
+
+          <button
+            className={`px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-lg hover:from-amber-600 hover:to-orange-700 text-sm font-bold flex items-center gap-2 shadow-lg shadow-orange-900/20 transition-all ${!allApproved ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
+            onClick={allApproved ? handleRunAudit : undefined}
+            title={allApproved ? "Générer le rapport de clôture" : "Validez toutes les transactions pour auditer"}
+          >
+            <ShieldCheck size={18} />
+            Clôture & Audit
+          </button>
         </div>
       </header>
 
@@ -218,14 +324,15 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               <option value={TransactionStatus.REVIEW_NEEDED}>À Vérifier</option>
               <option value={TransactionStatus.PENDING_REVIEW}>En Attente de Revue</option>
               <option value={TransactionStatus.APPROVED}>Approuvé</option>
+              <option value={TransactionStatus.ARCHIVED}>📦 Archives</option>
             </select>
           </div>
-        </div>
+        </div >
 
         {/* Bottom Row: Date & Amount Range */}
-        <div className="flex flex-wrap items-center gap-6 pt-4 border-t border-slate-800">
+        < div className="flex flex-wrap items-center gap-6 pt-4 border-t border-slate-800" >
           {/* Date Range */}
-          <div className="flex items-center gap-2">
+          < div className="flex items-center gap-2" >
             <div className="flex items-center gap-2 text-slate-500 min-w-fit">
               <Calendar size={16} />
               <span className="text-sm font-medium">Date:</span>
@@ -243,7 +350,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               onChange={(e) => setEndDate(e.target.value)}
               className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
             />
-          </div>
+          </div >
 
           <div className="hidden md:block w-px h-6 bg-slate-800"></div>
 
@@ -271,20 +378,22 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           </div>
 
           {/* Active Filters Clear Button */}
-          {(startDate || endDate || minAmount || maxAmount || search || filter !== 'ALL') && (
-            <button
-              onClick={clearFilters}
-              className="ml-auto flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg transition-colors"
-            >
-              <XCircle size={14} />
-              Tout Effacer
-            </button>
-          )}
-        </div>
-      </div>
+          {
+            (startDate || endDate || minAmount || maxAmount || search || filter !== 'ALL') && (
+              <button
+                onClick={clearFilters}
+                className="ml-auto flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg transition-colors"
+              >
+                <XCircle size={14} />
+                Tout Effacer
+              </button>
+            )
+          }
+        </div >
+      </div >
 
       {/* Hidden File Input for Receipt Upload */}
-      <input
+      < input
         type="file"
         ref={fileInputRef}
         className="hidden"
@@ -293,7 +402,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       />
 
       {/* Table Section */}
-      <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-hidden flex-1 overflow-y-auto">
+      < div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-hidden flex-1 overflow-y-auto" >
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
             <tr>
@@ -404,10 +513,29 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                     <select
                       value={isEditing ? (editForm.accountId || '') : (t.accountId || '')}
                       onChange={(e) => {
+                        const newAccountId = e.target.value;
+                        const selectedAccount = accounts.find(a => a.id === newAccountId);
+                        let detectedMemberName = isEditing ? editForm.detectedMemberName : t.detectedMemberName;
+
+                        // Auto-extract member name if account is a Membership account (Class 7 + isMembership)
+                        if (selectedAccount?.isMembership) {
+                          // REFINED LOGIC: VIRT CPTE as "Last Resort".
+                          // If we already have a name (from AI or previous edit), we KEEP it (Strategy 1).
+                          // We only search if detectedMemberName is empty.
+                          if (!detectedMemberName) {
+                            const desc = isEditing ? (editForm.description || t.description) : t.description;
+                            // Last Resort: VIRT CPTE
+                            const virtMatch = desc.match(/(?:VIRT\s+CPTE|VIREMENT\s+DE|VIREMENT)\s+(?:DE\s+)?([A-Z\s\.]+)/i);
+                            if (virtMatch && virtMatch[1]) {
+                              detectedMemberName = virtMatch[1].trim();
+                            }
+                          }
+                        }
+
                         if (isEditing) {
-                          setEditForm({ ...editForm, accountId: e.target.value })
+                          setEditForm({ ...editForm, accountId: newAccountId, detectedMemberName })
                         } else {
-                          onUpdateTransaction({ ...t, accountId: e.target.value, status: TransactionStatus.REVIEW_NEEDED })
+                          onUpdateTransaction({ ...t, accountId: newAccountId, detectedMemberName, status: TransactionStatus.REVIEW_NEEDED })
                         }
                       }}
                       className={`bg-transparent border-b border-dashed border-slate-600 focus:border-blue-500 focus:outline-none py-1 max-w-[200px] truncate ${!(isEditing ? editForm.accountId : t.accountId) ? 'text-rose-400 font-semibold' : 'text-slate-300'} [&>option]:bg-slate-900 [&>option]:text-white`}
@@ -494,17 +622,74 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                           {/* Approve Button */}
                           {t.status !== TransactionStatus.APPROVED && (
                             <button
-                              onClick={() => onUpdateTransaction({ ...t, status: TransactionStatus.APPROVED })}
-                              className="p-1.5 hover:bg-green-900/30 text-green-400 rounded-md transition-colors"
-                              title="Approuver"
+                              onClick={async () => {
+                                // VALIDATION LOGIC
+                                if (!t.accountId) {
+                                  alert("Impossible de valider : Aucun compte sélectionné.");
+                                  return;
+                                }
+                                const currentAccount = accounts.find(a => a.id === t.accountId);
+                                if (!currentAccount) {
+                                  alert("Impossible de valider : Compte introuvable.");
+                                  return;
+                                }
+                                // Check Charge (Negative) vs Product (Positive)
+                                if (t.amount < 0 && currentAccount.type !== AccountType.EXPENSE) {
+                                  alert(`Erreur de validation : Une dépense (montant négatif) doit être associée à un compte de CHARGE (Type 6).\nCompte actuel : ${currentAccount.type}`);
+                                  return;
+                                }
+                                if (t.amount > 0 && currentAccount.type !== AccountType.INCOME) {
+                                  alert(`Erreur de validation : Une recette (montant positif) doit être associée à un compte de PRODUIT (Type 7).\nCompte actuel : ${currentAccount.type}`);
+                                  return;
+                                }
+
+                                // On Approve, if Membership Account + No Member Name, try extraction
+                                let finalMemberName = t.detectedMemberName;
+
+
+                                if (currentAccount?.isMembership && !finalMemberName) {
+                                  // 1. Try AI (Server-Side, Slow but Smart)
+                                  if (onGuessMember) {
+                                    setIsGuessing(t.id);
+                                    try {
+                                      const aiName = await onGuessMember(t);
+                                      if (aiName) {
+                                        finalMemberName = aiName;
+                                      } else {
+                                        // 2. Fallback to Regex if AI found nothing
+                                        throw new Error("AI returned null");
+                                      }
+                                    } catch (e) {
+                                      // 3. Fallback to Regex (Client-Side, Fast) on error or empty AI
+                                      const virtMatch = t.description.match(/(?:VIRT\s+CPTE|VIREMENT\s+DE|VIREMENT)\s+(?:DE\s+)?([A-Z\s\.]+)/i);
+                                      if (virtMatch && virtMatch[1]) {
+                                        finalMemberName = virtMatch[1].trim();
+                                      }
+                                    } finally {
+                                      setIsGuessing(null);
+                                    }
+                                  } else {
+                                    // No AI available, just Regex
+                                    const virtMatch = t.description.match(/(?:VIRT\s+CPTE|VIREMENT\s+DE|VIREMENT)\s+(?:DE\s+)?([A-Z\s\.]+)/i);
+                                    if (virtMatch && virtMatch[1]) {
+                                      finalMemberName = virtMatch[1].trim();
+                                    }
+                                  }
+                                }
+
+                                onUpdateTransaction({ ...t, detectedMemberName: finalMemberName, status: TransactionStatus.APPROVED });
+                              }}
+                              disabled={isGuessing === t.id}
+                              className={`p-1.5 rounded-md transition-colors ${isGuessing === t.id ? 'bg-slate-800 text-slate-500 cursor-wait' : 'hover:bg-green-900/30 text-green-400'}`}
+                              title={isGuessing === t.id ? "Recherche IA en cours..." : "Approuver (avec recherche membre)"}
                             >
-                              <Check size={16} />
+                              {isGuessing === t.id ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                             </button>
                           )}
 
                           {/* Delete Button */}
                           <button
-                            onClick={() => onDeleteTransaction(t.id)}
+                            onClick={() => handleDeleteClick(t.id)}
                             className="p-1.5 hover:bg-rose-900/30 text-rose-400 rounded-md transition-colors"
                             title="Supprimer"
                           >
@@ -519,12 +704,23 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             })}
           </tbody>
         </table>
-        {filteredTransactions.length === 0 && (
-          <div className="p-12 text-center text-slate-500">
-            Aucune transaction trouvée correspondant à vos critères.
-          </div>
-        )}
-      </div>
-    </div>
+        {
+          filteredTransactions.length === 0 && (
+            <div className="p-12 text-center text-slate-500">
+              Aucune transaction trouvée correspondant à vos critères.
+            </div>
+          )
+        }
+      </div >
+
+      <AuditModal
+        isOpen={isAuditOpen}
+        onClose={() => setIsAuditOpen(false)}
+        report={auditReport}
+        loading={isAuditing}
+        transactions={transactions}
+        accounts={accounts}
+      />
+    </div >
   );
 };

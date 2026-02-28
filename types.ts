@@ -20,7 +20,8 @@ export enum TransactionStatus {
   PENDING = 'PENDING',
   REVIEW_NEEDED = 'REVIEW_NEEDED',
   PENDING_REVIEW = 'PENDING_REVIEW',
-  APPROVED = 'APPROVED'
+  APPROVED = 'APPROVED',
+  ARCHIVED = 'ARCHIVED'
 }
 
 export interface Transaction {

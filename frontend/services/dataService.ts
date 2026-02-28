@@ -6,7 +6,7 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import type { FirebaseApp } from 'firebase/app';
 import {
     getFirestore, collection, doc, onSnapshot,
-    setDoc, deleteDoc, updateDoc, query, orderBy, writeBatch, getDocs
+    setDoc, deleteDoc, updateDoc, query, orderBy, writeBatch, getDocs, deleteField
 } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -124,6 +124,11 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
 
     // --- ACTIONS ---
 
+    // Helper to sanitize objects for Firestore (removes undefined)
+    const sanitize = <T extends object>(obj: T): T => {
+        return JSON.parse(JSON.stringify(obj));
+    };
+
     const saveAccount = async (account: Account) => {
         if (shouldUseLocalStorage) {
             setAccounts(prev => {
@@ -136,7 +141,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            await setDoc(doc(db, "users", user.uid, "accounts", account.id), account);
+            await setDoc(doc(db, "users", user.uid, "accounts", account.id), sanitize(account));
         }
     };
 
@@ -160,7 +165,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             });
 
             newAccounts.forEach(acc => {
-                batch.set(doc(db, "users", user.uid, "accounts", acc.id), acc);
+                batch.set(doc(db, "users", user.uid, "accounts", acc.id), sanitize(acc));
             });
 
             await batch.commit();
@@ -236,6 +241,80 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         }
         if (user) {
             await deleteDoc(doc(db, "users", user.uid, "transactions", id));
+        }
+    };
+
+    const deleteAllTransactions = async () => {
+        if (shouldUseLocalStorage) {
+            localStorage.removeItem('asso_compta_transactions_v5');
+            setTransactions([]);
+
+            // Unlink receipts in local storage
+            setReceipts(prev => {
+                const newR = prev.map(r => r.linkedTransactionId ? { ...r, linkedTransactionId: undefined } : r);
+                localStorage.setItem('asso_compta_receipts_v5', JSON.stringify(newR));
+                return newR;
+            });
+            return;
+        }
+        if (user) {
+            // Function to commit batches in chunks
+            const commitBatch = async (batchOp: any) => {
+                await batchOp.commit();
+            };
+
+            const qTxns = query(collection(db, "users", user.uid, "transactions"));
+            const snapshotTxns = await getDocs(qTxns);
+
+            let batch = writeBatch(db);
+            let count = 0;
+            const validBatches = [];
+
+            try {
+                // 1. Delete Transactions
+                for (const documentSnapshot of snapshotTxns.docs) {
+                    batch.delete(documentSnapshot.ref);
+                    count++;
+                    if (count >= 400) {
+                        validBatches.push(batch);
+                        batch = writeBatch(db);
+                        count = 0;
+                    }
+                }
+
+                // 2. Unlink Receipts
+                const qReceipts = query(collection(db, "users", user.uid, "receipts"));
+                const snapshotReceipts = await getDocs(qReceipts);
+
+                for (const documentSnapshot of snapshotReceipts.docs) {
+                    const data = documentSnapshot.data();
+                    if (data.linkedTransactionId) {
+                        batch.update(documentSnapshot.ref, { linkedTransactionId: deleteField() });
+                        count++;
+                        if (count >= 400) {
+                            validBatches.push(batch);
+                            batch = writeBatch(db);
+                            count = 0;
+                        }
+                    }
+                }
+
+                // Commit pending
+                if (count > 0) {
+                    validBatches.push(batch);
+                }
+
+                console.log(`Deleting ${snapshotTxns.size} transactions and unlinking receipts in ${validBatches.length} batches.`);
+
+                // Execute all batches
+                for (const b of validBatches) {
+                    await b.commit();
+                }
+                console.log("Deletion complete.");
+            } catch (error) {
+                console.error("Error deleting transactions:", error);
+                throw error; // Propagate to caller
+            }
         }
     };
 
@@ -319,6 +398,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         saveTransaction,
         saveTransactions,
         deleteTransaction,
+        deleteAllTransactions,
         saveReceipt, // Exposed
         deleteReceipt, // Exposed
         uploadReceiptFile

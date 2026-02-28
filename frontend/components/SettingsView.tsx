@@ -9,7 +9,7 @@ import * as LucideIcons from 'lucide-react';
 
 interface SettingsViewProps {
   accounts: Account[];
-  onUpdateAccounts: (accounts: Account[]) => void;
+  onUpdateAccounts: (accounts: Account[]) => Promise<void> | void;
 }
 
 // Dynamic Icon Loading Helper
@@ -265,7 +265,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ accounts, onUpdateAc
         listToProcess.forEach((a: any, index: number) => {
           try {
             // Determine ID
-            let safeId = a.id ? String(a.id) : `imported-${index}`;
+            let safeId = a.id ? String(a.id).trim() : `imported-${index}`;
             if (existingIds.has(safeId)) {
               safeId = `${safeId}-${Math.random().toString(36).substr(2, 5)}`;
             }
@@ -417,11 +417,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ accounts, onUpdateAc
                 Annuler
               </button>
               <button
-                onClick={() => {
-                  addLog("Utilisateur a confirmé (UI). Application...");
-                  onUpdateAccounts(pendingImport);
-                  setPendingImport(null);
-                  addLog("Mise à jour envoyée.");
+                onClick={async () => {
+                  addLog("Utilisateur a confirmé (UI). Application en cours...");
+                  try {
+                    await onUpdateAccounts(pendingImport);
+                    setPendingImport(null);
+                    addLog("SUCCÈS : Mise à jour terminée.");
+                    alert("Le plan comptable a été mis à jour avec succès !");
+                  } catch (e: any) {
+                    console.error(e);
+                    addLog(`ERREUR CRITIQUE lors de la sauvegarde : ${e.message}`);
+                    alert(`Erreur lors de la sauvegarde : ${e.message}`);
+                  }
                 }}
                 className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 font-medium transition-colors text-sm flex items-center gap-2"
               >
