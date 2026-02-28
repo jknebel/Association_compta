@@ -56,6 +56,48 @@ export const analyzeReceipt = async (base64Data: string, mimeType: string): Prom
 };
 
 /**
+ * AGENT: Automated Receipt Verification via Python Backend
+ */
+export const processReceiptBackend = async (
+  base64Data: string,
+  mimeType: string,
+  transactions: Transaction[]
+): Promise<{ extracted: { date?: string, amount?: number, content?: string }, matchedTransactionId: string | null }> => {
+  const formData = new FormData();
+
+  // Convert Base64 back to Blob
+  const byteCharacters = atob(base64Data);
+  const byteNumbers = new Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i++) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  const byteArray = new Uint8Array(byteNumbers);
+  const blob = new Blob([byteArray], { type: mimeType });
+
+  formData.append('file', blob, 'receipt.bin');
+  formData.append('transactions', JSON.stringify(transactions));
+
+  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+  try {
+    const response = await fetch(`${apiUrl}/process-receipt`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Server Error: ${response.status} - ${errorText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("API Call processReceipt Failed:", error);
+    throw error;
+  }
+};
+
+/**
  * AGENT 1: The Ingestion Agent
  * Uses Gemini Flash to extract data from PDF bank statements.
  * NOW ENHANCED: Takes matchedHistory to learn from user's past habits.

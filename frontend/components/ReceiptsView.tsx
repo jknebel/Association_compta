@@ -2,7 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { Receipt, Transaction } from '../../types';
 import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, DollarSign, ExternalLink } from 'lucide-react';
-import { analyzeReceipt } from '../services/geminiService';
+import { analyzeReceipt, processReceiptBackend } from '../services/geminiService';
 import { uploadReceipt } from '../services/storageService';
 
 interface ReceiptsViewProps {
@@ -87,9 +87,17 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                     }
                 }
 
-                let analysis = {};
+                let analysis: any = {};
+                let matchedTransactionId: string | null = null;
                 if (base64ForGemini) {
-                    analysis = await analyzeReceipt(base64ForGemini, file.type);
+                    try {
+                        const result = await processReceiptBackend(base64ForGemini, file.type, transactions);
+                        analysis = result.extracted;
+                        matchedTransactionId = result.matchedTransactionId;
+                    } catch (err) {
+                        console.error("Backend receipt process failed:", err);
+                        // Fallback could be basic analyzeReceipt, but we'll leave empty for now
+                    }
                 }
 
                 const newReceipt: Receipt = {
@@ -97,10 +105,10 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                     url: url,
                     fileName: file.name,
                     uploadDate: new Date().toISOString().split('T')[0],
-                    extractedDate: (analysis as any).date,
-                    extractedAmount: (analysis as any).amount,
+                    extractedDate: analysis?.date,
+                    extractedAmount: analysis?.amount,
                     isAnalyzed: !!base64ForGemini,
-                    linkedTransactionId: undefined
+                    linkedTransactionId: matchedTransactionId || undefined
                 };
 
                 onAddReceipt(newReceipt);

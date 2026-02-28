@@ -1,6 +1,9 @@
 import os
 import base64
 import json
+import io
+import fitz # PyMuPDF
+import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -70,6 +73,11 @@ class Transaction(BaseModel):
 
 class TransactionList(BaseModel):
     transactions: List[Transaction]
+
+class ReceiptExtraction(BaseModel):
+    amount: Optional[float] = None
+    content: Optional[str] = None
+    date: Optional[str] = None
 
 # --- LLM HELPERS ---
 def get_llm():
@@ -273,6 +281,119 @@ async def process_statement(
             "logs": output["logs"]
         }
         
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/process-receipt")
+async def process_receipt(
+    file: UploadFile = File(...),
+    transactions: str = Form(...) 
+):
+    try:
+        print(f"Processing receipt: {file.filename} ({file.content_type})")
+        content = await file.read()
+        
+        # If it's a PDF, we convert the first page to an image for Gemini Vision
+        if file.content_type == "application/pdf":
+            try:
+                pdf_doc = fitz.open(stream=content, filetype="pdf")
+                first_page = pdf_doc.load_page(0)
+                pix = first_page.get_pixmap(matrix=fitz.Matrix(2, 2)) # 2x zoom for better text readability
+                content = pix.tobytes("jpeg")
+                mime_type = "image/jpeg"
+                pdf_doc.close()
+            except Exception as e:
+                print(f"PDF conversion error: {e}")
+                raise HTTPException(status_code=400, detail="Could not read PDF file")
+        else:
+            mime_type = file.content_type
+
+        b64_file = base64.b64encode(content).decode("utf-8")
+        
+        try:
+            raw_txns = json.loads(transactions)
+            txns_list = [Transaction(**t) for t in raw_txns]
+        except Exception as e:
+            print(f"Transactions parsing error: {e}")
+            raise HTTPException(status_code=400, detail="Invalid transactions JSON format")
+            
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(ReceiptExtraction)
+        
+        prompt = """
+        Analyse cette pièce comptable (reçu/facture).
+        Extrais à minima et dans cet ordre d'importance :
+        1. Le montant TOTAL (amount) en float.
+        2. Le contenu/marchand/description (content).
+        3. La date (date) au format YYYY-MM-DD.
+        """
+        
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url", 
+                    "image_url": {"url": f"data:{mime_type};base64,{b64_file}"}
+                }
+            ]
+        )
+        
+        extraction = structured_llm.invoke([message])
+        print(f"Extracted from receipt: {extraction.model_dump()}")
+        
+        matched_id = None
+        
+        if extraction.amount is not None:
+            target_amount = abs(extraction.amount)
+            unlinked_txns = [t for t in txns_list if not t.receiptUrl]
+            
+            # Priority 2: Match against charges (amount < 0) with exactly the same amount
+            candidates_amount = [t for t in unlinked_txns if t.amount < 0 and abs(abs(t.amount) - target_amount) < 0.05]
+            
+            if len(candidates_amount) == 1:
+                matched_id = candidates_amount[0].id
+            elif len(candidates_amount) > 1:
+                # Priority 5: If 2 similar amounts, resolve using date and content
+                for c in candidates_amount:
+                    if extraction.date and c.date == extraction.date:
+                        matched_id = c.id
+                        break
+                    if extraction.content and c.description and (c.description.lower() in extraction.content.lower() or extraction.content.lower() in c.description.lower()):
+                        matched_id = c.id
+                        break
+            
+            # Priority 3: If no charge with same amount, check in remarks/notes/description
+            if not matched_id:
+                candidates_remarks = []
+                for t in unlinked_txns:
+                    text_to_search = (str(t.description or "") + " " + str(t.notes or "")).lower()
+                    # Look for string representation of the amount
+                    if str(target_amount) in text_to_search or str(int(target_amount)) in text_to_search:
+                        candidates_remarks.append(t)
+                
+                if len(candidates_remarks) == 1:
+                    matched_id = candidates_remarks[0].id
+                elif len(candidates_remarks) > 1:
+                    for c in candidates_remarks:
+                        if extraction.date and c.date == extraction.date:
+                            matched_id = c.id
+                            break
+                            
+            # Priority 4: if still nothing, try date + content match
+            if not matched_id and extraction.date and extraction.content:
+                for t in unlinked_txns:
+                    if t.date == extraction.date and t.description and (t.description.lower() in extraction.content.lower() or extraction.content.lower() in t.description.lower()):
+                        matched_id = t.id
+                        break
+                        
+        print(f"Matched transaction: {matched_id}")
+        
+        return {
+            "extracted": extraction.model_dump(),
+            "matchedTransactionId": matched_id
+        }
     except Exception as e:
         import traceback
         traceback.print_exc()

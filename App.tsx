@@ -89,6 +89,13 @@ function App() {
     // Receipts Logic
     const handleAddReceipt = (receipt: Receipt) => {
         saveReceipt(receipt);
+        // Auto-link transaction if the receipt was matched by AI
+        if (receipt.linkedTransactionId) {
+            const txn = transactions.find(t => t.id === receipt.linkedTransactionId);
+            if (txn && !txn.receiptUrl) {
+                saveTransaction({ ...txn, receiptUrl: receipt.url });
+            }
+        }
     };
 
     const handleDeleteReceipt = (id: string) => {
