@@ -401,19 +401,6 @@ async def process_receipt(
         1. Le montant TOTAL (amount) en float.
         2. Le contenu/marchand/description (content).
         3. La date (date) au format YYYY-MM-DD.
-@app.post("/analyze-receipt")
-async def analyze_receipt(request: AnalyzeReceiptRequest):
-    try:
-        flash_llm = get_llm()
-        structured_llm = flash_llm.with_structured_output(AnalyzeReceiptResponse)
-        
-        prompt = """
-        Analyze this receipt/invoice.
-        Extract:
-        1. The date of the transaction (Format YYYY-MM-DD).
-        2. The TOTAL amount (Float).
-        
-        If you cannot find one of them, return null for that field.
         """
         
         message = HumanMessage(
@@ -484,6 +471,27 @@ async def analyze_receipt(request: AnalyzeReceiptRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analyze-receipt")
+async def analyze_receipt(request: AnalyzeReceiptRequest):
+    try:
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(AnalyzeReceiptResponse)
+        
+        prompt = """
+        Analyze this receipt/invoice.
+        Extract:
+        1. The date of the transaction (Format YYYY-MM-DD).
+        2. The TOTAL amount (Float).
+        
+        If you cannot find one of them, return null for that field.
+        """
+        
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url", 
                     "image_url": {"url": f"data:{request.mimeType};base64,{request.base64Data}"}
                 }
             ]
