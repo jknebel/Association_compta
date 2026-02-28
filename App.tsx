@@ -8,12 +8,14 @@ import { ExpertChat } from './frontend/components/ExpertChat';
 import { SettingsView } from './frontend/components/SettingsView';
 import { LoginView } from './frontend/components/LoginView';
 import { ReceiptsView } from './frontend/components/ReceiptsView';
-import { DeploymentView } from './frontend/components/DeploymentView'; // Import
-import { Account, Transaction, AccountType, Receipt } from '../types';
+
+import { Account, Transaction, AccountType, Receipt, TransactionStatus } from './types';
 import { Edit2, Save, X, AlertTriangle, CloudOff, Loader2, Download, Upload, CheckCircle, XCircle, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { useDataService } from './frontend/services/dataService';
 import { useAuth } from './frontend/services/authService';
 import * as XLSX from 'xlsx';
+import { matchTransactionsWithReceipts } from './frontend/services/matchingService';
+import { suggestCategory } from './frontend/services/geminiService';
 
 function App() {
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -36,19 +38,59 @@ function App() {
         saveTransactions,
         deleteTransaction,
         saveReceipt,
-        deleteReceipt
+        deleteReceipt,
+        deleteAllTransactions
     } = useDataService(user, guestMode);
 
     // Handle new transactions from Upload Agent
-    const handleProcessComplete = (newTxns: Transaction[], newAccounts: Account[], matchedReceiptIds: string[] = []) => {
-        saveTransactions(newTxns);
+    const handleProcessComplete = async (newTxns: Transaction[], newAccounts: Account[], matchedReceiptIds: string[] = []) => {
+
+        let txnsToSave = [...newTxns];
+        let receiptIdsToUpdate = [...matchedReceiptIds];
+
+        // 1. Auto-Match with Receipts (if not already done by backend, usually backend doesn't do receipt matching)
+        // We match against existing receipts that are not linked
+        const { processedTxns, matchedReceiptIds: newMatchedIds } = matchTransactionsWithReceipts(txnsToSave, receipts);
+        txnsToSave = processedTxns;
+        receiptIdsToUpdate = [...receiptIdsToUpdate, ...newMatchedIds]; // Merge potential Backend matches (if any) with Client matches
+
+        // 2. Auto-Suggest Categories for those missing accountId
+        const uncategorized = txnsToSave.filter(t => !t.accountId);
+        if (uncategorized.length > 0) {
+            console.log("Auto-categorizing", uncategorized.length, "transactions...");
+            const categorized = await Promise.all(uncategorized.map(async (t) => {
+                try {
+                    const result = await suggestCategory(t.description, accounts);
+                    if (result.accountId) {
+                        return {
+                            ...t,
+                            accountId: result.accountId || undefined,
+                            detectedMemberName: result.memberName || undefined,
+                            status: TransactionStatus.REVIEW_NEEDED
+                        };
+                    }
+                } catch (err) {
+                    console.warn("Auto-cat failed for", t.description, err);
+                }
+                return t;
+            }));
+
+            // Merge back
+            txnsToSave = txnsToSave.map(t => {
+                const found = categorized.find(c => c.id === t.id);
+                return found || t;
+            });
+        }
+
+        // 3. Save Everything
+        saveTransactions(txnsToSave);
 
         // Update linked receipts status
-        if (matchedReceiptIds.length > 0) {
-            matchedReceiptIds.forEach(id => {
+        if (receiptIdsToUpdate.length > 0) {
+            receiptIdsToUpdate.forEach(id => {
                 const r = receipts.find(receipt => receipt.id === id);
                 // We find the txn that linked it
-                const txn = newTxns.find(t => t.receiptUrl === r?.url);
+                const txn = txnsToSave.find(t => t.receiptUrl === r?.url);
                 if (r && txn) {
                     saveReceipt({ ...r, linkedTransactionId: txn.id });
                 }
@@ -60,7 +102,7 @@ function App() {
             newAccounts.forEach(na => {
                 if (!allAccounts.find(a => a.id === na.id)) allAccounts.push(na);
             });
-            replaceAllAccounts(allAccounts);
+            await replaceAllAccounts(allAccounts);
         }
 
         setActiveTab('ledger');
@@ -82,8 +124,8 @@ function App() {
         deleteTransaction(id);
     };
 
-    const handleUpdateAccounts = (updatedAccounts: Account[]) => {
-        replaceAllAccounts(updatedAccounts);
+    const handleUpdateAccounts = async (updatedAccounts: Account[]) => {
+        await replaceAllAccounts(updatedAccounts);
     };
 
     // Receipts Logic
@@ -111,6 +153,160 @@ function App() {
             saveTransaction({ ...txn, receiptUrl: receipt.url });
             // Update Receipt
             saveReceipt({ ...receipt, linkedTransactionId: txn.id });
+        }
+    };
+
+    const [autoMatchProgress, setAutoMatchProgress] = useState<{ current: number, total: number, message: string } | null>(null);
+
+    const handleRunAutoMatching = async () => {
+        // Initial feedback
+        setAutoMatchProgress({ current: 0, total: 0, message: "Recherche de reçus..." });
+
+        // 1. Match Receipts (Sync)
+        const { processedTxns, matchedReceiptIds } = matchTransactionsWithReceipts(transactions, receipts);
+
+        let txnsToUpdate = processedTxns;
+        let hasUpdates = matchedReceiptIds.length > 0;
+
+        // 2. Suggest Categories (Async - for uncategorized only)
+        const uncategorized = txnsToUpdate.filter(t => !t.accountId);
+        const totalToCategorize = uncategorized.length;
+
+        if (totalToCategorize > 0) {
+            setAutoMatchProgress({ current: 0, total: totalToCategorize, message: "Analyse IA..." });
+
+            const categorized: Transaction[] = [];
+            let completed = 0;
+
+            // Process sequentially to update progress
+            for (const t of uncategorized) {
+                try {
+                    // Slow down slightly to show progress if needed, or just await
+                    const result = await suggestCategory(t.description, accounts);
+                    if (result.accountId) {
+                        categorized.push({
+                            ...t,
+                            accountId: result.accountId || undefined,
+                            detectedMemberName: result.memberName || undefined,
+                            status: TransactionStatus.REVIEW_NEEDED
+                        });
+                    } else {
+                        categorized.push(t);
+                    }
+                } catch (e) {
+                    console.error("Auto-match fail for " + t.id, e);
+                    categorized.push(t);
+                }
+                completed++;
+                setAutoMatchProgress({ current: completed, total: totalToCategorize, message: `IA : ${completed}/${totalToCategorize}` });
+            }
+
+            // Merge back
+            txnsToUpdate = txnsToUpdate.map(t => {
+                const found = categorized.find(c => c.id === t.id);
+                return found || t;
+            });
+
+            // Check if any actually changed
+            if (categorized.some(c => c.accountId)) hasUpdates = true;
+        }
+
+        if (hasUpdates) {
+            setAutoMatchProgress({ current: 0, total: 0, message: "Sauvegarde..." });
+            await saveTransactions(txnsToUpdate); // Batch update
+
+            // Also update receipts linkage
+            if (matchedReceiptIds.length > 0) {
+                matchedReceiptIds.forEach(id => {
+                    const r = receipts.find(receipt => receipt.id === id);
+                    const txn = txnsToUpdate.find(t => t.receiptUrl === r?.url);
+                    if (r && txn) {
+                        saveReceipt({ ...r, linkedTransactionId: txn.id });
+                    }
+                });
+            }
+        }
+
+        // Final "Done" state
+        setAutoMatchProgress({ current: 100, total: 100, message: "Terminé !" });
+        setTimeout(() => setAutoMatchProgress(null), 1000);
+    };
+
+    const handleReanalyzeAll = async () => {
+        const total = transactions.length;
+        if (total === 0) return;
+
+        if (!confirm("Attention : Cette action va re-scanner TOUTES les transactions et potentiellement écraser vos catégorisations manuelles. Voulez-vous continuer ?")) {
+            return;
+        }
+
+        setAutoMatchProgress({ current: 0, total: total, message: "Scan complet en cours..." });
+
+        let completed = 0;
+
+        for (const t of transactions) {
+            try {
+                const result = await suggestCategory(t.description, accounts);
+                const updatedTxn = {
+                    ...t,
+                    accountId: result.accountId || undefined,
+                    detectedMemberName: result.memberName || undefined,
+                    status: TransactionStatus.REVIEW_NEEDED
+                };
+                saveTransaction(updatedTxn);
+            } catch (e) {
+                console.error("Re-analyze fail for " + t.id, e);
+            }
+            completed++;
+            setAutoMatchProgress({ current: completed, total: total, message: `Re-Scan : ${completed}/${total}` });
+        }
+
+        setAutoMatchProgress({ current: total, total: total, message: "Scan Terminé !" });
+        setTimeout(() => setAutoMatchProgress(null), 2000);
+    };
+
+    const handleClearAllTransactions = async () => {
+        if (!confirm("ATTENTION : Vous êtes sur le point de supprimer DÉFINITIVEMENT toutes les transactions.\n\nCette action est irréversible. Voulez-vous continuer ?")) {
+            return;
+        }
+
+        if (!confirm("Êtes-vous vraiment sûr ? Cela effacera toutes les transactions, ainsi que les membres détectés associés et les liens avec les justificatifs.")) {
+            return;
+        }
+
+        try {
+            await deleteAllTransactions();
+            alert("Toutes les transactions ont été supprimées.");
+        } catch (error) {
+            console.error(error);
+            alert("Une erreur est survenue lors de la suppression. Vérifiez la console.");
+        }
+    };
+
+    const handleArchiveAllTransactions = async () => {
+        const activeTransactions = transactions.filter(t => t.status !== TransactionStatus.ARCHIVED);
+        if (activeTransactions.length === 0) return;
+
+        if (!confirm(`Voulez-vous vraiment archiver ${activeTransactions.length} transactions ?\n\nElles ne seront plus visibles dans la vue par défaut mais resteront accessibles via le filtre "Archives".`)) {
+            return;
+        }
+
+        // Archive all non-archived transactions
+        const archived = activeTransactions.map(t => ({
+            ...t,
+            status: TransactionStatus.ARCHIVED
+        }));
+
+        await saveTransactions(archived);
+    };
+
+    const handleGuessMember = async (t: Transaction): Promise<string | null> => {
+        try {
+            const result = await suggestCategory(t.description, accounts);
+            return result.memberName || null;
+        } catch (e) {
+            console.error("Manual AI Guess failed", e);
+            return null;
         }
     };
 
@@ -412,6 +608,8 @@ function App() {
         );
     };
 
+    const [isUploading, setIsUploading] = useState(false);
+
     // LOADING STATE
     if (authLoading || (user && dataLoading)) {
         return (
@@ -428,7 +626,7 @@ function App() {
     }
 
     return (
-        <Layout activeTab={activeTab} onTabChange={setActiveTab} user={user}>
+        <Layout activeTab={activeTab} onTabChange={setActiveTab} user={user} disabled={isUploading}>
             {(!isConfigured || guestMode) && (
                 <div className="bg-orange-900/20 border-b border-orange-900/50 text-orange-200 px-4 py-2 text-xs flex items-center justify-center gap-2">
                     <CloudOff size={14} />
@@ -445,6 +643,7 @@ function App() {
                     receipts={receipts}
                     user={user}
                     onProcessComplete={handleProcessComplete}
+                    onProcessingChange={setIsUploading}
                 />
             )}
 
@@ -464,6 +663,12 @@ function App() {
                     accounts={accounts}
                     onUpdateTransaction={handleUpdateTransaction}
                     onDeleteTransaction={handleDeleteTransaction}
+                    onAutoMatch={handleRunAutoMatching}
+                    onReanalyzeAll={handleReanalyzeAll}
+                    onClearAll={handleClearAllTransactions}
+                    onArchiveAll={handleArchiveAllTransactions}
+                    autoMatchProgress={autoMatchProgress}
+                    onGuessMember={handleGuessMember}
                 />
             )}
 
@@ -478,10 +683,6 @@ function App() {
             )}
 
             {/* View Python removed */}
-
-            {activeTab === 'deploy' && (
-                <DeploymentView />
-            )}
         </Layout>
     );
 }

@@ -13,13 +13,22 @@ interface UploadViewProps {
   receipts: Receipt[]; // Ajout des reçus pour le matching
   user: User | null; // Pass user for API Context
   onProcessComplete: (newTransactions: Transaction[], newAccounts: Account[], matchedReceiptIds: string[]) => void;
+  onProcessingChange?: (isProcessing: boolean) => void;
 }
 
-export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, receipts, user, onProcessComplete }) => {
+export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, receipts, user, onProcessComplete, onProcessingChange }) => {
   const [activeMode, setActiveMode] = useState<'PDF' | 'EXCEL'>('PDF');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Helper to generate a unique signature for a transaction
+  const generateTransactionSignature = (t: Transaction): string => {
+    // We use Date + Amount + Description (trimmed) as a unique key
+    // We can also add accountId if we trust it, but often accountId is what we want to find.
+    // So sticking to raw data is safer.
+    return `${t.date}-${t.amount.toFixed(2)}-${t.description.trim().toLowerCase()}`;
+  };
 
   const matchTransactionsWithReceipts = (newTxns: Transaction[]): { processedTxns: Transaction[], matchedReceiptIds: string[] } => {
     const matchedIds: string[] = [];
@@ -62,6 +71,7 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
     if (!file) return;
 
     setIsProcessing(true);
+    if (onProcessingChange) onProcessingChange(true);
     setError(null);
 
     try {
@@ -109,15 +119,49 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
         rawTransactions = await parseExcelLedger(file);
       }
 
+      // --- DEDUPLICATION LOGIC ---
+      console.log(`Transactions extracted (raw): ${rawTransactions.length}`);
+
+      // 1. Build Set of existing signatures
+      const existingSignatures = new Set(transactions.map(t => generateTransactionSignature(t)));
+
+      // 2. Filter out duplicates
+      let newUniqueTransactions = rawTransactions.filter(t => {
+        const signature = generateTransactionSignature(t);
+        if (existingSignatures.has(signature)) {
+          return false; // Skip duplicate
+        }
+        // Also check for duplicates WITHIN the import itself (if PDF has same line twice?)
+        // (Bank statements usually don't have exact same line twice unless it's real, but good to be careful. 
+        //  Actually, real dupes in same day same amount same desc are possible. 
+        //  Let's keep them if they appear multiple times in the source, but reject if they match existing DB.)
+        //  Wait, 'existingSignatures' only covers DB. Simple check is fine.
+        return true;
+      });
+
+      const duplicatesCount = rawTransactions.length - newUniqueTransactions.length;
+
+      if (duplicatesCount > 0) {
+        console.log(`Skipped ${duplicatesCount} duplicates.`);
+        // Optional: Notify user via UI (handled via success message below usually, or we can set a specific message)
+      }
+
+      if (newUniqueTransactions.length === 0) {
+        throw new Error("Toutes les transactions du fichier existent déjà.");
+      }
+
       // PERFORM MATCHING WITH RECEIPTS
-      const { processedTxns, matchedReceiptIds } = matchTransactionsWithReceipts(rawTransactions);
+      const { processedTxns, matchedReceiptIds } = matchTransactionsWithReceipts(newUniqueTransactions);
 
       onProcessComplete(processedTxns, [], matchedReceiptIds);
+
+      alert(`Import réussi !\n\n${processedTxns.length} transactions ajoutées.\n${duplicatesCount} doublons ignorés.`);
 
     } catch (err: any) {
       setError(err.message || "Erreur de lecture du fichier.");
     } finally {
       setIsProcessing(false);
+      if (onProcessingChange) onProcessingChange(false);
     }
   };
 
