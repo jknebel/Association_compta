@@ -61,6 +61,9 @@ class Account(BaseModel):
     code: str
     label: str
     type: str
+    parentId: Optional[str] = None
+    description: Optional[str] = None
+    isMembership: bool = False
 
 class Transaction(BaseModel):
     date: str
@@ -171,6 +174,9 @@ def ingest_node(state: AgentState):
     Analyse ce document bancaire. Extrais toutes les transactions.
     Date format: YYYY-MM-DD.
     Montant: Positif pour crédit, Négatif pour débit.
+    CRITIQUE: Le montant ne doit JAMAIS être 0.00 sauf si c'est explicitement écrit '0.00' sur le document.
+    Si un montant est illisible ou ambigu, relis attentivement la ligne concernée et extrais la valeur correcte.
+    Ne mets JAMAIS 0 par défaut.
     Description: Garde le texte complet.
     """
     
@@ -201,6 +207,97 @@ def ingest_node(state: AgentState):
             "logs": [f"Erreur d'extraction: {str(e)}"]
         }
 
+def amount_verification_node(state: AgentState):
+    """
+    Double vérification des montants.
+    Détecte les transactions avec montant == 0 et tente une ré-extraction.
+    """
+    print("--- NODE: VÉRIFICATION DES MONTANTS ---")
+    transactions = state.extracted_transactions
+    
+    # Find suspicious transactions (amount == 0)
+    zero_txns = [t for t in transactions if t.amount == 0.0]
+    
+    if not zero_txns:
+        print("   Aucun montant suspect (0.00) détecté.")
+        return {
+            "logs": [f"Vérification montants: OK ({len(transactions)} transactions, aucun montant à 0)."]
+        }
+    
+    print(f"   ⚠️ {len(zero_txns)} transaction(s) avec montant = 0 détectée(s). Re-vérification...")
+    
+    # Build a targeted prompt for re-extraction
+    suspect_descriptions = "\n".join([
+        f"- Date: {t.date}, Description: '{t.description}' (montant actuel: 0.00)"
+        for t in zero_txns
+    ])
+    
+    prompt = f"""
+    ATTENTION: Lors de l'extraction précédente, les transactions suivantes ont été extraites avec un montant de 0.00,
+    ce qui est très probablement une erreur.
+    
+    Transactions suspectes :
+    {suspect_descriptions}
+    
+    Relis attentivement le document bancaire ci-joint et retrouve le VRAI montant pour chacune de ces transactions.
+    Le montant doit être positif pour un crédit et négatif pour un débit.
+    
+    Retourne UNIQUEMENT ces transactions avec le montant corrigé.
+    Si tu ne peux vraiment pas trouver le montant, laisse 0.0 mais c'est un dernier recours.
+    """
+    
+    message = HumanMessage(
+        content=[
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:application/pdf;base64,{state.pdf_base64}"}
+            }
+        ]
+    )
+    
+    try:
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(TransactionList)
+        result = structured_llm.invoke([message])
+        
+        # Build correction map: description -> corrected amount
+        correction_map = {}
+        for corrected_txn in result.transactions:
+            if corrected_txn.amount != 0.0:
+                correction_map[corrected_txn.description.strip().lower()] = corrected_txn.amount
+        
+        # Apply corrections
+        corrections_applied = 0
+        still_zero = 0
+        updated_transactions = []
+        for t in transactions:
+            if t.amount == 0.0:
+                key = t.description.strip().lower()
+                if key in correction_map:
+                    old_amount = t.amount
+                    t.amount = correction_map[key]
+                    corrections_applied += 1
+                    print(f"   ✅ Correction: '{t.description}' | 0.00 → {t.amount}")
+                else:
+                    still_zero += 1
+                    print(f"   ⚠️ Toujours 0.00: '{t.description}' (pas de correction trouvée)")
+            updated_transactions.append(t)
+        
+        log_msg = f"Vérification montants: {corrections_applied} corrigé(s)"
+        if still_zero > 0:
+            log_msg += f", {still_zero} toujours à 0 (vérification manuelle recommandée)"
+        
+        return {
+            "extracted_transactions": updated_transactions,
+            "logs": [log_msg]
+        }
+    except Exception as e:
+        print(f"Amount Verification Error: {e}")
+        return {
+            "logs": [f"Erreur vérification montants: {str(e)} — Montants originaux conservés."]
+        }
+
 def classification_node(state: AgentState):
     """
     Classification with LEARNING (RAG-lite).
@@ -218,7 +315,7 @@ def classification_node(state: AgentState):
     
     # 2. Prepare Account Context
     # Map ID -> Label to help AI
-    accounts_info = "\n".join([f"ID: {a.id} | Code: {a.code} | Nom: {a.label}" for a in accounts])
+    accounts_info = "\n".join([f"ID: {a.id} | Code: {a.code} | Nom: {a.label} | Type: {a.type}" for a in accounts])
     
     # 3. Advanced Prompt with History
     prompt = f"""
@@ -236,18 +333,26 @@ def classification_node(state: AgentState):
     Tu dois impérativement respecter la logique comptable suivante :
 
     1.  **MONTANTS NÉGATIFS (Dépenses / Débits)** :
-        -   Ils correspondent généralement à des **CHARGES** (Comptes commençant par **6**).
-        -   Exemple : -20.00 CHF pour "Parking" doit aller dans un compte de classe 6 (ex: 6200 Achats de marchandises ou Services).
-        -   IL EST INTERDIT de classer un montant négatif dans un compte de PRODUIT (Classe 7), sauf s'il s'agit d'un remboursement client (rare).
+        -   Ils correspondent généralement à des **CHARGES** (Comptes de type CHARGE).
+        -   Exemple : -20.00 CHF pour "Parking" doit aller dans un compte de type CHARGE.
+        -   IL EST INTERDIT de classer un montant négatif dans un compte de type PRODUIT, sauf s'il s'agit d'un remboursement client (rare).
 
     2.  **MONTANTS POSITIFS (Recettes / Crédits)** :
-        -   Ils correspondent généralement à des **PRODUITS** (Comptes commençant par **7**).
-        -   Exemple : +50.00 CHF pour "Cotisation" doit aller dans un compte de classe 7 (ex: 7000 Cotisations).
+        -   Ils correspondent généralement à des **PRODUITS** (Comptes de type PRODUIT).
+        -   Exemple : +50.00 CHF pour "Cotisation" doit aller dans un compte de type PRODUIT.
 
-    3.  **VIREMENTS INTERNES** :
+    3.  **COMPTES MIXTES** :
+        -   Les comptes de type MIXTE (ex: "Noël", "Activité") peuvent recevoir des montants positifs ET négatifs.
+        -   Par exemple, un compte "Noël" MIXTE peut avoir des dépenses (-200€ achat cadeaux) et des recettes (+50€ buvette).
+        -   Pour les comptes MIXTE, la règle Charge/Produit ne s'applique PAS.
+
+    4.  **VIREMENTS INTERNES** :
         -   Les mouvements de fonds (classe 58) peuvent être positifs ou négatifs.
 
-    **VERIFICATION :** Avant d'assigner un compte, vérifie si le signe de la transaction (-/+) est cohérent avec la classe du compte (6=Charge, 7=Produit).
+    **VERIFICATION :** Avant d'assigner un compte, vérifie :
+    - Si le compte est MIXTE → accepte les deux signes.
+    - Si le compte est CHARGE → le montant doit être négatif.
+    - Si le compte est PRODUIT → le montant doit être positif.
 
     ### 3. HISTORIQUE & APPRENTISSAGE (TRÈS IMPORTANT)
     Voici comment cet utilisateur a classé ses transactions précédentes. 
@@ -308,10 +413,12 @@ def classification_node(state: AgentState):
 # Build Graph
 workflow = StateGraph(AgentState)
 workflow.add_node("ingest", ingest_node)
+workflow.add_node("verify_amounts", amount_verification_node)
 workflow.add_node("classify", classification_node)
 
 workflow.set_entry_point("ingest")
-workflow.add_edge("ingest", "classify")
+workflow.add_edge("ingest", "verify_amounts")
+workflow.add_edge("verify_amounts", "classify")
 workflow.add_edge("classify", END)
 
 compiled_app = workflow.compile()
