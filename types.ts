@@ -44,7 +44,7 @@ export interface Receipt {
   extractedDate?: string;
   extractedAmount?: number;
   isAnalyzed: boolean;
-  linkedTransactionId?: string;
+  linkedTransactionId?: string | null;
 }
 
 export interface Member {

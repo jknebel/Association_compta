@@ -54,7 +54,12 @@ export const processReceiptBackend = async (
   const blob = new Blob([byteArray], { type: mimeType });
 
   formData.append('file', blob, 'receipt.bin');
-  formData.append('transactions', JSON.stringify(transactions));
+  // Only send unlinked transactions with minimal fields for matching
+  const minimalTxns = transactions
+    .filter(t => !t.receiptUrl)
+    .map(({ id, date, description, amount, notes, receiptUrl }) =>
+      ({ id, date, description, amount, notes, receiptUrl }));
+  formData.append('transactions', JSON.stringify(minimalTxns));
 
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
 

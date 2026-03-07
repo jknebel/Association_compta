@@ -332,7 +332,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            await setDoc(doc(db, "users", user.uid, "receipts", receipt.id), receipt);
+            await setDoc(doc(db, "users", user.uid, "receipts", receipt.id), sanitize(receipt));
         }
     };
 

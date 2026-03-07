@@ -108,7 +108,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                     extractedDate: analysis?.date ?? null,
                     extractedAmount: analysis?.amount ?? null,
                     isAnalyzed: !!base64ForGemini,
-                    linkedTransactionId: matchedTransactionId || undefined
+                    linkedTransactionId: matchedTransactionId ?? null
                 };
 
                 onAddReceipt(newReceipt);
