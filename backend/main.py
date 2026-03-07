@@ -66,12 +66,14 @@ class Account(BaseModel):
     isMembership: bool = False
 
 class Transaction(BaseModel):
+    id: Optional[str] = None
     date: str
     description: str
     amount: float
     accountId: Optional[str] = None
     detectedMemberName: Optional[str] = None
     status: str = "PENDING"
+    notes: Optional[str] = None
     receiptUrl: Optional[str] = None
 
 class TransactionList(BaseModel):

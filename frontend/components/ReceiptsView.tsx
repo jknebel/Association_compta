@@ -105,8 +105,8 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                     url: url,
                     fileName: file.name,
                     uploadDate: new Date().toISOString().split('T')[0],
-                    extractedDate: analysis?.date,
-                    extractedAmount: analysis?.amount,
+                    extractedDate: analysis?.date ?? null,
+                    extractedAmount: analysis?.amount ?? null,
                     isAnalyzed: !!base64ForGemini,
                     linkedTransactionId: matchedTransactionId || undefined
                 };
