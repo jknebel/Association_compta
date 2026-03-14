@@ -27,7 +27,7 @@ export const generateAccountingReport = (transactions: Transaction[], accounts: 
     }
   });
 
-  // 3. Roll up Child totals into Parents
+  // 3. Roll up Child totals into Parents (3-level support: N3→N2→N1)
   // We first identify children and add their values to their parent
   const processedMap = new Map<string, { income: number, expense: number, balance: number }>();
 
@@ -37,17 +37,36 @@ export const generateAccountingReport = (transactions: Transaction[], accounts: 
     processedMap.set(acc.id, { ...direct });
   });
 
-  // Now aggregate children into parents
+  // First pass: aggregate Level 3 (grandchildren) into Level 2 (children)
   accounts.forEach(acc => {
     if (acc.parentId) {
-      // It's a child. Add its totals to the parent in the PROCESSED map
-      const parentTotals = processedMap.get(acc.parentId);
-      const childTotals = totalsMap.get(acc.id); // Take direct totals of child
+      const parent = accounts.find(p => p.id === acc.parentId);
+      // Check if this is a level 3 account (parent also has a parentId)
+      if (parent && parent.parentId) {
+        const parentTotals = processedMap.get(acc.parentId);
+        const childTotals = totalsMap.get(acc.id);
+        if (parentTotals && childTotals) {
+          parentTotals.income += childTotals.income;
+          parentTotals.expense += childTotals.expense;
+          parentTotals.balance += childTotals.balance;
+        }
+      }
+    }
+  });
 
-      if (parentTotals && childTotals) {
-        parentTotals.income += childTotals.income;
-        parentTotals.expense += childTotals.expense;
-        parentTotals.balance += childTotals.balance;
+  // Second pass: aggregate Level 2 (children with rolled-up L3) into Level 1 (roots)
+  accounts.forEach(acc => {
+    if (acc.parentId) {
+      const parent = accounts.find(p => p.id === acc.parentId);
+      // Only aggregate into root parents (parent has no parentId)
+      if (parent && !parent.parentId) {
+        const parentTotals = processedMap.get(acc.parentId);
+        const childTotals = processedMap.get(acc.id); // Use processedMap (includes L3 roll-up)
+        if (parentTotals && childTotals) {
+          parentTotals.income += childTotals.income;
+          parentTotals.expense += childTotals.expense;
+          parentTotals.balance += childTotals.balance;
+        }
       }
     }
   });

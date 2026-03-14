@@ -212,11 +212,14 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     }
   };
 
-  // Helper to display account name with hierarchy
+  // Helper to display account name with hierarchy (supports 3 levels)
   const renderAccountOption = (acc: Account) => {
     if (acc.parentId) {
       const parent = accounts.find(p => p.id === acc.parentId);
-      // Changed separator to ' > ' as requested
+      if (parent && parent.parentId) {
+        const grandParent = accounts.find(gp => gp.id === parent.parentId);
+        return `${grandParent ? grandParent.label + ' > ' : ''}${parent.label} > ${acc.label}`;
+      }
       return `${parent ? parent.label + ' > ' : ''}${acc.label}`;
     }
     return acc.label;

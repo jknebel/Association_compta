@@ -24,6 +24,29 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     const [dragActive, setDragActive] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // Open receipt file (handles both URLs and base64 data URIs incl. PDFs)
+    const openReceipt = (url: string, fileName: string) => {
+        if (url.startsWith('data:')) {
+            // Convert base64 data URI to blob and open in new tab
+            try {
+                const [header, b64] = url.split(',');
+                const mimeMatch = header.match(/data:(.*?);/);
+                const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+                const byteChars = atob(b64);
+                const byteArray = new Uint8Array(byteChars.length);
+                for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+                const blob = new Blob([byteArray], { type: mime });
+                const blobUrl = URL.createObjectURL(blob);
+                window.open(blobUrl, '_blank');
+            } catch (e) {
+                console.error('Failed to open data URI', e);
+                window.open(url, '_blank');
+            }
+        } else {
+            window.open(url, '_blank');
+        }
+    };
+
     // Filter out receipts that are already linked
     const unlinkedReceipts = receipts.filter(r => !r.linkedTransactionId);
 
@@ -125,27 +148,70 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     const findPotentialMatches = (receipt: Receipt) => {
         if (!receipt.extractedAmount && !receipt.extractedDate) return [];
 
-        return transactions.filter(t => {
+        const scoredMatches = transactions.map(t => {
             // Rule 1: Not already linked
-            if (t.receiptUrl) return false;
+            if (t.receiptUrl) return { transaction: t, score: -1 };
 
             let score = 0;
+            let amountMatches = false;
 
-            // Check Amount (Tolerance 0.1)
-            if (receipt.extractedAmount && Math.abs(Math.abs(t.amount) - receipt.extractedAmount) < 0.1) {
-                score += 2;
+            // 1. Strict Amount Check (Tolerance 0.1)
+            // If the receipt has an amount, it MUST match the transaction amount closely.
+            if (receipt.extractedAmount) {
+                if (Math.abs(Math.abs(t.amount) - receipt.extractedAmount) < 0.1) {
+                    score += 10; // High weight for exact amount
+                    amountMatches = true;
+                } else {
+                    return { transaction: t, score: -1 }; // Reject immediately if amount doesn't match
+                }
             }
 
-            // Check Date (Within 7 days)
+            // 2. Date Check: Justificatif date should be <= Virement (Transaction) date
+            // Tolerance: Receipt is up to 30 days older than Virement, but never in the future
             if (receipt.extractedDate) {
-                const d1 = new Date(receipt.extractedDate).getTime();
-                const d2 = new Date(t.date).getTime();
-                const diffDays = Math.abs(d1 - d2) / (1000 * 3600 * 24);
-                if (diffDays <= 7) score += 1;
+                const rDate = new Date(receipt.extractedDate).getTime();
+                const tDate = new Date(t.date).getTime();
+                const diffDays = (tDate - rDate) / (1000 * 3600 * 24);
+
+                // Receipt date is older than or equal to transaction date (allow 1 day timezone drift)
+                if (diffDays >= -1 && diffDays <= 45) {
+                    score += 5;
+                    // Closer dates get more points
+                    if (diffDays >= -1 && diffDays <= 7) score += 3;
+                } else if (amountMatches) {
+                    // Small penalty if dates don't align but amount matches exactly
+                    score -= 5;
+                } else {
+                    // Reject if neither amount matches nor date is within bounds
+                    return { transaction: t, score: -1 };
+                }
             }
 
-            return score >= 2; // Strict match: needs Amount match at least.
+            // 3. Text/Description Match
+            // Use transaction text to add bonus points if it resembles the file name
+            if (receipt.fileName && t.description) {
+                const safeFileName = receipt.fileName.toLowerCase();
+                const words = t.description.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+                let textBonus = 0;
+
+                words.forEach(word => {
+                    if (safeFileName.includes(word)) {
+                        textBonus += 2;
+                    }
+                });
+
+                // Cap text bonus to avoid it outweighing amount/date
+                score += Math.min(textBonus, 6);
+            }
+
+            return { transaction: t, score };
         });
+
+        // Filter valid matches and sort by score descending
+        return scoredMatches
+            .filter(m => m.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .map(m => m.transaction);
     };
 
     return (
@@ -213,18 +279,23 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
 
                         return (
                             <div key={receipt.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col shadow-sm">
-                                {/* PREVIEW HEADER */}
-                                <div className="h-32 bg-slate-950 relative group">
+                                {/* PREVIEW HEADER — Clickable to open file */}
+                                <div
+                                    className="h-32 bg-slate-950 relative group cursor-pointer"
+                                    onClick={() => openReceipt(receipt.url, receipt.fileName)}
+                                    title="Cliquer pour ouvrir le fichier"
+                                >
                                     {receipt.url.startsWith('data:image') || receipt.fileName.match(/\.(jpg|jpeg|png)$/i) ? (
                                         <img src={receipt.url} alt="receipt" className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
                                     ) : (
-                                        <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 group-hover:text-blue-400 transition-colors">
                                             <FileText size={48} />
+                                            <span className="text-xs mt-2 text-slate-500 group-hover:text-blue-300">Cliquer pour ouvrir</span>
                                         </div>
                                     )}
-                                    <a href={receipt.url} target="_blank" rel="noreferrer" className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/80 rounded text-white backdrop-blur-sm">
+                                    <div className="absolute top-2 right-2 p-1.5 bg-black/50 group-hover:bg-blue-600/80 rounded text-white backdrop-blur-sm transition-colors">
                                         <ExternalLink size={14} />
-                                    </a>
+                                    </div>
                                 </div>
 
                                 {/* INFO BODY */}
@@ -257,7 +328,11 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                                 {matches.slice(0, 2).map(m => (
                                                     <button
                                                         key={m.id}
-                                                        onClick={() => onLinkReceipt(receipt.id, m.id)}
+                                                        onClick={() => {
+                                                            if (window.confirm(`Lier ce justificatif à la transaction :\n\n"${m.description}"\n${m.date} — CHF ${m.amount.toFixed(2)}\n\nConfirmer ?`)) {
+                                                                onLinkReceipt(receipt.id, m.id);
+                                                            }
+                                                        }}
                                                         className="w-full text-left p-2 rounded bg-emerald-900/10 hover:bg-emerald-900/20 border border-emerald-900/30 text-xs transition-colors group"
                                                     >
                                                         <div className="text-slate-300 font-medium">{m.description}</div>
