@@ -79,72 +79,80 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     const handleFiles = async (files: File[]) => {
         setIsProcessing(true);
 
-        const uploadPromises = files.map(async (file) => {
+        // 1 & 2: Deduplication
+        const validFiles = files.filter(f => !receipts.some(r => r.fileName === f.name));
+        const duplicates = files.length - validFiles.length;
+
+        if (duplicates > 0) {
+            console.log(`${duplicates} fichier(s) ignoré(s) car déjà existants.`);
+        }
+
+        // 3. Upload TOUS les fichiers valides en Storage D'ABORD
+        const uploadedData = await Promise.all(validFiles.map(async (file) => {
             try {
-                if (file.size > 700 * 1024) {
-                    alert(`Le fichier ${file.name} est trop volumineux (> 700Ko). Veuillez le compresser avant envoi pour le mode local.`);
-                    return;
-                }
-
-                // Basic Deduplication: Check if a receipt with this exact filename already exists
-                if (receipts.some(r => r.fileName === file.name)) {
-                    console.log(`Le fichier ${file.name} semble déjà exister. Ignoré.`);
-                    return; // Skip duplicate
-                }
-
-                // 1. Upload to Storage
                 const url = await uploadReceipt(file);
-
-                // 2. Analyze with Gemini (requires base64 for now if not public url)
-                let base64ForGemini = "";
-                if (url.startsWith('data:')) {
-                    base64ForGemini = url.split(',')[1];
-                } else {
-                    try {
-                        const resp = await fetch(url);
-                        const blob = await resp.blob();
-                        base64ForGemini = await new Promise<string>((resolve) => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-                            reader.readAsDataURL(blob);
-                        });
-                    } catch (e) {
-                        console.warn("Could not fetch URL for AI analysis", e);
-                    }
-                }
-
-                let analysis: any = {};
-                let matchedTransactionId: string | null = null;
-                if (base64ForGemini) {
-                    try {
-                        const result = await processReceiptBackend(base64ForGemini, file.type, transactions);
-                        analysis = result.extracted;
-                        matchedTransactionId = result.matchedTransactionId;
-                    } catch (err) {
-                        console.error("Backend receipt process failed:", err);
-                    }
-                }
-
-                const newReceipt: Receipt = {
-                    id: `rcpt-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-                    url: url,
-                    fileName: file.name,
-                    uploadDate: new Date().toISOString().split('T')[0],
-                    extractedDate: analysis?.date ?? null,
-                    extractedAmount: analysis?.amount ?? null,
-                    isAnalyzed: !!base64ForGemini,
-                    linkedTransactionId: matchedTransactionId ?? null
-                };
-
-                onAddReceipt(newReceipt);
-
+                return { file, url, success: true };
             } catch (e) {
-                console.error("Error processing file", file.name, e);
+                console.error("Error uploading file", file.name, e);
+                return { file, url: "", success: false };
             }
+        }));
+
+        const successfulUploads = uploadedData.filter(d => d.success);
+        const errors = validFiles.length - successfulUploads.length;
+
+        // Helper pour l'IA (convertir en Base64 localement pour aller plus vite)
+        const toBase64 = (f: File): Promise<string> => {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+                reader.readAsDataURL(f);
+            });
+        };
+
+        // 4. Appliquer la couche IA sur tous les fichiers une fois qu'ils sont tous dans le storage
+        const analysisPromises = successfulUploads.map(async ({ file, url }) => {
+            let analysis: any = {};
+            let suggestedTransactionId: string | null = null;
+            
+            try {
+                const base64ForGemini = await toBase64(file);
+                const result = await processReceiptBackend(base64ForGemini, file.type, transactions);
+                analysis = result.extracted;
+                suggestedTransactionId = result.matchedTransactionId;
+            } catch (err) {
+                console.error("Backend receipt process failed for", file.name, err);
+            }
+
+            const newReceipt: Receipt = {
+                id: `rcpt-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                url: url,
+                fileName: file.name,
+                uploadDate: new Date().toISOString().split('T')[0],
+                extractedDate: analysis?.date ?? null,
+                extractedAmount: analysis?.amount ?? null,
+                isAnalyzed: true,
+                linkedTransactionId: null // On force à null pour ne PAS lier automatiquement et laisser l'utilisateur vérifier
+            };
+
+            onAddReceipt(newReceipt);
+            return { hasSuggestion: !!suggestedTransactionId };
         });
 
-        await Promise.all(uploadPromises);
+        const aiResults = await Promise.all(analysisPromises);
         setIsProcessing(false);
+
+        const analyzedCount = aiResults.length;
+
+        // Bilan
+        let message = `Bilan du traitement :\n`;
+        message += `- Fichiers totaux : ${files.length}\n`;
+        if (duplicates > 0) message += `- Ignorés (déjà existants) : ${duplicates}\n`;
+        if (errors > 0) message += `- Erreurs d'envoi Storage : ${errors}\n`;
+        message += `- Validés par l'IA : ${analyzedCount}\n`;
+        message += `\nTous vos justificatifs sont maintenant dans la liste pour vérification manuelle.`;
+
+        alert(message);
     };
 
     // --- MATCHING LOGIC ---
