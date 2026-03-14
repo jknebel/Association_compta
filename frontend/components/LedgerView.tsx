@@ -129,19 +129,30 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   };
 
   const getReceiptName = (t: Transaction) => {
-    if (t.receiptFileName) return t.receiptFileName;
-    if (t.receiptUrl) {
+    let rawName = "Justificatif";
+    if (t.receiptFileName) {
+        rawName = t.receiptFileName;
+    } else if (t.receiptUrl) {
       if (t.receiptUrl.startsWith('data:')) return "Nouveau justificatif";
       try {
         const decoded = decodeURIComponent(t.receiptUrl);
         const pathParts = decoded.split('?')[0].split('/');
-        const filename = pathParts[pathParts.length - 1];
-        return filename || "Justificatif";
+        rawName = pathParts[pathParts.length - 1] || "Justificatif";
       } catch (e) {
-        return "Justificatif";
+        rawName = "Justificatif";
       }
     }
-    return "Joindre";
+    
+    // Remove the Firebase timestamp prefix (e.g. "1710453234_MyReceipt.pdf" -> "MyReceipt.pdf")
+    if (rawName !== "Justificatif" && rawName !== "Joindre") {
+        const parts = rawName.split('_');
+        if (parts.length > 1) {
+            // Rejoin everything after the first underscore
+            return parts.slice(1).join('_');
+        }
+    }
+    
+    return rawName === "Justificatif" && !t.receiptUrl ? "Joindre" : rawName;
   };
 
   // --- RECEIPT LOGIC ---

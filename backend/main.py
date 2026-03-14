@@ -170,21 +170,17 @@ class AgentState(BaseModel):
     user_id: str
     pdf_base64: str
     existing_accounts: List[Account]
+    raw_text: str = ""
     extracted_transactions: List[Transaction] = []
     logs: List[str] = []
 
-def ingest_node(state: AgentState):
-    """OCR Extraction"""
-    print("--- NODE: INGESTION ---")
+def vision_node(state: AgentState):
+    """Vision Extraction: Image -> Raw Text"""
+    print("--- NODE: VISION (EXTRACTION BRUTE) ---")
     prompt = """
-    Analyse ce document bancaire comme une image et extrais toutes les transactions.
-    Date format: YYYY-MM-DD. ATTENTION: Les dates sur le PDF sont au format Européen (Jour.Mois.Année ou DD.MM.YYYY). Ne confonds pas le mois et le jour.
-    Montant: Positif pour crédit, Négatif pour débit.
-    CRITIQUE: Le montant ne doit JAMAIS être 0.00 sauf si c'est explicitement écrit '0.00' sur le document.
-    Si un montant est illisible ou ambigu, relis attentivement la ligne concernée et extrais la valeur correcte.
-    Ne mets JAMAIS 0 par défaut.
-    Description: Un libellé 'small' très court et propre pour l'affichage (ex: 'Parking', 'Cotisation Dupont').
-    fullRawText: La transcription brute, LITTÉRALE et COMPLÈTE de tout le bloc de texte visible sur l'image qui concerne cette transaction (incluant ref, donneur d'ordre, communications etc.).
+    Voici un document bancaire. Ton SEUL et UNIQUE but est d'extraire tout le texte visible.
+    Pour l'intégralité du document, copie absolument TOUT le texte (dates, toutes les lignes de descriptions, montants, donneurs d'ordre, communications, adresses, etc.).
+    Garde l'ordre de lecture. Ne tente pas de formater (pas de JSON) ou de résumer. Sois une machine de transcription parfaite. Ne saute aucune ligne !
     """
     
     message = HumanMessage(
@@ -199,19 +195,54 @@ def ingest_node(state: AgentState):
     
     try:
         flash_llm = get_llm()
-        # Use with_structured_output for robust JSON parsing
+        result = flash_llm.invoke([message])
+        
+        return {
+            "raw_text": result.content,
+            "logs": ["Extraction visuelle du texte brut terminée."]
+        }
+    except Exception as e:
+        print(f"Vision Error: {e}")
+        return {
+            "raw_text": "",
+            "logs": [f"Erreur de vision: {str(e)}"]
+        }
+
+def parsing_node(state: AgentState):
+    """Text -> Structured JSON"""
+    print("--- NODE: PARSING (FORMATAGE TEXTE) ---")
+    if not state.raw_text:
+        return {"logs": ["Erreur: Aucun texte brut fourni au parseur."]}
+        
+    prompt = f"""
+    Voici le texte brut exhaustivement extrait d'un document bancaire :
+    
+    ---------------------
+    {state.raw_text}
+    ---------------------
+    
+    Tu dois retrouver et extraire toutes les transactions sous forme structurée en respectant ces règles STICTES :
+    1.  **Date** : Convertis les dates au format YYYY-MM-DD. ATTENTION: Le texte d'origine utilise le format Européen (Jour.Mois.Année ou DD.MM.YY). Ne confonds pas le mois et le jour.
+    2.  **Montant** : Positif pour crédit, Négatif pour débit.
+        CRITIQUE: Le montant ne doit JAMAIS être 0.00 sauf si c'est explicitement écrit '0.00'. Ne mets JAMAIS 0 par défaut.
+    3.  **Description** : Un libellé 'small' très court et propre pour l'affichage (ex: 'Parking', 'Cotisation Dupont', 'Virement Andrea Lozzi').
+    4.  **fullRawText** : OBLIGATOIRE ET VITAL. Recopie ici de manière exhaustive TOUT le bloc de texte brut (ci-dessus) qui est associé à cette transaction. Cela inclut toutes les lignes subsidiaires (communications, donneur d'ordre, notre ref, etc.). Ne tronque rien !
+    """
+    
+    try:
+        flash_llm = get_llm()
         structured_llm = flash_llm.with_structured_output(TransactionList)
-        result = structured_llm.invoke([message])
+        result = structured_llm.invoke(prompt)
         
         return {
             "extracted_transactions": result.transactions,
-            "logs": [f"Extraction terminée: {len(result.transactions)} lignes trouvées."]
+            "logs": [f"Parsing texte terminé: {len(result.transactions)} transactions structurées."]
         }
     except Exception as e:
-        print(f"Ingestion Error: {e}")
+        print(f"Parsing Error: {e}")
         return {
             "extracted_transactions": [],
-            "logs": [f"Erreur d'extraction: {str(e)}"]
+            "logs": [f"Erreur de parsing: {str(e)}"]
         }
 
 def amount_verification_node(state: AgentState):
@@ -427,12 +458,14 @@ def classification_node(state: AgentState):
 
 # Build Graph
 workflow = StateGraph(AgentState)
-workflow.add_node("ingest", ingest_node)
+workflow.add_node("vision", vision_node)
+workflow.add_node("parse", parsing_node)
 workflow.add_node("verify_amounts", amount_verification_node)
 workflow.add_node("classify", classification_node)
 
-workflow.set_entry_point("ingest")
-workflow.add_edge("ingest", "verify_amounts")
+workflow.set_entry_point("vision")
+workflow.add_edge("vision", "parse")
+workflow.add_edge("parse", "verify_amounts")
 workflow.add_edge("verify_amounts", "classify")
 workflow.add_edge("classify", END)
 

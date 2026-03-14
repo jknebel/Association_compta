@@ -312,7 +312,9 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                 {/* INFO BODY */}
                                 <div className="p-4 flex-1 flex flex-col">
                                     <div className="flex justify-between items-start mb-2">
-                                        <span className="text-sm font-medium text-slate-200 truncate pr-2" title={receipt.fileName}>{receipt.fileName}</span>
+                                        <span className="text-sm font-medium text-slate-200 truncate pr-2" title={receipt.fileName}>
+                                            {receipt.fileName ? (receipt.fileName.includes('_') ? receipt.fileName.split('_').slice(1).join('_') : receipt.fileName) : "Sans nom"}
+                                        </span>
                                         <button onClick={() => onDeleteReceipt(receipt.id)} className="text-slate-600 hover:text-rose-500">
                                             <Trash2 size={16} />
                                         </button>
