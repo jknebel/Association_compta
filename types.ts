@@ -34,6 +34,7 @@ export interface Transaction {
   status: TransactionStatus;
   notes?: string;
   detectedMemberName?: string; // If extracted by AI
+  fullRawText?: string; // Literal text from bank statement
   receiptUrl?: string; // URL to the uploaded receipt image
 }
 

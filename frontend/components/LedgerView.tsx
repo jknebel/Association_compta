@@ -90,7 +90,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     if (maxAmount !== '' && t.amount > Number(maxAmount)) matchesAmount = false;
 
     return matchesFilter && matchesSearch && matchesDate && matchesAmount;
-  });
+  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const clearFilters = () => {
     setFilter('ALL');
@@ -480,7 +480,16 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                         onChange={e => setEditForm({ ...editForm, description: e.target.value })}
                         className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white"
                       />
-                    ) : t.description}
+                    ) : (
+                      <div className="flex flex-col">
+                        <span>{t.description}</span>
+                        {t.fullRawText && t.fullRawText !== t.description && (
+                          <span className="text-[10px] text-slate-500 font-normal italic line-clamp-1 opacity-70" title={t.fullRawText}>
+                            {t.fullRawText}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </td>
 
                   {/* RECEIPT / JUSTIFICATIF */}

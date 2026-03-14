@@ -74,6 +74,7 @@ class Transaction(BaseModel):
     detectedMemberName: Optional[str] = None
     status: str = "PENDING"
     notes: Optional[str] = None
+    fullRawText: Optional[str] = None
     receiptUrl: Optional[str] = None
 
 class TransactionList(BaseModel):
@@ -179,7 +180,8 @@ def ingest_node(state: AgentState):
     CRITIQUE: Le montant ne doit JAMAIS être 0.00 sauf si c'est explicitement écrit '0.00' sur le document.
     Si un montant est illisible ou ambigu, relis attentivement la ligne concernée et extrais la valeur correcte.
     Ne mets JAMAIS 0 par défaut.
-    Description: Garde le texte complet.
+    Description: Un résumé court et propre (ex: 'Parking', 'Cotisation Dupont').
+    fullRawText: La ligne LITTÉRALE et COMPLÈTE telle qu'elle apparaît sur le relevé (ex: '12.05.2025 VIRT CPTE M. DUPONT REF: COTISATION PIERRE').
     """
     
     message = HumanMessage(
@@ -366,15 +368,22 @@ def classification_node(state: AgentState):
     - Si tu vois "M. Bolomet" classé en "Parking" dans le passé, et que tu vois "Mme Bolomet" avec le même montant/référence aujourd'hui, classe-le aussi en "Parking".
     - Si la référence (ex: 'xxxcv') correspond à un compte passé, c'est prioritaire sur le nom.
 
+    ### 4. NOUVELLES TRANSACTIONS À CLASSER
+    Regarde bien le champ 'fullRawText' pour chaque transaction :
+    - Il contient souvent le "Vrai" bénéficiaire dans les remarques (ex: "COTISATION POUR PIERRE").
+    - Extrais ce nom et mets-le dans 'detectedMemberName'.
+    - Si tu vois une date de période (ex: "Loyer Janvier"), note-le en priorité.
+    - Le champ 'description' peut être raccourci par l'utilisateur, fie-toi à 'fullRawText' qui est la donnée brute.
+
     DONNÉES HISTORIQUES :
     ---------------------
     {history_context}
     ---------------------
 
-    ### 4. NOUVELLES TRANSACTIONS À CLASSER
+    ### 5. NOUVELLES TRANSACTIONS À CLASSER
     {json.dumps([t.model_dump() for t in transactions], default=str)}
 
-    Retourne la liste des transactions avec le champ 'accountId' rempli (ou null si incertain).
+    Retourne la liste des transactions avec le champ 'accountId' rempli ET 'detectedMemberName' extrait si possible.
     """
     
     try:
