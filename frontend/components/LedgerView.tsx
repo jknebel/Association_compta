@@ -128,6 +128,22 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     }
   };
 
+  const getReceiptName = (t: Transaction) => {
+    if (t.receiptFileName) return t.receiptFileName;
+    if (t.receiptUrl) {
+      if (t.receiptUrl.startsWith('data:')) return "Nouveau justificatif";
+      try {
+        const decoded = decodeURIComponent(t.receiptUrl);
+        const pathParts = decoded.split('?')[0].split('/');
+        const filename = pathParts[pathParts.length - 1];
+        return filename || "Justificatif";
+      } catch (e) {
+        return "Justificatif";
+      }
+    }
+    return "Joindre";
+  };
+
   // --- RECEIPT LOGIC ---
 
   const openReceipt = (url: string) => {
@@ -504,7 +520,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                           title="Voir le justificatif"
                         >
                           <ImageIcon size={14} />
-                          <span className="truncate max-w-[120px]">{t.receiptFileName || "Voir"}</span>
+                          <span className="truncate max-w-[120px]">{getReceiptName(t)}</span>
                         </button>
                         {isEditing && (
                           <button

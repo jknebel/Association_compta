@@ -183,8 +183,8 @@ def ingest_node(state: AgentState):
     CRITIQUE: Le montant ne doit JAMAIS être 0.00 sauf si c'est explicitement écrit '0.00' sur le document.
     Si un montant est illisible ou ambigu, relis attentivement la ligne concernée et extrais la valeur correcte.
     Ne mets JAMAIS 0 par défaut.
-    Description: Un résumé court et propre (ex: 'Parking', 'Cotisation Dupont').
-    fullRawText: La ligne LITTÉRALE et COMPLÈTE telle qu'elle apparaît sur le relevé (ex: '12.05.2025 VIRT CPTE M. DUPONT REF: COTISATION PIERRE').
+    Description: Un libellé 'small' très court et propre pour l'affichage (ex: 'Parking', 'Cotisation Dupont').
+    fullRawText: OBLIGATOIRE. La ligne LITTÉRALE et COMPLÈTE telle qu'elle apparaît sur le relevé, incluant toutes les références ! (ex: '12.05.2025 VIRT CPTE M. DUPONT REF: COTISATION PIERRE'). Ce texte complet sera utilisé pour trouver le bon compte comptable.
     """
     
     message = HumanMessage(
