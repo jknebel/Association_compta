@@ -16,6 +16,7 @@ import { useAuth } from './frontend/services/authService';
 import * as XLSX from 'xlsx';
 import { matchTransactionsWithReceipts } from './frontend/services/matchingService';
 import { suggestCategory } from './frontend/services/geminiService';
+import { deleteFileFromStorage } from './frontend/services/storageService';
 
 function App() {
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -138,7 +139,19 @@ function App() {
         }
     };
 
-    const handleDeleteReceipt = (id: string) => {
+    const handleDeleteReceipt = async (id: string) => {
+        const receipt = receipts.find(r => r.id === id);
+        if (receipt) {
+            // Deduplication Check: 
+            // Are there any OTHER receipts using the same URL?
+            const otherUsers = receipts.filter(r => r.id !== id && r.url === receipt.url);
+            if (otherUsers.length === 0) {
+                // No other receipt uses this file, safe to delete from storage
+                await deleteFileFromStorage(receipt.url);
+            } else {
+                console.log(`File is shared by ${otherUsers.length} other receipt(s), skipping Storage deletion.`);
+            }
+        }
         deleteReceipt(id);
     };
 

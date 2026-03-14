@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { Receipt, Transaction } from '../../types';
-import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, DollarSign, ExternalLink } from 'lucide-react';
+import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, Coins, ExternalLink } from 'lucide-react';
 import { analyzeReceipt, processReceiptBackend } from '../services/geminiService';
 import { uploadReceipt } from '../services/storageService';
 
@@ -324,8 +324,8 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                             {receipt.extractedDate || <span className="italic">?</span>}
                                         </div>
                                         <div className="flex items-center gap-1">
-                                            <DollarSign size={12} />
-                                            {receipt.extractedAmount ? receipt.extractedAmount.toFixed(2) : <span className="italic">?</span>}
+                                            <Coins size={12} />
+                                            {receipt.extractedAmount ? `${receipt.extractedAmount.toFixed(2)} CHF` : <span className="italic">?</span>}
                                         </div>
                                     </div>
 

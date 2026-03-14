@@ -5,7 +5,7 @@ import { generateAccountingReport } from '../services/excelService';
 import { uploadReceipt } from '../services/storageService';
 import { auditLedger } from '../services/geminiService';
 import { AuditModal } from './AuditModal';
-import { Check, X, AlertTriangle, Search, Filter, Calendar, DollarSign, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck } from 'lucide-react';
+import { Check, X, AlertTriangle, Search, Filter, Calendar, Coins, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck } from 'lucide-react';
 
 interface LedgerViewProps {
   transactions: Transaction[];
@@ -382,7 +382,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           {/* Amount Range */}
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 text-slate-500 min-w-fit">
-              <DollarSign size={16} />
+              <Coins size={16} />
               <span className="text-sm font-medium">Montant:</span>
             </div>
             <input
