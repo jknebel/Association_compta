@@ -99,11 +99,10 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
                 date: t.date,
                 description: t.description,
                 amount: typeof t.amount === 'string' ? Number(t.amount.replace(',', '.')) : Number(t.amount || 0),
-                status: t.matchedAccountCode ? TransactionStatus.REVIEW_NEEDED : TransactionStatus.PENDING,
-                accountId: t.matchedAccountCode
-                  ? accounts.find(a => a.code === t.matchedAccountCode)?.id
-                  : undefined,
+                status: t.accountId ? TransactionStatus.REVIEW_NEEDED : TransactionStatus.PENDING,
+                accountId: t.accountId,
                 detectedMemberName: t.detectedMemberName,
+                fullRawText: t.fullRawText,
                 notes: undefined
               }));
               resolve();

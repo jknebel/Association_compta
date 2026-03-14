@@ -249,7 +249,7 @@ def parsing_node(state: AgentState):
         print("--- [Agent: PARSING][OUTPUT_START] ---")
         print(f"Extracted {len(result.transactions)} transactions.")
         for i, t in enumerate(result.transactions[:3]):
-             print(f"Txn {i}: {t.date} | {t.description} | {t.amount} | Raw: {t.fullRawText[:50]}...")
+             print(f"Txn {i}: {t.date} | {t.description} | {t.amount} | Raw: {t.fullRawText}")
         print("--- [Agent: PARSING][OUTPUT_END] ---")
 
         return {
@@ -362,6 +362,8 @@ def classification_node(state: AgentState):
     accounts = state.existing_accounts
     user_id = state.user_id
     print(f"To Classify: {len(transactions)} | Accounts available: {len(accounts)} | UserId: {user_id}")
+    if transactions:
+        print(f"First Transaction to classify (full JSON): {json.dumps(transactions[0].model_dump(), default=str)}")
     print("--- [Agent: CLASSIFICATION][INPUT_END] ---")
     
     if not transactions:
@@ -449,6 +451,11 @@ def classification_node(state: AgentState):
         structured_llm = flash_llm.with_structured_output(TransactionList)
         result = structured_llm.invoke(prompt)
         
+        print("--- [Agent: CLASSIFICATION][RAW_OUTPUT_START] ---")
+        for i, t in enumerate(result.transactions[:5]):
+            print(f"Raw Txn {i}: {t.description} -> accountId suggested: {t.accountId}")
+        print("--- [Agent: CLASSIFICATION][RAW_OUTPUT_END] ---")
+
         # Post-processing: Validate and Correct Account IDs
         validated_transactions = []
         account_map = {a.id: a for a in accounts}

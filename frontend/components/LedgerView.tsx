@@ -145,13 +145,30 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       }
     }
     
-    // Remove the Firebase timestamp prefix (e.g. "1710453234_MyReceipt.pdf" -> "MyReceipt.pdf")
     if (rawName !== "Justificatif" && rawName !== "Joindre") {
+        let cleanName = rawName;
+        
+        // 1. Remove Firebase timestamp prefix (e.g. "1710453234_MyReceipt.pdf")
         const parts = rawName.split('_');
-        if (parts.length > 1) {
-            // Rejoin everything after the first underscore
-            return parts.slice(1).join('_');
+        if (parts.length > 1 && !isNaN(Number(parts[0])) && parts[0].length >= 10) {
+            cleanName = parts.slice(1).join('_');
         }
+        
+        // 2. Remove date patterns: YYYY-MM-DD, DD-MM-YYYY, etc.
+        // Also captures trailing dashes/underscores/spaces after the date.
+        cleanName = cleanName.replace(/\d{2,4}[-.\/]\d{2}[-.\/]\d{2,4}[-_ ]?/g, '');
+        
+        // 3. Remove UUID-like strings or long random strings if they are at the beginning
+        cleanName = cleanName.replace(/^[a-f0-9-]{20,}[-_ ]?/, '');
+
+        // 4. Final trim and cleanup
+        cleanName = cleanName.trim();
+        
+        // If we stripped too MUCH (e.g. the file was ONLY a date), fallback to raw
+        const nameWithoutExt = cleanName.replace(/\.[^/.]+$/, "");
+        if (!nameWithoutExt.trim() || cleanName.length < 3) return rawName;
+        
+        return cleanName;
     }
     
     return rawName === "Justificatif" && !t.receiptUrl ? "Joindre" : rawName;
