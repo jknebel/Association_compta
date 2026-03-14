@@ -130,6 +130,28 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
   // --- RECEIPT LOGIC ---
 
+  const openReceipt = (url: string) => {
+    if (url.startsWith('data:')) {
+        // Convert base64 data URI to blob and open in new tab
+        try {
+            const [header, b64] = url.split(',');
+            const mimeMatch = header.match(/data:(.*?);/);
+            const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+            const byteChars = atob(b64);
+            const byteArray = new Uint8Array(byteChars.length);
+            for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+            const blob = new Blob([byteArray], { type: mime });
+            const blobUrl = URL.createObjectURL(blob);
+            window.open(blobUrl, '_blank');
+        } catch (e) {
+            console.error('Failed to open data URI', e);
+            window.open(url, '_blank');
+        }
+    } else {
+        window.open(url, '_blank');
+    }
+  };
+
   const handleAttachClick = (txnId: string) => {
     selectedTxnRef.current = txnId;
     fileInputRef.current?.click();
@@ -467,16 +489,14 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                       <Loader2 className="animate-spin text-blue-500" size={16} />
                     ) : t.receiptUrl ? (
                       <div className="flex items-center gap-2">
-                        <a
-                          href={t.receiptUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 bg-blue-900/20 px-2 py-1 rounded text-xs transition-colors"
+                        <button
+                          onClick={() => openReceipt(t.receiptUrl!)}
+                          className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 bg-blue-900/20 px-2 py-1 rounded text-xs transition-colors cursor-pointer"
                           title="Voir le justificatif"
                         >
                           <ImageIcon size={14} />
                           Voir
-                        </a>
+                        </button>
                         {isEditing && (
                           <button
                             onClick={() => handleRemoveReceipt(t)}

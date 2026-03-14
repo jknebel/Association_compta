@@ -45,7 +45,20 @@ function App() {
     // Handle new transactions from Upload Agent
     const handleProcessComplete = async (newTxns: Transaction[], newAccounts: Account[], matchedReceiptIds: string[] = []) => {
 
-        let txnsToSave = [...newTxns];
+        // Enforce Amount Polarity Rules: 
+        // Positive Amount MUST be INCOME. Negative Amount MUST be EXPENSE.
+        // Clear accountId if the backend AI mismatched it.
+        let txnsToSave = newTxns.map(t => {
+            if (t.accountId) {
+                const acc = accounts.find(a => a.id === t.accountId) || newAccounts.find(a => a.id === t.accountId);
+                if (acc) {
+                    if (t.amount > 0 && acc.type !== AccountType.INCOME) return { ...t, accountId: undefined };
+                    if (t.amount < 0 && acc.type !== AccountType.EXPENSE) return { ...t, accountId: undefined };
+                }
+            }
+            return t;
+        });
+
         let receiptIdsToUpdate = [...matchedReceiptIds];
 
         // 1. Auto-Match with Receipts (if not already done by backend, usually backend doesn't do receipt matching)
@@ -54,13 +67,24 @@ function App() {
         txnsToSave = processedTxns;
         receiptIdsToUpdate = [...receiptIdsToUpdate, ...newMatchedIds]; // Merge potential Backend matches (if any) with Client matches
 
+        // Helper to get valid accounts for AI suggestion
+        const getValidAccounts = (t: Transaction, allAccounts: Account[]) => {
+            return allAccounts.filter(a => {
+                if (a.type === AccountType.MIXED) return false;
+                if (t.amount > 0) return a.type === AccountType.INCOME;
+                if (t.amount < 0) return a.type === AccountType.EXPENSE;
+                return true;
+            });
+        };
+
         // 2. Auto-Suggest Categories for those missing accountId
         const uncategorized = txnsToSave.filter(t => !t.accountId);
         if (uncategorized.length > 0) {
             console.log("Auto-categorizing", uncategorized.length, "transactions...");
             const categorized = await Promise.all(uncategorized.map(async (t) => {
                 try {
-                    const result = await suggestCategory(t.description, accounts);
+                    const validAccounts = getValidAccounts(t, accounts);
+                    const result = await suggestCategory(t.description, validAccounts);
                     if (result.accountId) {
                         return {
                             ...t,
@@ -168,6 +192,16 @@ function App() {
         let txnsToUpdate = processedTxns;
         let hasUpdates = matchedReceiptIds.length > 0;
 
+        // Helper to get valid accounts for AI suggestion
+        const getValidAccounts = (t: Transaction, allAccounts: Account[]) => {
+            return allAccounts.filter(a => {
+                if (a.type === AccountType.MIXED) return false;
+                if (t.amount > 0) return a.type === AccountType.INCOME;
+                if (t.amount < 0) return a.type === AccountType.EXPENSE;
+                return true;
+            });
+        };
+
         // 2. Suggest Categories (Async - for uncategorized only)
         const uncategorized = txnsToUpdate.filter(t => !t.accountId);
         const totalToCategorize = uncategorized.length;
@@ -182,7 +216,8 @@ function App() {
             for (const t of uncategorized) {
                 try {
                     // Slow down slightly to show progress if needed, or just await
-                    const result = await suggestCategory(t.description, accounts);
+                    const validAccounts = getValidAccounts(t, accounts);
+                    const result = await suggestCategory(t.description, validAccounts);
                     if (result.accountId) {
                         categorized.push({
                             ...t,
@@ -244,9 +279,20 @@ function App() {
 
         let completed = 0;
 
+        // Helper to get valid accounts for AI suggestion
+        const getValidAccounts = (t: Transaction, allAccounts: Account[]) => {
+            return allAccounts.filter(a => {
+                if (a.type === AccountType.MIXED) return false;
+                if (t.amount > 0) return a.type === AccountType.INCOME;
+                if (t.amount < 0) return a.type === AccountType.EXPENSE;
+                return true;
+            });
+        };
+
         for (const t of transactions) {
             try {
-                const result = await suggestCategory(t.description, accounts);
+                const validAccounts = getValidAccounts(t, accounts);
+                const result = await suggestCategory(t.description, validAccounts);
                 const updatedTxn = {
                     ...t,
                     accountId: result.accountId || undefined,
@@ -302,7 +348,17 @@ function App() {
 
     const handleGuessMember = async (t: Transaction): Promise<string | null> => {
         try {
-            const result = await suggestCategory(t.description, accounts);
+            // Helper to get valid accounts for AI suggestion
+            const getValidAccounts = (t: Transaction, allAccounts: Account[]) => {
+                return allAccounts.filter(a => {
+                    if (a.type === AccountType.MIXED) return false;
+                    if (t.amount > 0) return a.type === AccountType.INCOME;
+                    if (t.amount < 0) return a.type === AccountType.EXPENSE;
+                    return true;
+                });
+            };
+            const validAccounts = getValidAccounts(t, accounts);
+            const result = await suggestCategory(t.description, validAccounts);
             return result.memberName || null;
         } catch (e) {
             console.error("Manual AI Guess failed", e);
