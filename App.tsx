@@ -76,34 +76,9 @@ function App() {
             });
         };
 
-        // 2. Auto-Suggest Categories for those missing accountId
-        const uncategorized = txnsToSave.filter(t => !t.accountId);
-        if (uncategorized.length > 0) {
-            console.log("Auto-categorizing", uncategorized.length, "transactions...");
-            const categorized = await Promise.all(uncategorized.map(async (t) => {
-                try {
-                    const validAccounts = getValidAccounts(t, accounts);
-                    const result = await suggestCategory(t.description, validAccounts);
-                    if (result.accountId) {
-                        return {
-                            ...t,
-                            accountId: result.accountId || undefined,
-                            detectedMemberName: result.memberName || undefined,
-                            status: TransactionStatus.REVIEW_NEEDED
-                        };
-                    }
-                } catch (err) {
-                    console.warn("Auto-cat failed for", t.description, err);
-                }
-                return t;
-            }));
-
-            // Merge back
-            txnsToSave = txnsToSave.map(t => {
-                const found = categorized.find(c => c.id === t.id);
-                return found || t;
-            });
-        }
+        // Note: We removed the frontend auto-categorization loop here because the backend 
+        // /process-bank-statement endpoint now handles classification directly via LangGraph.
+        // This eliminates the 20-30s UI freeze!
 
         // 3. Save Everything
         saveTransactions(txnsToSave);

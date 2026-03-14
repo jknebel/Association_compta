@@ -26,8 +26,9 @@ export const uploadReceipt = async (file: File): Promise<string> => {
        console.warn("Firebase Storage not available or failed (Fallback to Base64):", e);
        
        // Limit check for Base64 fallback (Firestore limit is 1MB per doc)
-       if (file.size > 800 * 1024) {
-           throw new Error("Image trop volumineuse pour le mode hors-ligne/sans-storage (Max 800Ko). Activez Firebase Storage pour plus.");
+       // A 700KB file becomes ~950KB in Base64, staying safely under the 1MB limit.
+       if (file.size > 700 * 1024) {
+           throw new Error("Taille max dépassée (700Ko) pour le stockage local. Erreur Serveur (403) sur Firebase Storage.");
        }
        
        return toBase64(file);

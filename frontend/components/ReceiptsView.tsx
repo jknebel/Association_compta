@@ -81,8 +81,8 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
 
         const uploadPromises = files.map(async (file) => {
             try {
-                if (file.size > 2 * 1024 * 1024) {
-                    alert(`Le fichier ${file.name} est trop volumineux (> 2Mo). Ignore.`);
+                if (file.size > 700 * 1024) {
+                    alert(`Le fichier ${file.name} est trop volumineux (> 700Ko). Veuillez le compresser avant envoi pour le mode local.`);
                     return;
                 }
 
