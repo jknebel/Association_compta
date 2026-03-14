@@ -98,7 +98,7 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
                 id: `txn-${Date.now()}-${idx}`,
                 date: t.date,
                 description: t.description,
-                amount: t.amount,
+                amount: typeof t.amount === 'string' ? Number(t.amount.replace(',', '.')) : Number(t.amount || 0),
                 status: t.matchedAccountCode ? TransactionStatus.REVIEW_NEEDED : TransactionStatus.PENDING,
                 accountId: t.matchedAccountCode
                   ? accounts.find(a => a.code === t.matchedAccountCode)?.id

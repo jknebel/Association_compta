@@ -52,8 +52,8 @@ function App() {
             if (t.accountId) {
                 const acc = accounts.find(a => a.id === t.accountId) || newAccounts.find(a => a.id === t.accountId);
                 if (acc) {
-                    if (t.amount > 0 && acc.type !== AccountType.INCOME) return { ...t, accountId: undefined };
-                    if (t.amount < 0 && acc.type !== AccountType.EXPENSE) return { ...t, accountId: undefined };
+                    if (t.amount > 0 && acc.type !== AccountType.INCOME && acc.type !== AccountType.MIXED) return { ...t, accountId: undefined };
+                    if (t.amount < 0 && acc.type !== AccountType.EXPENSE && acc.type !== AccountType.MIXED) return { ...t, accountId: undefined };
                 }
             }
             return t;
@@ -195,9 +195,8 @@ function App() {
         // Helper to get valid accounts for AI suggestion
         const getValidAccounts = (t: Transaction, allAccounts: Account[]) => {
             return allAccounts.filter(a => {
-                if (a.type === AccountType.MIXED) return false;
-                if (t.amount > 0) return a.type === AccountType.INCOME;
-                if (t.amount < 0) return a.type === AccountType.EXPENSE;
+                if (t.amount > 0) return a.type === AccountType.INCOME || a.type === AccountType.MIXED;
+                if (t.amount < 0) return a.type === AccountType.EXPENSE || a.type === AccountType.MIXED;
                 return true;
             });
         };
@@ -282,9 +281,8 @@ function App() {
         // Helper to get valid accounts for AI suggestion
         const getValidAccounts = (t: Transaction, allAccounts: Account[]) => {
             return allAccounts.filter(a => {
-                if (a.type === AccountType.MIXED) return false;
-                if (t.amount > 0) return a.type === AccountType.INCOME;
-                if (t.amount < 0) return a.type === AccountType.EXPENSE;
+                if (t.amount > 0) return a.type === AccountType.INCOME || a.type === AccountType.MIXED;
+                if (t.amount < 0) return a.type === AccountType.EXPENSE || a.type === AccountType.MIXED;
                 return true;
             });
         };
@@ -351,9 +349,8 @@ function App() {
             // Helper to get valid accounts for AI suggestion
             const getValidAccounts = (t: Transaction, allAccounts: Account[]) => {
                 return allAccounts.filter(a => {
-                    if (a.type === AccountType.MIXED) return false;
-                    if (t.amount > 0) return a.type === AccountType.INCOME;
-                    if (t.amount < 0) return a.type === AccountType.EXPENSE;
+                    if (t.amount > 0) return a.type === AccountType.INCOME || a.type === AccountType.MIXED;
+                    if (t.amount < 0) return a.type === AccountType.EXPENSE || a.type === AccountType.MIXED;
                     return true;
                 });
             };
