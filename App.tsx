@@ -53,8 +53,14 @@ function App() {
             if (t.accountId) {
                 const acc = accounts.find(a => a.id === t.accountId) || newAccounts.find(a => a.id === t.accountId);
                 if (acc) {
-                    if (t.amount > 0 && acc.type !== AccountType.INCOME && acc.type !== AccountType.MIXED) return { ...t, accountId: undefined };
-                    if (t.amount < 0 && acc.type !== AccountType.EXPENSE && acc.type !== AccountType.MIXED) return { ...t, accountId: undefined };
+                    if (t.amount > 0 && acc.type !== AccountType.INCOME && acc.type !== AccountType.MIXED) {
+                        console.warn(`[DEBUG] Dropping accountId ${t.accountId} for txn '${t.description}' because amount is ${t.amount} (positif) but account type is '${acc.type}'. Expected PRODUIT or MIXTE.`);
+                        return { ...t, accountId: undefined };
+                    }
+                    if (t.amount < 0 && acc.type !== AccountType.EXPENSE && acc.type !== AccountType.MIXED) {
+                        console.warn(`[DEBUG] Dropping accountId ${t.accountId} for txn '${t.description}' because amount is ${t.amount} (négatif) but account type is '${acc.type}'. Expected CHARGE or MIXTE.`);
+                        return { ...t, accountId: undefined };
+                    }
                 }
             }
             return t;

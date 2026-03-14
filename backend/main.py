@@ -440,6 +440,12 @@ def classification_node(state: AgentState):
     ### 5. NOUVELLES TRANSACTIONS À CLASSER
     {json.dumps([t.model_dump() for t in transactions], default=str)}
 
+    !!! CONSEIL POUR LE DÉMARRAGE !!!
+    Si tu n'as pas beaucoup d'historique, utilise ton bon sens d'expert comptable. 
+    - Pour les dépenses courantes sans catégorie spécifique (ex: train, parking), utilise le compte le plus générique (ex: 'Activité' ou 'Gestion').
+    - N'aie pas peur de proposer un compte : il vaut mieux une suggestion pertinente qu'un champ vide.
+    - Propose le compte le plus probable plutôt que de laisser 'accountId' à null, sauf si c'est vraiment impossible à déterminer.
+
     Retourne la liste des transactions avec le champ 'accountId' rempli ET 'detectedMemberName' extrait si possible.
     """
     
@@ -453,7 +459,7 @@ def classification_node(state: AgentState):
         result = structured_llm.invoke(prompt)
         
         print("--- [Agent: CLASSIFICATION][RAW_OUTPUT_START] ---")
-        for i, t in enumerate(result.transactions[:10]): # Log more to be sure
+        for i, t in enumerate(result.transactions): # Log ALL to be sure
             print(f"Raw Txn {i}: {t.description} -> accountId suggested: '{t.accountId}'")
         print("--- [Agent: CLASSIFICATION][RAW_OUTPUT_END] ---")
 
@@ -486,8 +492,11 @@ def classification_node(state: AgentState):
             validated_transactions.append(txn)
 
         print("--- [Agent: CLASSIFICATION][OUTPUT_START] ---")
-        for i, t in enumerate(validated_transactions[:3]):
+        for i, t in enumerate(validated_transactions):
              print(f"Txn {i}: {t.description} -> AccountID: {t.accountId} | Member: {t.detectedMemberName}")
+             # Affichage complet du Pydantic model pour debug
+             if "CFF" in (t.description or "").upper(): # Filtre optionnel pour ne pas polluer les logs si tu veux, ou affiche tout :
+                 print(f"FULL TXN OUTPUT (JSON): {t.model_dump_json(indent=2)}")
         print("--- [Agent: CLASSIFICATION][OUTPUT_END] ---")
 
         return {
