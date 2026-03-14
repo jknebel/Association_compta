@@ -440,6 +440,10 @@ def classification_node(state: AgentState):
     Retourne la liste des transactions avec le champ 'accountId' rempli ET 'detectedMemberName' extrait si possible.
     """
     
+    print("--- [Agent: CLASSIFICATION][PROMPT_START] ---")
+    print(prompt)
+    print("--- [Agent: CLASSIFICATION][PROMPT_END] ---")
+
     try:
         flash_llm = get_llm()
         structured_llm = flash_llm.with_structured_output(TransactionList)

@@ -108,6 +108,14 @@ function App() {
     };
 
     const handleUpdateTransaction = (updated: Transaction) => {
+        // If the receipt was removed from the transaction, unlink it
+        const old = transactions.find(t => t.id === updated.id);
+        if (old && old.receiptUrl && !updated.receiptUrl) {
+            const receiptToUnlink = receipts.find(r => r.url === old.receiptUrl);
+            if (receiptToUnlink) {
+                saveReceipt({ ...receiptToUnlink, linkedTransactionId: undefined, isAnalyzed: true });
+            }
+        }
         saveTransaction(updated);
     };
 
@@ -711,6 +719,7 @@ function App() {
                     onArchiveAll={handleArchiveAllTransactions}
                     autoMatchProgress={autoMatchProgress}
                     onGuessMember={handleGuessMember}
+                    onAddReceipt={handleAddReceipt}
                 />
             )}
 

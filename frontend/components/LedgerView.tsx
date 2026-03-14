@@ -17,7 +17,8 @@ interface LedgerViewProps {
   onClearAll: () => void;
   onArchiveAll: () => void;
   autoMatchProgress: { current: number, total: number, message: string } | null;
-  onGuessMember?: (t: Transaction) => Promise<string | null>;
+  onGuessMember: (t: Transaction, accountId: string | undefined) => void;
+  onAddReceipt?: (receipt: Receipt) => void;
 }
 
 export const LedgerView: React.FC<LedgerViewProps> = ({
@@ -30,7 +31,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   onClearAll,
   onArchiveAll,
   autoMatchProgress,
-  onGuessMember
+  onGuessMember,
+  onAddReceipt
 }) => {
   const [filter, setFilter] = useState('ALL');
   const [search, setSearch] = useState('');
@@ -201,7 +203,21 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       const url = await uploadReceipt(file);
       const txn = transactions.find(t => t.id === txnId);
       if (txn) {
-        onUpdateTransaction({ ...txn, receiptUrl: url });
+        onUpdateTransaction({ ...txn, receiptUrl: url, receiptFileName: file.name });
+        
+        // Ensure the receipt is added to the global `receipts` state!
+        if (onAddReceipt) {
+           onAddReceipt({
+               id: `rcpt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+               url: url,
+               fileName: file.name,
+               uploadDate: new Date().toISOString().split('T')[0],
+               extractedDate: null, 
+               extractedAmount: null, 
+               isAnalyzed: true,
+               linkedTransactionId: txn.id
+           });
+        }
       }
     } catch (err) {
       alert("Erreur lors de l'upload du justificatif.");
