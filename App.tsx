@@ -70,9 +70,8 @@ function App() {
         // Helper to get valid accounts for AI suggestion
         const getValidAccounts = (t: Transaction, allAccounts: Account[]) => {
             return allAccounts.filter(a => {
-                if (a.type === AccountType.MIXED) return false;
-                if (t.amount > 0) return a.type === AccountType.INCOME;
-                if (t.amount < 0) return a.type === AccountType.EXPENSE;
+                if (t.amount > 0) return a.type === AccountType.INCOME || a.type === AccountType.MIXED;
+                if (t.amount < 0) return a.type === AccountType.EXPENSE || a.type === AccountType.MIXED;
                 return true;
             });
         };

@@ -79,24 +79,27 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     const handleFiles = async (files: File[]) => {
         setIsProcessing(true);
 
-        for (const file of files) {
+        const uploadPromises = files.map(async (file) => {
             try {
                 if (file.size > 2 * 1024 * 1024) {
                     alert(`Le fichier ${file.name} est trop volumineux (> 2Mo). Ignore.`);
-                    continue;
+                    return;
+                }
+
+                // Basic Deduplication: Check if a receipt with this exact filename already exists
+                if (receipts.some(r => r.fileName === file.name)) {
+                    console.log(`Le fichier ${file.name} semble déjà exister. Ignoré.`);
+                    return; // Skip duplicate
                 }
 
                 // 1. Upload to Storage
                 const url = await uploadReceipt(file);
 
                 // 2. Analyze with Gemini (requires base64 for now if not public url)
-                // Since uploadReceipt might return base64 in guest mode or URL in cloud mode,
-                // we need a reliable way to get base64 for Gemini.
                 let base64ForGemini = "";
                 if (url.startsWith('data:')) {
                     base64ForGemini = url.split(',')[1];
                 } else {
-                    // If it's a URL, fetch it to get blob -> base64 (CORS might be issue, skip AI if so)
                     try {
                         const resp = await fetch(url);
                         const blob = await resp.blob();
@@ -119,7 +122,6 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                         matchedTransactionId = result.matchedTransactionId;
                     } catch (err) {
                         console.error("Backend receipt process failed:", err);
-                        // Fallback could be basic analyzeReceipt, but we'll leave empty for now
                     }
                 }
 
@@ -139,8 +141,9 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
             } catch (e) {
                 console.error("Error processing file", file.name, e);
             }
-        }
+        });
 
+        await Promise.all(uploadPromises);
         setIsProcessing(false);
     };
 
