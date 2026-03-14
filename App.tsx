@@ -134,7 +134,8 @@ function App() {
         if (receipt.linkedTransactionId) {
             const txn = transactions.find(t => t.id === receipt.linkedTransactionId);
             if (txn && !txn.receiptUrl) {
-                saveTransaction({ ...txn, receiptUrl: receipt.url });
+                const nameWithoutExt = receipt.fileName ? receipt.fileName.replace(/\.[^/.]+$/, "") : undefined;
+                saveTransaction({ ...txn, receiptUrl: receipt.url, receiptFileName: nameWithoutExt });
             }
         }
     };
@@ -161,7 +162,8 @@ function App() {
 
         if (receipt && txn) {
             // Update Transaction
-            saveTransaction({ ...txn, receiptUrl: receipt.url });
+            const nameWithoutExt = receipt.fileName ? receipt.fileName.replace(/\.[^/.]+$/, "") : undefined;
+            saveTransaction({ ...txn, receiptUrl: receipt.url, receiptFileName: nameWithoutExt });
             // Update Receipt
             saveReceipt({ ...receipt, linkedTransactionId: txn.id });
         }
@@ -203,7 +205,7 @@ function App() {
                 try {
                     // Slow down slightly to show progress if needed, or just await
                     const validAccounts = getValidAccounts(t, accounts);
-                    const result = await suggestCategory(t.description, validAccounts);
+                    const result = await suggestCategory(t.description, validAccounts, t.fullRawText, t.receiptFileName);
                     if (result.accountId) {
                         categorized.push({
                             ...t,

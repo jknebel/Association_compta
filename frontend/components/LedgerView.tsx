@@ -481,7 +481,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                         className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white"
                       />
                     ) : (
-                      <div className="flex flex-col">
+                      <div className="flex flex-col" title={t.fullRawText || t.description}>
                         <span>{t.description}</span>
                         {t.fullRawText && t.fullRawText !== t.description && (
                           <span className="text-[10px] text-slate-500 font-normal italic line-clamp-1 opacity-70" title={t.fullRawText}>
@@ -504,7 +504,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                           title="Voir le justificatif"
                         >
                           <ImageIcon size={14} />
-                          Voir
+                          <span className="truncate max-w-[120px]">{t.receiptFileName || "Voir"}</span>
                         </button>
                         {isEditing && (
                           <button

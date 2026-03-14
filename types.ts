@@ -36,6 +36,7 @@ export interface Transaction {
   detectedMemberName?: string; // If extracted by AI
   fullRawText?: string; // Literal text from bank statement
   receiptUrl?: string; // URL to the uploaded receipt image
+  receiptFileName?: string; // Name of the receipt file
 }
 
 export interface Receipt {

@@ -36,7 +36,8 @@ export const matchTransactionsWithReceipts = (
 
         if (match) {
             matchedIds.push(match.id);
-            return { ...txn, receiptUrl: match.url };
+            const nameWithoutExt = match.fileName ? match.fileName.replace(/\.[^/.]+$/, "") : undefined;
+            return { ...txn, receiptUrl: match.url, receiptFileName: nameWithoutExt };
         }
         return txn;
     });

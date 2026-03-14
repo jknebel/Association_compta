@@ -76,6 +76,7 @@ class Transaction(BaseModel):
     notes: Optional[str] = None
     fullRawText: Optional[str] = None
     receiptUrl: Optional[str] = None
+    receiptFileName: Optional[str] = None
 
 class TransactionList(BaseModel):
     transactions: List[Transaction]
@@ -111,6 +112,8 @@ class ChatResponse(BaseModel):
 class SuggestCategoryRequest(BaseModel):
     description: str
     accounts: List[Account]
+    fullRawText: Optional[str] = None
+    receiptFileName: Optional[str] = None
 
 class SuggestCategoryResponse(BaseModel):
     accountId: Optional[str] = None
@@ -374,6 +377,7 @@ def classification_node(state: AgentState):
     - Extrais ce nom et mets-le dans 'detectedMemberName'.
     - Si tu vois une date de période (ex: "Loyer Janvier"), note-le en priorité.
     - Le champ 'description' peut être raccourci par l'utilisateur, fie-toi à 'fullRawText' qui est la donnée brute.
+    - Regarde aussi 'receiptFileName' qui contient le nom original du justificatif sans extension. Ce nom contient TRÈS SOUVENT des indices vitaux sur la catégorie (ex: "Bouffe Etapes Ikicize").
 
     DONNÉES HISTORIQUES :
     ---------------------
@@ -703,14 +707,17 @@ async def suggest_category(request: SuggestCategoryRequest):
         
         prompt = f"""
         Analyze the transaction description: "{request.description}"
+        Full Raw Text (if available): "{request.fullRawText or 'N/A'}"
+        Receipt File Name (if available): "{request.receiptFileName or 'N/A'}"
         
         Task 1: Select the best matching Account ID from the list below.
         CRITICAL INSTRUCTIONS FOR MATCHING:
         - Use the 'path' field to understand the account hierarchy (Parent > Child).
         - Use the 'description' field (if present) to understand the intended use of the account.
         - Pay attention to specific keywords in the 'description' or 'path' that match the transaction.
+        - The Receipt File Name often contains the vendor or category context (e.g., "Bouffe Etapes" -> generic food/meals).
         
-        Task 2: If the chosen account has 'isMembership': true, OR if the description clearly contains a person's name (Payer), extract that name.
+        Task 2: If the chosen account has 'isMembership': true, OR if the description/raw text clearly contains a person's name (Payer), extract that name.
         
         SPECIAL RULE: If the description contains "VIRT CPTE" (which means Account Transfer), the text following it is likely the Payer's Name. Extract it as 'memberName', especially if the account is a Product class (Class 7).
         

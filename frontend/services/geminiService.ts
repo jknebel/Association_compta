@@ -183,11 +183,13 @@ export const chatWithAccountant = async (
 /**
  * Helper to auto-categorize a single transaction description
  */
-export const suggestCategory = async (description: string, accounts: Account[]): Promise<{ accountId: string | null, memberName?: string | null }> => {
+export const suggestCategory = async (description: string, accounts: Account[], fullRawText?: string, receiptFileName?: string): Promise<{ accountId: string | null, memberName?: string | null }> => {
   try {
     const result = await callApi<{ accountId: string | null, memberName?: string | null }>("/suggest-category", {
       description,
-      accounts
+      accounts,
+      fullRawText,
+      receiptFileName
     });
     return result;
   } catch (error) {
