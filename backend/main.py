@@ -235,10 +235,12 @@ def parsing_node(state: AgentState):
     
     Tu dois retrouver et extraire toutes les transactions sous forme structurée en respectant ces règles STICTES :
     1.  **Date** : Convertis les dates au format YYYY-MM-DD. ATTENTION: Le texte d'origine utilise le format Européen (Jour.Mois.Année ou DD.MM.YY). Ne confonds pas le mois et le jour.
+        IGNORES et EXCLUS totalement les lignes de type "REPORT", "SOLDE REPORTE", "SOLDE A REPORTER". Ce ne sont pas des transactions. N'invente jamais de date pour elles.
     2.  **Montant** : Positif pour crédit, Négatif pour débit.
         CRITIQUE: Le montant ne doit JAMAIS être 0.00 sauf si c'est explicitement écrit '0.00'. Ne mets JAMAIS 0 par défaut.
     3.  **Description** : Un libellé 'small' très court et propre pour l'affichage (ex: 'Parking', 'Cotisation Dupont', 'Virement Andrea Lozzi').
-    4.  **fullRawText** : OBLIGATOIRE ET VITAL. Recopie ici de manière exhaustive TOUT le bloc de texte brut (ci-dessus) qui est associé à cette transaction. Cela inclut toutes les lignes subsidiaires (communications, donneur d'ordre, notre ref, etc.). Ne tronque rien !
+    4.  **Transactions sur plusieurs pages** : ATTENTION, une transaction peut commencer en bas d'une page (avec sa date et son début) et continuer sur la page suivante (ex: "COMMUNICATIONS", "BENEFICIAIRE"). Tu dois fusionner intelligemment ces blocs pour reconstituer UNE SEULE transaction complète. Ignore le texte parasite de changement de page (logos, numéro de page, "SOLDE A REPORTER", "REPORT") situé au milieu de la transaction.
+    5.  **fullRawText** : OBLIGATOIRE ET VITAL. Recopie ici de manière exhaustive TOUT le bloc de texte brut associé à cette transaction. Si la transaction est coupée sur deux pages, regroupe tout le texte brut pertinent dans ce seul champ. Ne tronque rien !
     """
     
     try:
@@ -328,7 +330,6 @@ def amount_verification_node(state: AgentState):
             if t.amount == 0.0:
                 key = t.description.strip().lower()
                 if key in correction_map:
-                    old_amount = t.amount
                     t.amount = correction_map[key]
                     corrections_applied += 1
                 else:
@@ -428,8 +429,10 @@ def classification_node(state: AgentState):
     ATTENTION : Les deux champs LES PLUS IMPORTANTS pour prendre ta décision sont 'amount' (pour le signe et l'ordre de grandeur) et 'fullRawText' (qui contient la transaction originale non-tronquée).
     
     - Base-toi prioritairement sur 'fullRawText' et 'amount' plutôt que sur 'description' (qui a pu être raccourcie par l'Agent précédent).
-    - 'fullRawText' contient souvent le "Vrai" bénéficiaire dans les remarques (ex: "COTISATION POUR PIERRE"). Extrais ce nom et mets-le dans 'detectedMemberName'.
-    - Si tu vois une date de période dans 'fullRawText' (ex: "Loyer Janvier"), note-le en priorité.
+    - TRÈS IMPORTANT: Dans 'fullRawText', si tu vois le mot-clé "COMMUNICATIONS:", ce qui suit est l'information la plus cruciale de la transaction (ex: le vrai motif du paiement). Utilise-le en priorité absolue pour trouver le bon 'accountId'.
+    - La section "BENEFICIAIRE:" indique souvent notre propre compte/association et est donc peu pertinente pour déterminer la catégorie d'une dépense/recette. Ne te laisse pas distraire par elle.
+    - En revanche, la section "DONNEUR D'ORDRE:" indique la personne source (ex: la personne ayant viré l'argent). Extrais ce nom et mets-le dans 'detectedMemberName'. SAUF SI tu trouves un autre nom de personne explicitement mentionné dans "COMMUNICATIONS:" (ex: "Cotisation 25 Louise B" ou "Monsieur X paie pour Madame B"). Dans ce cas, c'est ce nom dans "COMMUNICATIONS:" (Louise B, Madame B) qui prime et qui DOIT devenir le seul 'detectedMemberName'.
+    - Si tu vois une date de période pertinente (ex: "Loyer Janvier"), note-le également.
     - Regarde aussi 'receiptFileName' qui contient le nom original du justificatif sans extension (ex: "Bouffe Etapes Ikicize"). Ce nom contient TRÈS SOUVENT des indices vitaux sur la catégorie.
 
     DONNÉES HISTORIQUES :
@@ -463,13 +466,25 @@ def classification_node(state: AgentState):
             print(f"Raw Txn {i}: {t.description} -> accountId suggested: '{t.accountId}'")
         print("--- [Agent: CLASSIFICATION][RAW_OUTPUT_END] ---")
 
-        # Post-processing: Validate and Correct Account IDs
+        # Post-processing: Validate, Correct Account IDs, and Preserve Original Data
         validated_transactions = []
         account_map = {str(a.id): a for a in accounts}
         code_map = {str(a.code): a for a in accounts} 
         label_map = {str(a.label).lower().strip(): a for a in accounts} # New Robust Fallback
+        
+        # Build a map of the original transactions to preserve fields the AI might drop
+        original_txns_map = {t.description: t for t in transactions}
 
         for txn in result.transactions:
+            # Re-inject missing critical data from the original transaction
+            # because the AI output structure often omits them.
+            orig_t = original_txns_map.get(txn.description)
+            if orig_t:
+                txn.fullRawText = orig_t.fullRawText
+                txn.receiptFileName = orig_t.receiptFileName
+                txn.receiptUrl = orig_t.receiptUrl
+                txn.notes = orig_t.notes
+
             if txn.accountId:
                 # Clean up the ID returned by AI
                 tid = str(txn.accountId).strip()
