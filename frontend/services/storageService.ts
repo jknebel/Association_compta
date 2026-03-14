@@ -25,11 +25,15 @@ export const uploadReceipt = async (file: File): Promise<string> => {
    } catch (e) {
        console.warn("Firebase Storage not available or failed (Fallback to Base64):", e);
        
-       // Limit check for Base64 fallback (Firestore limit is 1MB per doc)
-       // A 700KB file becomes ~950KB in Base64, staying safely under the 1MB limit.
-       if (file.size > 700 * 1024) {
-           throw new Error("Taille max dépassée (700Ko) pour le stockage local. Erreur Serveur (403) sur Firebase Storage.");
-       }
+        // Limit check: 10MB is common for attachments/receipts.
+        // NOTE: Firestore document limit is 1MB. If the file is > 1MB, the Base64 fallback will fail later.
+        if (file.size > 10 * 1024 * 1024) {
+            throw new Error(`Le fichier ${file.name} est trop volumineux (> 10Mo).`);
+        }
+        
+        if (file.size > 800 * 1024) {
+             throw new Error(`Le fichier ${file.name} fait ${(file.size / 1024).toFixed(0)}Ko. \n\nERREUR : Firebase Storage n'est pas configuré ou est inaccessible (Erreur 403/404).\n\nLe mode local (sans Storage) est limité à 1Mo par fichier. Veuillez activer Firebase Storage dans votre console pour accepter des fichiers jusqu'à 10Mo.`);
+        }
        
        return toBase64(file);
    }
