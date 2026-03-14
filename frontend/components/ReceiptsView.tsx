@@ -1,6 +1,5 @@
-
 import React, { useState, useRef } from 'react';
-import { Receipt, Transaction } from '../../types';
+import { Receipt, Transaction, TransactionStatus } from '../../types';
 import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, Coins, ExternalLink } from 'lucide-react';
 import { analyzeReceipt, processReceiptBackend } from '../services/geminiService';
 import { uploadReceipt } from '../services/storageService';
@@ -47,8 +46,13 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
         }
     };
 
-    // Filter out receipts that are already linked
-    const unlinkedReceipts = receipts.filter(r => !r.linkedTransactionId);
+    // Filter out receipts that are already linked to APPROVED or ARCHIVED transactions
+    const unlinkedReceipts = receipts.filter(r => {
+        if (!r.linkedTransactionId) return true;
+        const linkedTxn = transactions.find(t => t.id === r.linkedTransactionId);
+        if (!linkedTxn) return true;
+        return linkedTxn.status !== TransactionStatus.APPROVED && linkedTxn.status !== TransactionStatus.ARCHIVED;
+    });
 
     const handleDrag = (e: React.DragEvent) => {
         e.preventDefault();
@@ -333,7 +337,26 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
 
                                     {/* MATCHING SECTION */}
                                     <div className="mt-auto pt-4 border-t border-slate-800">
-                                        {hasMatch ? (
+                                        {receipt.linkedTransactionId && transactions.find(t => t.id === receipt.linkedTransactionId) ? (() => {
+                                            const linkedTxn = transactions.find(t => t.id === receipt.linkedTransactionId)!;
+                                            return (
+                                                <div className="space-y-2">
+                                                    <div className="text-xs text-blue-400 font-bold flex items-center gap-1">
+                                                        <CheckCircle size={12} /> Lié (en attente de validation)
+                                                    </div>
+                                                    <div className="w-full text-left p-2 rounded bg-blue-900/10 border border-blue-900/30 text-xs">
+                                                        <div className="text-slate-300 font-medium truncate">{linkedTxn.description}</div>
+                                                        <div className="flex justify-between text-slate-500 mt-1">
+                                                            <span>{linkedTxn.date}</span>
+                                                            <span className="text-blue-400">CHF {linkedTxn.amount.toFixed(2)}</span>
+                                                        </div>
+                                                    </div>
+                                                    <p className="text-[10px] text-slate-500 text-center mt-2 leading-tight">
+                                                        Cette pièce disparaîtra d'ici une fois la transaction approuvée dans le journal.
+                                                    </p>
+                                                </div>
+                                            );
+                                        })() : hasMatch ? (
                                             <div className="space-y-2">
                                                 <div className="text-xs text-emerald-400 font-bold flex items-center gap-1">
                                                     <CheckCircle size={12} /> Suggestion trouvée
