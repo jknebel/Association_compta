@@ -371,6 +371,7 @@ def classification_node(state: AgentState):
 
     # 1. Retrieve User Memory
     history_context = get_user_history_context(user_id)
+    print(f"History Context Length: {len(history_context)} chars")
     
     # 2. Prepare Account Context
     # Map ID -> Label to help AI
@@ -452,26 +453,35 @@ def classification_node(state: AgentState):
         result = structured_llm.invoke(prompt)
         
         print("--- [Agent: CLASSIFICATION][RAW_OUTPUT_START] ---")
-        for i, t in enumerate(result.transactions[:5]):
-            print(f"Raw Txn {i}: {t.description} -> accountId suggested: {t.accountId}")
+        for i, t in enumerate(result.transactions[:10]): # Log more to be sure
+            print(f"Raw Txn {i}: {t.description} -> accountId suggested: '{t.accountId}'")
         print("--- [Agent: CLASSIFICATION][RAW_OUTPUT_END] ---")
 
         # Post-processing: Validate and Correct Account IDs
         validated_transactions = []
-        account_map = {a.id: a for a in accounts}
-        code_map = {a.code: a for a in accounts} # Fallback map
+        account_map = {str(a.id): a for a in accounts}
+        code_map = {str(a.code): a for a in accounts} 
+        label_map = {str(a.label).lower().strip(): a for a in accounts} # New Robust Fallback
 
         for txn in result.transactions:
             if txn.accountId:
+                # Clean up the ID returned by AI
+                tid = str(txn.accountId).strip()
+                
                 # 1. Check if ID is valid
-                if txn.accountId in account_map:
-                    # All good
-                    pass
+                if tid in account_map:
+                    txn.accountId = tid
                 # 2. Fallback: Check if AI returned a Code instead
-                elif txn.accountId in code_map:
-                    txn.accountId = code_map[txn.accountId].id
+                elif tid in code_map:
+                    print(f"Fallback matched Code: {tid} -> {code_map[tid].id}")
+                    txn.accountId = code_map[tid].id
+                # 3. Fallback: Check if AI returned a Label instead
+                elif tid.lower() in label_map:
+                    print(f"Fallback matched Label: {tid} -> {label_map[tid.lower()].id}")
+                    txn.accountId = label_map[tid.lower()].id
                 else:
                     # Invalid ID, reset
+                    print(f"Warning: AI suggested invalid accountId/Code/Label: '{tid}'")
                     txn.accountId = None
             validated_transactions.append(txn)
 
