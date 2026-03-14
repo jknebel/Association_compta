@@ -176,7 +176,11 @@ class AgentState(BaseModel):
 
 def vision_node(state: AgentState):
     """Vision Extraction: Image -> Raw Text"""
-    print("--- NODE: VISION (EXTRACTION BRUTE) ---")
+    print("--- [Agent: VISION][INPUT_START] ---")
+    print(f"UserId: {state.user_id}")
+    print(f"PDF Base64 Length: {len(state.pdf_base64)}")
+    print("--- [Agent: VISION][INPUT_END] ---")
+    
     prompt = """
     Voici un document bancaire. Ton SEUL et UNIQUE but est d'extraire tout le texte visible.
     Pour l'intégralité du document, copie absolument TOUT le texte (dates, toutes les lignes de descriptions, montants, donneurs d'ordre, communications, adresses, etc.).
@@ -197,6 +201,11 @@ def vision_node(state: AgentState):
         flash_llm = get_llm()
         result = flash_llm.invoke([message])
         
+        print("--- [Agent: VISION][OUTPUT_START] ---")
+        print(f"Extracted Raw Text Length: {len(result.content)}")
+        print(f"Raw Text Preview: {result.content[:200]}...")
+        print("--- [Agent: VISION][OUTPUT_END] ---")
+
         return {
             "raw_text": result.content,
             "logs": ["Extraction visuelle du texte brut terminée."]
@@ -210,7 +219,10 @@ def vision_node(state: AgentState):
 
 def parsing_node(state: AgentState):
     """Text -> Structured JSON"""
-    print("--- NODE: PARSING (FORMATAGE TEXTE) ---")
+    print("--- [Agent: PARSING][INPUT_START] ---")
+    print(f"Raw Text Preview: {state.raw_text[:500]}...")
+    print("--- [Agent: PARSING][INPUT_END] ---")
+    
     if not state.raw_text:
         return {"logs": ["Erreur: Aucun texte brut fourni au parseur."]}
         
@@ -234,6 +246,12 @@ def parsing_node(state: AgentState):
         structured_llm = flash_llm.with_structured_output(TransactionList)
         result = structured_llm.invoke(prompt)
         
+        print("--- [Agent: PARSING][OUTPUT_START] ---")
+        print(f"Extracted {len(result.transactions)} transactions.")
+        for i, t in enumerate(result.transactions[:3]):
+             print(f"Txn {i}: {t.date} | {t.description} | {t.amount} | Raw: {t.fullRawText[:50]}...")
+        print("--- [Agent: PARSING][OUTPUT_END] ---")
+
         return {
             "extracted_transactions": result.transactions,
             "logs": [f"Parsing texte terminé: {len(result.transactions)} transactions structurées."]
@@ -250,19 +268,16 @@ def amount_verification_node(state: AgentState):
     Double vérification des montants.
     Détecte les transactions avec montant == 0 et tente une ré-extraction.
     """
-    print("--- NODE: VÉRIFICATION DES MONTANTS ---")
+    print("--- [Agent: AMOUNT_VERIFICATION][INPUT_START] ---")
     transactions = state.extracted_transactions
-    
-    # Find suspicious transactions (amount == 0)
     zero_txns = [t for t in transactions if t.amount == 0.0]
+    print(f"Total Txns: {len(transactions)} | Suspicious (0.00): {len(zero_txns)}")
+    print("--- [Agent: AMOUNT_VERIFICATION][INPUT_END] ---")
     
     if not zero_txns:
-        print("   Aucun montant suspect (0.00) détecté.")
         return {
             "logs": [f"Vérification montants: OK ({len(transactions)} transactions, aucun montant à 0)."]
         }
-    
-    print(f"   ⚠️ {len(zero_txns)} transaction(s) avec montant = 0 détectée(s). Re-vérification...")
     
     # Build a targeted prompt for re-extraction
     suspect_descriptions = "\n".join([
@@ -316,12 +331,14 @@ def amount_verification_node(state: AgentState):
                     old_amount = t.amount
                     t.amount = correction_map[key]
                     corrections_applied += 1
-                    print(f"   ✅ Correction: '{t.description}' | 0.00 → {t.amount}")
                 else:
                     still_zero += 1
-                    print(f"   ⚠️ Toujours 0.00: '{t.description}' (pas de correction trouvée)")
             updated_transactions.append(t)
         
+        print("--- [Agent: AMOUNT_VERIFICATION][OUTPUT_START] ---")
+        print(f"Corrections Applied: {corrections_applied} | Still Zero: {still_zero}")
+        print("--- [Agent: AMOUNT_VERIFICATION][OUTPUT_END] ---")
+
         log_msg = f"Vérification montants: {corrections_applied} corrigé(s)"
         if still_zero > 0:
             log_msg += f", {still_zero} toujours à 0 (vérification manuelle recommandée)"
@@ -340,10 +357,12 @@ def classification_node(state: AgentState):
     """
     Classification with LEARNING (RAG-lite).
     """
-    print("--- NODE: CLASSIFICATION INTELLIGENTE ---")
+    print("--- [Agent: CLASSIFICATION][INPUT_START] ---")
     transactions = state.extracted_transactions
     accounts = state.existing_accounts
     user_id = state.user_id
+    print(f"To Classify: {len(transactions)} | Accounts available: {len(accounts)} | UserId: {user_id}")
+    print("--- [Agent: CLASSIFICATION][INPUT_END] ---")
     
     if not transactions:
         return {}
@@ -439,12 +458,16 @@ def classification_node(state: AgentState):
                     pass
                 # 2. Fallback: Check if AI returned a Code instead
                 elif txn.accountId in code_map:
-                    print(f"Correction Auto: Code '{txn.accountId}' remplacé par ID '{code_map[txn.accountId].id}'")
                     txn.accountId = code_map[txn.accountId].id
                 else:
                     # Invalid ID, reset
                     txn.accountId = None
             validated_transactions.append(txn)
+
+        print("--- [Agent: CLASSIFICATION][OUTPUT_START] ---")
+        for i, t in enumerate(validated_transactions[:3]):
+             print(f"Txn {i}: {t.description} -> AccountID: {t.accountId} | Member: {t.detectedMemberName}")
+        print("--- [Agent: CLASSIFICATION][OUTPUT_END] ---")
 
         return {
             "extracted_transactions": validated_transactions,
@@ -705,6 +728,12 @@ async def chat_agent(request: ChatRequest):
 @app.post("/suggest-category")
 async def suggest_category(request: SuggestCategoryRequest):
     try:
+        print("--- [Agent: SUGGEST_CATEGORY][INPUT_START] ---")
+        print(f"Description: {request.description}")
+        print(f"FullRawText: {request.fullRawText[:100] if request.fullRawText else 'N/A'}...")
+        print(f"Accounts Count: {len(request.accounts)}")
+        print("--- [Agent: SUGGEST_CATEGORY][INPUT_END] ---")
+
         # 1. Build Account Map for easy parent lookup
         account_map = {a.id: a for a in request.accounts}
 
@@ -763,6 +792,10 @@ async def suggest_category(request: SuggestCategoryRequest):
         structured_llm = flash_llm.with_structured_output(SuggestCategoryResponse)
         result = structured_llm.invoke(prompt)
         
+        print("--- [Agent: SUGGEST_CATEGORY][OUTPUT_START] ---")
+        print(f"Result: {result.model_dump()}")
+        print("--- [Agent: SUGGEST_CATEGORY][OUTPUT_END] ---")
+
         return result
     except Exception as e:
         print(f"Suggest Category Error: {e}")

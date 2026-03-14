@@ -279,7 +279,7 @@ function App() {
         for (const t of transactions) {
             try {
                 const validAccounts = getValidAccounts(t, accounts);
-                const result = await suggestCategory(t.description, validAccounts);
+                const result = await suggestCategory(t.description, validAccounts, t.fullRawText, t.receiptFileName);
                 const updatedTxn = {
                     ...t,
                     accountId: result.accountId || undefined,
