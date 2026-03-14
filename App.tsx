@@ -717,6 +717,7 @@ function App() {
                 <LedgerView
                     transactions={transactions}
                     accounts={accounts}
+                    receipts={receipts}
                     onUpdateTransaction={handleUpdateTransaction}
                     onDeleteTransaction={handleDeleteTransaction}
                     onAutoMatch={handleRunAutoMatching}

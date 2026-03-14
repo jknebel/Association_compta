@@ -10,6 +10,7 @@ import { Check, X, AlertTriangle, Search, Filter, Calendar, Coins, XCircle, Eye,
 interface LedgerViewProps {
   transactions: Transaction[];
   accounts: Account[];
+  receipts?: import('../../types').Receipt[];
   onUpdateTransaction: (transaction: Transaction) => void;
   onDeleteTransaction: (id: string) => void;
   onAutoMatch: () => void;
@@ -18,12 +19,13 @@ interface LedgerViewProps {
   onArchiveAll: () => void;
   autoMatchProgress: { current: number, total: number, message: string } | null;
   onGuessMember: (t: Transaction, accountId: string | undefined) => void;
-  onAddReceipt?: (receipt: Receipt) => void;
+  onAddReceipt?: (receipt: import('../../types').Receipt) => void;
 }
 
 export const LedgerView: React.FC<LedgerViewProps> = ({
   transactions,
   accounts,
+  receipts,
   onUpdateTransaction,
   onDeleteTransaction,
   onAutoMatch,
@@ -66,10 +68,14 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
   const allApproved = transactions.length > 0 && transactions.every(t => t.status === TransactionStatus.APPROVED);
 
-  // Receipt Upload State
+  // Receipt Upload & Link State
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [linkingTxnId, setLinkingTxnId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectedTxnRef = useRef<string | null>(null);
+
+  // Filter available receipts for linking
+  const availableReceipts = receipts?.filter(r => !r.linkedTransactionId) || [];
 
   const filteredTransactions = transactions.filter(t => {
     // Basic Status & Search
@@ -578,7 +584,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                       </div>
                     ) : (
                       <button
-                        onClick={() => handleAttachClick(t.id)}
+                        onClick={() => setLinkingTxnId(t.id)}
                         className="text-slate-500 hover:text-blue-400 transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-800 text-xs"
                       >
                         <Paperclip size={14} />
@@ -804,6 +810,103 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           )
         }
       </div >
+
+      {/* Receipt Linking Modal */}
+      {linkingTxnId && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full max-h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/50">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Paperclip size={20} className="text-blue-400" />
+                Lier un justificatif existant
+              </h2>
+              <button 
+                onClick={() => setLinkingTxnId(null)} 
+                className="text-slate-400 hover:text-white transition-colors p-1"
+                title="Fermer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-4 overflow-y-auto flex-1 h-[400px]">
+              {availableReceipts.length === 0 ? (
+                <div className="text-center py-12 text-slate-500 flex flex-col items-center gap-3">
+                  <Archive size={42} className="opacity-20" />
+                  <p className="text-lg font-medium">Aucun justificatif disponible</p>
+                  <p className="text-sm max-w-xs">Tous vos justificatifs importés ont déjà été liés à une transaction.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-400 font-semibold tracking-wider uppercase mb-1">
+                    Justificatifs en attente ({availableReceipts.length})
+                  </p>
+                  {availableReceipts.map(receipt => (
+                    <div 
+                      key={receipt.id}
+                      className="flex items-center justify-between p-3 rounded-lg border border-slate-700 bg-slate-800/30 hover:bg-slate-700/50 hover:border-slate-600 transition-all cursor-pointer group"
+                      onClick={() => {
+                        const txn = transactions.find(t => t.id === linkingTxnId);
+                        if (txn) {
+                          onUpdateTransaction({ ...txn, receiptUrl: receipt.url, receiptFileName: receipt.fileName });
+                           if (onAddReceipt) {
+                               onAddReceipt({
+                                   ...receipt,
+                                   linkedTransactionId: txn.id
+                               });
+                           }
+                          setLinkingTxnId(null);
+                        }
+                      }}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="p-2 bg-slate-900/80 rounded border border-slate-700 text-blue-400 shrink-0">
+                          <FileSpreadsheet size={18} />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-200 truncate pr-2">
+                            {receipt.fileName}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-slate-500">
+                             <span className="flex items-center gap-1" title="Date d'importation">
+                              <Calendar size={12} />
+                              {receipt.uploadDate}
+                            </span>
+                            {receipt.extractedAmount !== null && (
+                              <span className="flex items-center gap-1 font-medium text-slate-400">
+                                <coins size={12} />
+                                {receipt.extractedAmount}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="shrink-0 pl-2">
+                         <div className="text-xs font-medium px-3 py-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 group-hover:bg-blue-500 group-hover:text-white transition-colors flex items-center gap-1.5">
+                            Lier <Check size={14} className="opacity-0 group-hover:opacity-100 transition-opacity -ml-1" />
+                         </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <div className="p-4 border-t border-slate-700 bg-slate-800 text-sm text-slate-400 flex flex-col gap-3">
+               <p>Vous souhaitez ajouter un nouveau fichier ?</p>
+               <button 
+                  onClick={() => {
+                     setLinkingTxnId(null);
+                     handleAttachClick(linkingTxnId!);
+                  }}
+                  className="w-full py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-white rounded-lg transition-colors flex items-center justify-center gap-2 font-medium"
+               >
+                  <Paperclip size={16} /> Parcourir mon PC...
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AuditModal
         isOpen={isAuditOpen}
