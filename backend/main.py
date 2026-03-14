@@ -422,12 +422,12 @@ def classification_node(state: AgentState):
     - Si la référence (ex: 'xxxcv') correspond à un compte passé, c'est prioritaire sur le nom.
 
     ### 4. NOUVELLES TRANSACTIONS À CLASSER
-    Regarde bien le champ 'fullRawText' pour chaque transaction :
-    - Il contient souvent le "Vrai" bénéficiaire dans les remarques (ex: "COTISATION POUR PIERRE").
-    - Extrais ce nom et mets-le dans 'detectedMemberName'.
-    - Si tu vois une date de période (ex: "Loyer Janvier"), note-le en priorité.
-    - Le champ 'description' peut être raccourci par l'utilisateur, fie-toi à 'fullRawText' qui est la donnée brute.
-    - Regarde aussi 'receiptFileName' qui contient le nom original du justificatif sans extension. Ce nom contient TRÈS SOUVENT des indices vitaux sur la catégorie (ex: "Bouffe Etapes Ikicize").
+    ATTENTION : Les deux champs LES PLUS IMPORTANTS pour prendre ta décision sont 'amount' (pour le signe et l'ordre de grandeur) et 'fullRawText' (qui contient la transaction originale non-tronquée).
+    
+    - Base-toi prioritairement sur 'fullRawText' et 'amount' plutôt que sur 'description' (qui a pu être raccourcie par l'Agent précédent).
+    - 'fullRawText' contient souvent le "Vrai" bénéficiaire dans les remarques (ex: "COTISATION POUR PIERRE"). Extrais ce nom et mets-le dans 'detectedMemberName'.
+    - Si tu vois une date de période dans 'fullRawText' (ex: "Loyer Janvier"), note-le en priorité.
+    - Regarde aussi 'receiptFileName' qui contient le nom original du justificatif sans extension (ex: "Bouffe Etapes Ikicize"). Ce nom contient TRÈS SOUVENT des indices vitaux sur la catégorie.
 
     DONNÉES HISTORIQUES :
     ---------------------
@@ -772,20 +772,22 @@ async def suggest_category(request: SuggestCategoryRequest):
             accounts_context.append(context_entry)
         
         prompt = f"""
-        Analyze the transaction description: "{request.description}"
-        Full Raw Text (if available): "{request.fullRawText or 'N/A'}"
-        Receipt File Name (if available): "{request.receiptFileName or 'N/A'}"
+        Analyze the transaction:
+        - Description (short): "{request.description}"
+        - Amount: {request.amount}
+        - Full Raw Text: "{request.fullRawText or 'N/A'}"
+        - Receipt File Name: "{request.receiptFileName or 'N/A'}"
+        
+        ATTENTION : Les deux champs LES PLUS IMPORTANTS pour ta décision sont 'amount' (signe et valeur) et 'fullRawText' (texte original complet).
+        La 'Description' courte n'est qu'un résumé qui peut être trompeur.
         
         Task 1: Select the best matching Account ID from the list below.
         CRITICAL INSTRUCTIONS FOR MATCHING:
-        - Use the 'path' field to understand the account hierarchy (Parent > Child).
-        - Use the 'description' field (if present) to understand the intended use of the account.
-        - Pay attention to specific keywords in the 'description' or 'path' that match the transaction.
-        - The Receipt File Name often contains the vendor or category context (e.g., "Bouffe Etapes" -> generic food/meals).
+        - Use the 'path' field to understand the account hierarchy.
+        - The Receipt File Name often contains the vendor or category context (e.g., "Bouffe Etapes").
+        - If 'fullRawText' contains a specific name or purpose, use it!
         
-        Task 2: If the chosen account has 'isMembership': true, OR if the description/raw text clearly contains a person's name (Payer), extract that name.
-        
-        SPECIAL RULE: If the description contains "VIRT CPTE" (which means Account Transfer), the text following it is likely the Payer's Name. Extract it as 'memberName', especially if the account is a Product class (Class 7).
+        Task 2: Extract 'memberName' if available in 'fullRawText' or 'description'.
         
         Accounts: {json.dumps(accounts_context)}
         
