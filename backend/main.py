@@ -4,7 +4,8 @@ import json
 import io
 import fitz # PyMuPDF
 import json
-from typing import List, Optional, Dict, Any
+import operator
+from typing import List, Optional, Dict, Any, Annotated
 from datetime import datetime
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
@@ -172,11 +173,13 @@ class AgentState(BaseModel):
     pdf_base64: str
     existing_accounts: List[Account]
     raw_text: str = ""
-    worker_a_txns: List[Transaction] = []
-    worker_b_txns: List[Transaction] = []
+    raw_pages: List[str] = []
+    worker_a_txns: Annotated[List[Transaction], operator.add] = []
+    worker_b_txns: Annotated[List[Transaction], operator.add] = []
+    itinerant_txns: Annotated[List[Transaction], operator.add] = []
     extracted_transactions: List[Transaction] = []
     page_count: int = 0
-    logs: List[str] = []
+    logs: Annotated[List[str], operator.add] = []
 
 def vision_node(state: AgentState):
     """Vision Extraction: Image/PDF -> Raw Text"""
@@ -191,8 +194,11 @@ def vision_node(state: AgentState):
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         page_counts = len(doc)
         raw_text = ""
+        raw_pages = []
         for page in doc:
-            raw_text += page.get_text("text") + "\n"
+            p_text = page.get_text("text") + "\n"
+            raw_text += p_text
+            raw_pages.append(p_text)
         doc.close()
         
         # Si le PDF contient du vrai texte (pas juste un scan d'image), on l'utilise direct
@@ -202,6 +208,7 @@ def vision_node(state: AgentState):
             print("--- [Agent: VISION][OUTPUT_END] ---")
             return {
                 "raw_text": raw_text,
+                "raw_pages": raw_pages,
                 "page_count": page_counts,
                 "logs": [f"Extraction native réussie ({len(raw_text)} caractères, {page_counts} pages)."]
             }
@@ -299,22 +306,77 @@ def worker_b_node(state: AgentState):
     except Exception as e:
         return {"logs": [f"Erreur Ouvrier B : {str(e)}"]}
 
+def itinerant_worker_node(state: AgentState):
+    """Itinerant Worker: Processes the PDF chunk by chunk (1-2 pages) and accumulates txns."""
+    print("--- [Agent: ITINERANT_WORKER][INPUT_START] ---")
+    pages = state.raw_pages
+    if not pages:
+        return {"logs": ["Ouvrier Itinérant : Pas de pages à traiter."]}
+    
+    all_itinerant_txns = []
+    # We process in chunks of 2 pages with 1 page overlap to catch transactions at the border
+    batch_size = 2
+    step = 1
+    
+    flash_llm = get_llm()
+    structured_llm = flash_llm.with_structured_output(TransactionList)
+    
+    for i in range(0, len(pages), step):
+        chunk = pages[i : i + batch_size]
+        if not chunk: break
+        
+        chunk_text = "\n--- NOUVELLE PAGE ---\n".join(chunk)
+        print(f"Itinerant Worker: Processing chunk starting at page {i+1}")
+        
+        prompt = f"""
+        Tu es l'Ouvrier Itinérant. Tu extrais les transactions d'un fragment de relevé bancaire (2 pages).
+        TEXTE DU FRAGMENT :
+        {chunk_text}
+        
+        RÈGLES :
+        1. Extrais TOUTES les transactions de ce fragment.
+        2. Date (YYYY-MM-DD), Montant, Libellé, et SOLDE (runningBalance).
+        3. fullRawText : Copie tout le texte brut lié (vital).
+        """
+        try:
+            result = structured_llm.invoke(prompt)
+            all_itinerant_txns.extend(result.transactions)
+        except Exception as e:
+            print(f"Itinerant Error on chunk {i}: {e}")
+            
+    # Deduplicate within itinerant worker itself (as there is overlap)
+    unique_txns = {}
+    for t in all_itinerant_txns:
+        # Use runningBalance as anchor if available
+        key = f"{t.runningBalance}" if t.runningBalance else f"{t.date}_{t.amount}_{t.description[:15]}"
+        if key not in unique_txns:
+            unique_txns[key] = t
+            
+    final_list = sorted(unique_txns.values(), key=lambda x: str(x.date))
+    print(f"--- [Agent: ITINERANT_WORKER][OUTPUT] Found {len(final_list)} unique txns. ---")
+    
+    return {
+        "itinerant_txns": final_list,
+        "logs": [f"Ouvrier Itinérant : {len(final_list)} txns extraites par balayage de pages."]
+    }
+
 def foreman_consensus_node(state: AgentState):
     """
     Foreman (Le Contre-maître) : 
-    1. Compare les résultats de A et B.
-    2. Vérifie mathématiquement le Running Balance ligne par ligne.
-    3. Tranche en faveur de celui qui fait tomber l'équation juste.
+    1. Compare les résultats de A, B et Itinérant.
+    2. Fusionne les données en utilisant le Running Balance comme ancre.
+    3. Tranche les divergences et valide la mathématique.
     """
     print("--- [Agent: FOREMAN][INPUT_START] ---")
     a_txns = state.worker_a_txns
     b_txns = state.worker_b_txns
+    i_txns = state.itinerant_txns
+    
+    all_versions = a_txns + b_txns + i_txns
     
     # Stratégie de fusion par solde (runningBalance est notre ancre de vérité)
     merged_map = {}
-    
-    # On indexe par le solde courant qui est normalement unique par transaction dans un relevé
-    for t in a_txns + b_txns:
+    for t in all_versions:
         if t.runningBalance is not None:
             key = f"{t.runningBalance}"
             # On privilégie celui qui a le plus de texte brut ou plus de détails
@@ -336,11 +398,10 @@ def foreman_consensus_node(state: AgentState):
         curr = merged_list[i]
         if prev.runningBalance is not None and curr.runningBalance is not None:
             actual_diff = round(curr.runningBalance - prev.runningBalance, 2)
-            # On vérifie si le montant (ou son opposé) match la différence de solde
             if abs(actual_diff - round(curr.amount, 2)) > 0.02 and abs(actual_diff + round(curr.amount, 2)) > 0.02:
                 anomalies.append(f"Erreur à la date {curr.date}: Solde saute de {actual_diff}, montant est {curr.amount}")
 
-    log_msgs = [f"Foreman : {len(merged_list)} transactions validées après consensus."]
+    log_msgs = [f"Foreman : {len(merged_list)} transactions validées après consensus (3 agents)."]
     if anomalies:
         log_msgs.append(f"⚠️ {len(anomalies)} anomalies de solde détectées.")
     if len(merged_list) < min_expected:
@@ -526,14 +587,17 @@ workflow = StateGraph(AgentState)
 workflow.add_node("vision", vision_node)
 workflow.add_node("worker_a", worker_a_node)
 workflow.add_node("worker_b", worker_b_node)
+workflow.add_node("itinerant", itinerant_worker_node)
 workflow.add_node("foreman", foreman_consensus_node)
 workflow.add_node("classify", classification_node)
 
 workflow.set_entry_point("vision")
 workflow.add_edge("vision", "worker_a")
 workflow.add_edge("vision", "worker_b")
+workflow.add_edge("vision", "itinerant")
 workflow.add_edge("worker_a", "foreman")
 workflow.add_edge("worker_b", "foreman")
+workflow.add_edge("itinerant", "foreman")
 workflow.add_edge("foreman", "classify")
 workflow.add_edge("classify", END)
 
