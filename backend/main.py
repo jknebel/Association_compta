@@ -173,6 +173,7 @@ class AgentState(BaseModel):
     existing_accounts: List[Account]
     raw_text: str = ""
     extracted_transactions: List[Transaction] = []
+    page_count: int = 0
     logs: List[str] = []
 
 def vision_node(state: AgentState):
@@ -186,6 +187,7 @@ def vision_node(state: AgentState):
     try:
         pdf_bytes = base64.b64decode(state.pdf_base64)
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        page_counts = len(doc)
         raw_text = ""
         for page in doc:
             raw_text += page.get_text("text") + "\n"
@@ -194,16 +196,26 @@ def vision_node(state: AgentState):
         # Si le PDF contient du vrai texte (pas juste un scan d'image), on l'utilise direct
         if len(raw_text.strip()) > 500:
             print("--- [Agent: VISION][OUTPUT_START] ---")
-            print(f"Extracted Native PyMuPDF Text Length: {len(raw_text)}")
+            print(f"Extracted Native PyMuPDF Text Length: {len(raw_text)} | Pages: {page_counts}")
             print("--- [Agent: VISION][OUTPUT_END] ---")
             return {
                 "raw_text": raw_text,
-                "logs": [f"Extraction native réussie ({len(raw_text)} caractères)."]
+                "page_count": page_counts,
+                "logs": [f"Extraction native réussie ({len(raw_text)} caractères, {page_counts} pages)."]
             }
         else:
             print("PDF semble être un scan court, fallback vers l'IA Vision...")
     except Exception as e:
         print(f"PyMuPDF Error, fallback to Vision: {e}")
+
+    # Fallback si PDF non-texte ou erreur : on tente de compter les pages si possible
+    try:
+        pdf_bytes = base64.b64decode(state.pdf_base64)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        page_counts = len(doc)
+        doc.close()
+    except:
+        page_counts = 1 # Par défaut 1 si on arrive pas à lire le PDF du tout
 
     prompt = """
     Voici un document bancaire. Ton SEUL et UNIQUE but est d'extraire tout le texte visible.
@@ -332,11 +344,23 @@ def amount_verification_node(state: AgentState):
                     })
 
     print(f"Total Txns: {len(transactions)} | Suspicious (0.0): {len(zero_txns)} | Anomalies Mathématiques: {len(anomaly_txns)}")
+    
+    # Estimation du nombre de transactions (4 à 6 par page)
+    min_expected = state.page_count * 4
+    max_expected = state.page_count * 6
+    estimation_msg = ""
+    if len(transactions) < min_expected:
+        estimation_msg = f"⚠️ ALERTE : Nombre de transactions faible ({len(transactions)}) pour {state.page_count} pages (estimation attendue : {min_expected}-{max_expected})."
+        print(estimation_msg)
+    
     print("--- [Agent: AMOUNT_VERIFICATION][INPUT_END] ---")
     
     if not zero_txns and not anomaly_txns:
+        final_logs = [f"Vérification mathématique : OK ({len(transactions)} transactions, balance parfaite)."]
+        if estimation_msg:
+            final_logs.append(estimation_msg)
         return {
-            "logs": [f"Vérification mathématique : OK ({len(transactions)} transactions, balance parfaite)."]
+            "logs": final_logs
         }
     
     suspect_lines = []
@@ -415,9 +439,13 @@ def amount_verification_node(state: AgentState):
         if still_zero > 0:
             log_msg += f" ({still_zero} toujours à 0)"
         
+        final_logs = [log_msg]
+        if estimation_msg:
+            final_logs.append(estimation_msg)
+
         return {
             "extracted_transactions": updated_transactions,
-            "logs": [log_msg]
+            "logs": final_logs
         }
     except Exception as e:
         print(f"Amount Verification Error: {e}")
