@@ -178,6 +178,8 @@ class AgentState(BaseModel):
     worker_b_txns: Annotated[List[Transaction], operator.add] = []
     itinerant_txns: Annotated[List[Transaction], operator.add] = []
     extracted_transactions: List[Transaction] = []
+    classification_a_txns: Annotated[List[Transaction], operator.add] = []
+    classification_b_txns: Annotated[List[Transaction], operator.add] = []
     page_count: int = 0
     logs: Annotated[List[str], operator.add] = []
 
@@ -276,8 +278,9 @@ def worker_a_node(state: AgentState):
     RÈGLES STRICTES :
     1. Repère les colonnes DÉBIT (-), CRÉDIT (+), et SOLDE (runningBalance).
     2. Pour chaque ligne : Date (YYYY-MM-DD), Libellé (court), Montant, et SOLDE après opération.
-    3. Reconstitue les blocs coupés entre deux pages.
+    3. Reconstitue les blocs coupés entre deux pages : si tu vois le mot "REPORT" en haut d'une page, c'est la suite de la transaction précédente.
     4. fullRawText : Copie tout le texte brut lié à la transaction (obligatoire).
+    5. IGNORER les lignes de résumé comme "SOLDE REPORTER", "NOUVEAU SOLDE", ou "TOTAL DES MOUVEMENTS". Ce ne sont PAS des transactions.
     """
     try:
         flash_llm = get_llm()
@@ -297,6 +300,8 @@ def worker_b_node(state: AgentState):
     {state.raw_text}
     
     RÈGLES identiques à A (Date, Montant, Débit/Crédit, SOLDE/runningBalance), mais sois EXTRÊMEMENT attentif aux petits caractères et aux dates répétées.
+    Note : Si le mot "REPORT" apparaît en majuscules en haut d'une page, il indique que l'information suivante appartient à la transaction de la page précédente. 
+    IGNORER les lignes "SOLDE REPORTER", "NOUVEAU SOLDE".
     """
     try:
         flash_llm = get_llm()
@@ -337,6 +342,8 @@ def itinerant_worker_node(state: AgentState):
         1. Extrais TOUTES les transactions de ce fragment.
         2. Date (YYYY-MM-DD), Montant, Libellé, et SOLDE (runningBalance).
         3. fullRawText : Copie tout le texte brut lié (vital).
+        4. GESTION DU "REPORT" : Si "REPORT" est en haut du texte, lie les données à la transaction parente si possible.
+        5. FILTRAGE : Ignore les lignes de type "SOLDE REPORTER" ou "SOLDE AU ...".
         """
         try:
             result = structured_llm.invoke(prompt)
@@ -388,199 +395,142 @@ def foreman_consensus_node(state: AgentState):
             if key not in merged_map:
                 merged_map[key] = t
                 
-    merged_list = sorted(merged_map.values(), key=lambda x: str(x.date))
+    merged_list = sorted(merged_map.values(), key=lambda x: str(x.date or "9999-12-31"))
     
-    # Vérification Balance
+    # Vérification Balance et Correction de Signe Stricte
     anomalies = []
     min_expected = state.page_count * 4
-    for i in range(1, len(merged_list)):
-        prev = merged_list[i-1]
-        curr = merged_list[i]
-        if prev.runningBalance is not None and curr.runningBalance is not None:
-            actual_diff = round(curr.runningBalance - prev.runningBalance, 2)
-            if abs(actual_diff - round(curr.amount, 2)) > 0.02 and abs(actual_diff + round(curr.amount, 2)) > 0.02:
-                anomalies.append(f"Erreur à la date {curr.date}: Solde saute de {actual_diff}, montant est {curr.amount}")
+    
+    # On recalcule les montants en fonction de la balance (La source de vérité)
+    final_verified_txns = []
+    for i in range(len(merged_list)):
+        t = merged_list[i]
+        if i > 0:
+            prev = merged_list[i-1]
+            if prev.runningBalance is not None and t.runningBalance is not None:
+                actual_diff = round(t.runningBalance - prev.runningBalance, 2)
+                # FORCE le signe : si la balance a baissé, c'est un débit (-)
+                if abs(actual_diff - t.amount) > 0.01:
+                    # Si l'IA a mis +, mais que la balance dit -, on corrige
+                    print(f"Correction de signe pour {t.description}: {t.amount} -> {actual_diff}")
+                    t.amount = actual_diff
+        final_verified_txns.append(t)
 
-    log_msgs = [f"Foreman : {len(merged_list)} transactions validées après consensus (3 agents)."]
-    if anomalies:
-        log_msgs.append(f"⚠️ {len(anomalies)} anomalies de solde détectées.")
-    if len(merged_list) < min_expected:
-        log_msgs.append(f"⚠️ Volume suspect ({len(merged_list)} txns pour {state.page_count} pages).")
+    log_msgs = [f"Foreman : {len(final_verified_txns)} transactions validées après consensus (3 agents)."]
+    if len(final_verified_txns) < min_expected:
+        log_msgs.append(f"⚠️ Volume suspect ({len(final_verified_txns)} txns pour {state.page_count} pages).")
 
     return {
-        "extracted_transactions": merged_list,
+        "extracted_transactions": final_verified_txns,
         "logs": log_msgs
     }
 
-def classification_node(state: AgentState):
-    """
-    Classification with LEARNING (RAG-lite).
-    """
-    print("--- [Agent: CLASSIFICATION][INPUT_START] ---")
-    transactions = state.extracted_transactions
+def classifier_a_node(state: AgentState):
+    """Classifier A: Accurate categorization based on rules and history."""
+    print("--- [Agent: CLASSIFIER_A][INPUT_START] ---")
+    history_context = get_user_history_context(state.user_id)
     accounts = state.existing_accounts
-    user_id = state.user_id
-    print(f"To Classify: {len(transactions)} | Accounts available: {len(accounts)} | UserId: {user_id}")
-    if transactions:
-        print(f"First Transaction to classify (full JSON): {json.dumps(transactions[0].model_dump(), default=str)}")
-    print("--- [Agent: CLASSIFICATION][INPUT_END] ---")
+    accounts_info = "\n".join([f"ID: {a.id} | Code: {a.code} | Nom: {a.label}" for a in accounts])
     
-    if not transactions:
-        return {}
-
-    # 1. Retrieve User Memory
-    history_context = get_user_history_context(user_id)
-    print(f"History Context Length: {len(history_context)} chars")
-    
-    # 2. Prepare Account Context
-    # Map ID -> Label to help AI
-    accounts_info = "\n".join([f"ID: {a.id} | Code: {a.code} | Nom: {a.label} | Type: {a.type}" for a in accounts])
-    
-    # 3. Advanced Prompt with History
     prompt = f"""
-    Tu es un expert comptable intelligent. Ta tâche est d'assigner le bon 'accountId' aux nouvelles transactions.
-
-    ### 1. PLAN COMPTABLE ACTUEL
-    {accounts_info}
-
-    !!! TRÈS IMPORTANT !!!
-    Pour le champ 'accountId', tu DOIS utiliser UNIQUEMENT la valeur 'ID' (souvent un UUID ou une chaîne complexe) fournie dans la liste ci-dessus.
-    NE renvoie PAS le 'Code' (ex: 701000) ni le 'Nom'.
-    Si tu penses que c'est le compte "Cotisations" (Code 701000), tu dois chercher son ID correspondant dans la liste et renvoyer cet ID.
-
-    ### 2. RÈGLES COMPTABLES (SIGNES ET CLASSES) - CRITIQUE
-    Tu dois impérativement respecter la logique comptable suivante :
-
-    1.  **MONTANTS NÉGATIFS (Dépenses / Débits)** :
-        -   Ils correspondent généralement à des **CHARGES** (Comptes de type CHARGE).
-        -   Exemple : -20.00 CHF pour "Parking" doit aller dans un compte de type CHARGE.
-        -   IL EST INTERDIT de classer un montant négatif dans un compte de type PRODUIT, sauf s'il s'agit d'un remboursement client (rare).
-
-    2.  **MONTANTS POSITIFS (Recettes / Crédits)** :
-        -   Ils correspondent généralement à des **PRODUITS** (Comptes de type PRODUIT).
-        -   Exemple : +50.00 CHF pour "Cotisation" doit aller dans un compte de type PRODUIT.
-
-    3.  **COMPTES MIXTES** :
-        -   Les comptes de type MIXTE (ex: "Noël", "Activité") peuvent recevoir des montants positifs ET négatifs.
-        -   Par exemple, un compte "Noël" MIXTE peut avoir des dépenses (-200€ achat cadeaux) et des recettes (+50€ buvette).
-        -   Pour les comptes MIXTE, la règle Charge/Produit ne s'applique PAS.
-
-    4.  **VIREMENTS INTERNES** :
-        -   Les mouvements de fonds (classe 58) peuvent être positifs ou négatifs.
-
-    **VERIFICATION :** Avant d'assigner un compte, vérifie :
-    - Si le compte est MIXTE → accepte les deux signes.
-    - Si le compte est CHARGE → le montant doit être négatif.
-    - Si le compte est PRODUIT → le montant doit être positif.
-
-    ### 3. HISTORIQUE & APPRENTISSAGE (TRÈS IMPORTANT)
-    Voici comment cet utilisateur a classé ses transactions précédentes. 
-    Utilise ces exemples pour comprendre sa logique.
-    
-    RÈGLES D'APPRENTISSAGE :
-    - Cherche des patterns dans les descriptions (ex: références 'xxxcv', noms de fournisseurs).
-    - Regarde les montants récurrents (ex: 100.00 tout rond souvent = Loyer ou Parking).
-    - Si tu vois "M. Bolomet" classé en "Parking" dans le passé, et que tu vois "Mme Bolomet" avec le même montant/référence aujourd'hui, classe-le aussi en "Parking".
-    - Si la référence (ex: 'xxxcv') correspond à un compte passé, c'est prioritaire sur le nom.
-
-    ### 4. NOUVELLES TRANSACTIONS À CLASSER
-    ATTENTION : Les deux champs LES PLUS IMPORTANTS pour prendre ta décision sont 'amount' (pour le signe et l'ordre de grandeur) et 'fullRawText' (qui contient la transaction originale non-tronquée).
-    
-    - Base-toi prioritairement sur 'fullRawText' et 'amount' plutôt que sur 'description' (qui a pu être raccourcie par l'Agent précédent).
-    - TRÈS IMPORTANT: Dans 'fullRawText', si tu vois le mot-clé "COMMUNICATIONS:", ce qui suit est l'information la plus cruciale de la transaction (ex: le vrai motif du paiement). Utilise-le en priorité absolue pour trouver le bon 'accountId'.
-    - La section "BENEFICIAIRE:" indique souvent notre propre compte/association et est donc peu pertinente pour déterminer la catégorie d'une dépense/recette. Ne te laisse pas distraire par elle.
-    - En revanche, la section "DONNEUR D'ORDRE:" indique la personne source (ex: la personne ayant viré l'argent). Extrais ce nom et mets-le dans 'detectedMemberName'. SAUF SI tu trouves un autre nom de personne explicitement mentionné dans "COMMUNICATIONS:" (ex: "Cotisation 25 Louise B" ou "Monsieur X paie pour Madame B"). Dans ce cas, c'est ce nom dans "COMMUNICATIONS:" (Louise B, Madame B) qui prime et qui DOIT devenir le seul 'detectedMemberName'.
-    - Si tu vois une date de période pertinente (ex: "Loyer Janvier"), note-le également.
-    - Regarde aussi 'receiptFileName' qui contient le nom original du justificatif sans extension (ex: "Bouffe Etapes Ikicize"). Ce nom contient TRÈS SOUVENT des indices vitaux sur la catégorie.
-
-    DONNÉES HISTORIQUES :
-    ---------------------
+    Tu es le Comptable A. Ta spécialité est le rapprochement par HISTORIQUE.
+    MODÈLES PASSÉS :
     {history_context}
-    ---------------------
-
-    ### 5. NOUVELLES TRANSACTIONS À CLASSER
-    {json.dumps([t.model_dump() for t in transactions], default=str)}
-
-    !!! CONSEIL POUR LE DÉMARRAGE !!!
-    Si tu n'as pas beaucoup d'historique, utilise ton bon sens d'expert comptable. 
-    - Pour les dépenses courantes sans catégorie spécifique (ex: train, parking), utilise le compte le plus générique (ex: 'Activité' ou 'Gestion').
-    - N'aie pas peur de proposer un compte : il vaut mieux une suggestion pertinente qu'un champ vide.
-    - Propose le compte le plus probable plutôt que de laisser 'accountId' à null, sauf si c'est vraiment impossible à déterminer.
-
-    Retourne la liste des transactions avec le champ 'accountId' rempli ET 'detectedMemberName' extrait si possible.
-    """
     
-    print("--- [Agent: CLASSIFICATION][PROMPT_START] ---")
-    print(prompt)
-    print("--- [Agent: CLASSIFICATION][PROMPT_END] ---")
-
+    PLAN COMPTABLE :
+    {accounts_info}
+    
+    RÈGLES :
+    1. Si un libellé ressemble à l'historique, utilise le même 'accountId'.
+    2. Respecte les signes : un montant négatif est une CHARGE, positif est un PRODUIT (sauf comptes MIXTE).
+    
+    TRANSACTIONS À CLASSER (JSON) :
+    {json.dumps([t.model_dump() for t in state.extracted_transactions])}
+    """
     try:
         flash_llm = get_llm()
         structured_llm = flash_llm.with_structured_output(TransactionList)
         result = structured_llm.invoke(prompt)
-        
-        print("--- [Agent: CLASSIFICATION][RAW_OUTPUT_START] ---")
-        for i, t in enumerate(result.transactions): # Log ALL to be sure
-            print(f"Raw Txn {i}: {t.description} -> accountId suggested: '{t.accountId}'")
-        print("--- [Agent: CLASSIFICATION][RAW_OUTPUT_END] ---")
-
-        # Post-processing: Validate, Correct Account IDs, and Preserve Original Data
-        validated_transactions = []
-        account_map = {str(a.id): a for a in accounts}
-        code_map = {str(a.code): a for a in accounts} 
-        label_map = {str(a.label).lower().strip(): a for a in accounts} # New Robust Fallback
-        
-        # Build a map of the original transactions to preserve fields the AI might drop
-        original_txns_map = {t.description: t for t in transactions}
-
-        for txn in result.transactions:
-            # Re-inject missing critical data from the original transaction
-            # because the AI output structure often omits them.
-            orig_t = original_txns_map.get(txn.description)
-            if orig_t:
-                txn.fullRawText = orig_t.fullRawText
-                txn.receiptFileName = orig_t.receiptFileName
-                txn.receiptUrl = orig_t.receiptUrl
-                txn.notes = orig_t.notes
-
-            if txn.accountId:
-                # Clean up the ID returned by AI
-                tid = str(txn.accountId).strip()
-                
-                # 1. Check if ID is valid
-                if tid in account_map:
-                    txn.accountId = tid
-                # 2. Fallback: Check if AI returned a Code instead
-                elif tid in code_map:
-                    print(f"Fallback matched Code: {tid} -> {code_map[tid].id}")
-                    txn.accountId = code_map[tid].id
-                # 3. Fallback: Check if AI returned a Label instead
-                elif tid.lower() in label_map:
-                    print(f"Fallback matched Label: {tid} -> {label_map[tid.lower()].id}")
-                    txn.accountId = label_map[tid.lower()].id
-                else:
-                    # Invalid ID, reset
-                    print(f"Warning: AI suggested invalid accountId/Code/Label: '{tid}'")
-                    txn.accountId = None
-            validated_transactions.append(txn)
-
-        print("--- [Agent: CLASSIFICATION][OUTPUT_START] ---")
-        for i, t in enumerate(validated_transactions):
-             print(f"Txn {i}: {t.description} -> AccountID: {t.accountId} | Member: {t.detectedMemberName}")
-             # Affichage complet du Pydantic model pour debug
-             if "CFF" in (t.description or "").upper(): # Filtre optionnel pour ne pas polluer les logs si tu veux, ou affiche tout :
-                 print(f"FULL TXN OUTPUT (JSON): {t.model_dump_json(indent=2)}")
-        print("--- [Agent: CLASSIFICATION][OUTPUT_END] ---")
-
-        return {
-            "extracted_transactions": validated_transactions,
-            "logs": ["Classification intelligente terminée avec historique et validation."]
-        }
+        return {"classification_a_txns": result.transactions, "logs": ["Comptable A : Classification par historique terminée."]}
     except Exception as e:
-        print(f"Classification Error: {e}")
-        return {
-            "logs": [f"Erreur de classification: {str(e)}"]
-        }
+        print(f"Classifier A Error: {e}")
+        return {"logs": [f"Erreur Comptable A : {str(e)}"]}
+
+def classifier_b_node(state: AgentState):
+    """Classifier B: Contextual extraction (members, specific keywords)."""
+    print("--- [Agent: CLASSIFIER_B][INPUT_START] ---")
+    accounts = state.existing_accounts
+    accounts_info = "\n".join([f"ID: {a.id} | Nom: {a.label}" for a in accounts])
+    
+    prompt = f"""
+    Tu es le Comptable B. Ta spécialité est l'analyse des DÉTAILS (fullRawText).
+    PLAN COMPTABLE :
+    {accounts_info}
+    
+    RÈGLES :
+    1. Cherche les noms de membres dans 'fullRawText' et extrais-les dans 'detectedMemberName'.
+    2. Si 'fullRawText' contient "COTISATION" ou "ADHESION", utilise le compte correspondant.
+    
+    TRANSACTIONS À CLASSER (JSON) :
+    {json.dumps([t.model_dump() for t in state.extracted_transactions])}
+    """
+    try:
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(TransactionList)
+        result = structured_llm.invoke(prompt)
+        return {"classification_b_txns": result.transactions, "logs": ["Comptable B : Analyse contextuelle terminée."]}
+    except Exception as e:
+        print(f"Classifier B Error: {e}")
+        return {"logs": [f"Erreur Comptable B : {str(e)}"]}
+
+def classification_consensus_node(state: AgentState):
+    """The Judge: Harmonizes mapping and ensures no transaction is left empty if a clear match exists."""
+    print("--- [Agent: JUDGE][INPUT_START] ---")
+    a_results = state.classification_a_txns
+    b_results = state.classification_b_txns
+    
+    final_txns = []
+    for i in range(len(state.extracted_transactions)):
+        orig = state.extracted_transactions[i]
+        ta = a_results[i] if i < len(a_results) else None
+        tb = b_results[i] if i < len(b_results) else None
+        
+        txn = orig.model_copy()
+        
+        # Priority logic
+        if ta and ta.accountId:
+            txn.accountId = ta.accountId
+        if tb:
+            if tb.accountId and not txn.accountId:
+                txn.accountId = tb.accountId
+            if tb.detectedMemberName:
+                txn.detectedMemberName = tb.detectedMemberName
+        
+        # Final safety check: validate accountId exists
+        valid_ids = {a.id for a in state.existing_accounts}
+        if txn.accountId and txn.accountId not in valid_ids:
+            txn.accountId = None
+
+        final_txns.append(txn)
+        
+    # Final Sorting (Oldest to Newest) and Formatting (DD.MM.YY)
+    # 1. Sort by ISO Date first
+    final_txns.sort(key=lambda x: str(x.date or "1900-01-01"))
+    
+    # 2. Reformat date strings for the user
+    for t in final_txns:
+        if t.date and "-" in t.date: # If ISO YYYY-MM-DD
+            try:
+                from datetime import datetime
+                dt = datetime.strptime(t.date, "%Y-%m-%d")
+                t.date = dt.strftime("%d.%m.%y")
+            except:
+                pass
+
+    return {
+        "extracted_transactions": final_txns,
+        "logs": ["Le Juge : Cohérence des comptes et format de date JJ.MM.AA validés."]
+    }
 
 # Build Graph
 workflow = StateGraph(AgentState)
@@ -589,7 +539,9 @@ workflow.add_node("worker_a", worker_a_node)
 workflow.add_node("worker_b", worker_b_node)
 workflow.add_node("itinerant", itinerant_worker_node)
 workflow.add_node("foreman", foreman_consensus_node)
-workflow.add_node("classify", classification_node)
+workflow.add_node("classifier_a", classifier_a_node)
+workflow.add_node("classifier_b", classifier_b_node)
+workflow.add_node("judge", classification_consensus_node)
 
 workflow.set_entry_point("vision")
 workflow.add_edge("vision", "worker_a")
@@ -598,8 +550,11 @@ workflow.add_edge("vision", "itinerant")
 workflow.add_edge("worker_a", "foreman")
 workflow.add_edge("worker_b", "foreman")
 workflow.add_edge("itinerant", "foreman")
-workflow.add_edge("foreman", "classify")
-workflow.add_edge("classify", END)
+workflow.add_edge("foreman", "classifier_a")
+workflow.add_edge("foreman", "classifier_b")
+workflow.add_edge("classifier_a", "judge")
+workflow.add_edge("classifier_b", "judge")
+workflow.add_edge("judge", END)
 
 compiled_app = workflow.compile()
 

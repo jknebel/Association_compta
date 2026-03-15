@@ -3,6 +3,7 @@ import { Receipt, Transaction, TransactionStatus } from '../../types';
 import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, Coins, ExternalLink } from 'lucide-react';
 import { analyzeReceipt, processReceiptBackend } from '../services/geminiService';
 import { uploadReceipt } from '../services/storageService';
+import { formatDate } from '../services/formatUtils';
 
 interface ReceiptsViewProps {
     receipts: Receipt[];
@@ -327,7 +328,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                     <div className="flex gap-4 text-xs text-slate-400 mb-4">
                                         <div className="flex items-center gap-1">
                                             <Calendar size={12} />
-                                            {receipt.extractedDate || <span className="italic">?</span>}
+                                            {formatDate(receipt.extractedDate)}
                                         </div>
                                         <div className="flex items-center gap-1">
                                             <Coins size={12} />
@@ -352,7 +353,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                                             </div>
                                                         )}
                                                         <div className="flex justify-between text-slate-500 mt-1">
-                                                            <span>{linkedTxn.date}</span>
+                                                            <span>{formatDate(linkedTxn.date)}</span>
                                                             <span className="text-blue-400">CHF {linkedTxn.amount.toFixed(2)}</span>
                                                         </div>
                                                     </div>
@@ -383,7 +384,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                                             </div>
                                                         )}
                                                         <div className="flex justify-between text-slate-500 mt-1">
-                                                            <span>{m.date}</span>
+                                                            <span>{formatDate(m.date)}</span>
                                                             <span className="group-hover:text-emerald-400">CHF {m.amount.toFixed(2)}</span>
                                                         </div>
                                                     </button>

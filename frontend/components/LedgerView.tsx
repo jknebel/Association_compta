@@ -6,6 +6,7 @@ import { uploadReceipt } from '../services/storageService';
 import { auditLedger } from '../services/geminiService';
 import { AuditModal } from './AuditModal';
 import { Check, X, AlertTriangle, Search, Filter, Calendar, Coins, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck } from 'lucide-react';
+import { formatDate, dateToTimestamp } from '../services/formatUtils';
 
 interface LedgerViewProps {
   transactions: Transaction[];
@@ -98,7 +99,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     if (maxAmount !== '' && t.amount > Number(maxAmount)) matchesAmount = false;
 
     return matchesFilter && matchesSearch && matchesDate && matchesAmount;
-  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }).sort((a, b) => dateToTimestamp(b.date) - dateToTimestamp(a.date));
 
   const clearFilters = () => {
     setFilter('ALL');
@@ -534,7 +535,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                         onChange={e => setEditForm({ ...editForm, date: e.target.value })}
                         className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white"
                       />
-                    ) : t.date}
+                    ) : formatDate(t.date)}
                   </td>
 
                   {/* DESCRIPTION & NOTES */}
