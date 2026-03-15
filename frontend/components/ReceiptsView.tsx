@@ -345,7 +345,12 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                                         <CheckCircle size={12} /> Lié (en attente de validation)
                                                     </div>
                                                     <div className="w-full text-left p-2 rounded bg-blue-900/10 border border-blue-900/30 text-xs">
-                                                        <div className="text-slate-300 font-medium truncate">{linkedTxn.description}</div>
+                                                        <div className="text-slate-300 font-medium truncate" title={linkedTxn.description}>{linkedTxn.description}</div>
+                                                        {linkedTxn.notes && (
+                                                            <div className="text-blue-300/80 italic mt-0.5 truncate text-[10px]" title={linkedTxn.notes}>
+                                                                {linkedTxn.notes}
+                                                            </div>
+                                                        )}
                                                         <div className="flex justify-between text-slate-500 mt-1">
                                                             <span>{linkedTxn.date}</span>
                                                             <span className="text-blue-400">CHF {linkedTxn.amount.toFixed(2)}</span>
@@ -369,9 +374,14 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                                                 onLinkReceipt(receipt.id, m.id);
                                                             }
                                                         }}
-                                                        className="w-full text-left p-2 rounded bg-emerald-900/10 hover:bg-emerald-900/20 border border-emerald-900/30 text-xs transition-colors group"
+                                                        className="w-full text-left p-2 rounded bg-emerald-900/10 hover:bg-emerald-900/20 border border-emerald-900/30 text-xs transition-colors group block"
                                                     >
-                                                        <div className="text-slate-300 font-medium">{m.description}</div>
+                                                        <div className="text-slate-300 font-medium truncate" title={m.description}>{m.description}</div>
+                                                        {m.notes && (
+                                                            <div className="text-emerald-400/70 italic mt-0.5 truncate text-[10px]" title={m.notes}>
+                                                                {m.notes}
+                                                            </div>
+                                                        )}
                                                         <div className="flex justify-between text-slate-500 mt-1">
                                                             <span>{m.date}</span>
                                                             <span className="group-hover:text-emerald-400">CHF {m.amount.toFixed(2)}</span>

@@ -70,6 +70,7 @@ class Transaction(BaseModel):
     date: str
     description: str
     amount: float
+    runningBalance: Optional[float] = None
     accountId: Optional[str] = None
     detectedMemberName: Optional[str] = None
     status: str = "PENDING"
@@ -175,12 +176,35 @@ class AgentState(BaseModel):
     logs: List[str] = []
 
 def vision_node(state: AgentState):
-    """Vision Extraction: Image -> Raw Text"""
+    """Vision Extraction: Image/PDF -> Raw Text"""
     print("--- [Agent: VISION][INPUT_START] ---")
     print(f"UserId: {state.user_id}")
     print(f"PDF Base64 Length: {len(state.pdf_base64)}")
     print("--- [Agent: VISION][INPUT_END] ---")
     
+    # 1. Tenter une extraction native intelligente avec PyMuPDF
+    try:
+        pdf_bytes = base64.b64decode(state.pdf_base64)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        raw_text = ""
+        for page in doc:
+            raw_text += page.get_text("text") + "\n"
+        doc.close()
+        
+        # Si le PDF contient du vrai texte (pas juste un scan d'image), on l'utilise direct
+        if len(raw_text.strip()) > 500:
+            print("--- [Agent: VISION][OUTPUT_START] ---")
+            print(f"Extracted Native PyMuPDF Text Length: {len(raw_text)}")
+            print("--- [Agent: VISION][OUTPUT_END] ---")
+            return {
+                "raw_text": raw_text,
+                "logs": [f"Extraction native réussie ({len(raw_text)} caractères)."]
+            }
+        else:
+            print("PDF semble être un scan court, fallback vers l'IA Vision...")
+    except Exception as e:
+        print(f"PyMuPDF Error, fallback to Vision: {e}")
+
     prompt = """
     Voici un document bancaire. Ton SEUL et UNIQUE but est d'extraire tout le texte visible.
     Pour l'intégralité du document, copie absolument TOUT le texte (dates, toutes les lignes de descriptions, montants, donneurs d'ordre, communications, adresses, etc.).
@@ -233,14 +257,15 @@ def parsing_node(state: AgentState):
     {state.raw_text}
     ---------------------
     
-    Tu dois retrouver et extraire toutes les transactions sous forme structurée en respectant ces règles STICTES :
+    Tu dois retrouver et extraire toutes les transactions sous forme structurée en respectant ces règles STRICTES :
     1.  **Date** : Convertis les dates au format YYYY-MM-DD. ATTENTION: Le texte d'origine utilise le format Européen (Jour.Mois.Année ou DD.MM.YY). Ne confonds pas le mois et le jour.
         IGNORES et EXCLUS totalement les lignes de type "REPORT", "SOLDE REPORTE", "SOLDE A REPORTER". Ce ne sont pas des transactions. N'invente jamais de date pour elles.
     2.  **Montant** : Positif pour crédit, Négatif pour débit.
         CRITIQUE: Le montant ne doit JAMAIS être 0.00 sauf si c'est explicitement écrit '0.00'. Ne mets JAMAIS 0 par défaut.
-    3.  **Description** : Un libellé 'small' très court et propre pour l'affichage (ex: 'Parking', 'Cotisation Dupont', 'Virement Andrea Lozzi').
-    4.  **Transactions sur plusieurs pages** : ATTENTION, une transaction peut commencer en bas d'une page (avec sa date et son début) et continuer sur la page suivante (ex: "COMMUNICATIONS", "BENEFICIAIRE"). Tu dois fusionner intelligemment ces blocs pour reconstituer UNE SEULE transaction complète. Ignore le texte parasite de changement de page (logos, numéro de page, "SOLDE A REPORTER", "REPORT") situé au milieu de la transaction.
-    5.  **fullRawText** : OBLIGATOIRE ET VITAL. Recopie ici de manière exhaustive TOUT le bloc de texte brut associé à cette transaction. Si la transaction est coupée sur deux pages, regroupe tout le texte brut pertinent dans ce seul champ. Ne tronque rien !
+    3.  **runningBalance** : NOUVEAU et VITAL. Sur chaque ligne de transaction (ou juste à côté), il y a le "solde", c'est-à-dire le solde du compte après l'opération (tu le vois progresser au fur et à mesure). Extraie cette valeur (en float). Si tu ne la trouves vraiment pas, laisse null.
+    4.  **Description** : Un libellé 'small' très court et propre pour l'affichage (ex: 'Parking', 'Cotisation Dupont', 'Virement Andrea Lozzi').
+    5.  **Transactions sur plusieurs pages** : ATTENTION, une transaction peut commencer en bas d'une page (avec sa date et son début) et continuer sur la page suivante (ex: "COMMUNICATIONS", "BENEFICIAIRE"). Tu dois fusionner intelligemment ces blocs pour reconstituer UNE SEULE transaction complète. Ignore le texte parasite de changement de page (logos, numéro de page, "SOLDE A REPORTER", "REPORT") situé au milieu de la transaction.
+    6.  **fullRawText** : OBLIGATOIRE ET VITAL. Recopie ici de manière exhaustive TOUT le bloc de texte brut associé à cette transaction. Si la transaction est coupée sur deux pages, regroupe tout le texte brut pertinent dans ce seul champ. Ne tronque rien !
     """
     
     try:
@@ -267,38 +292,74 @@ def parsing_node(state: AgentState):
 
 def amount_verification_node(state: AgentState):
     """
-    Double vérification des montants.
-    Détecte les transactions avec montant == 0 et tente une ré-extraction.
+    Double vérification mathématique des montants via le solde courant (runningBalance).
+    Détecte les transactions manquantes, erreurs de signe, et montant == 0.
     """
     print("--- [Agent: AMOUNT_VERIFICATION][INPUT_START] ---")
     transactions = state.extracted_transactions
     zero_txns = [t for t in transactions if t.amount == 0.0]
-    print(f"Total Txns: {len(transactions)} | Suspicious (0.00): {len(zero_txns)}")
+    
+    anomaly_txns = []
+    direction = 1
+    if len(transactions) >= 2:
+        for i in range(1, len(transactions)):
+            prev = transactions[i-1]
+            curr = transactions[i]
+            if prev.runningBalance is not None and curr.runningBalance is not None:
+                diff = round(curr.runningBalance - prev.runningBalance, 2)
+                if diff == round(curr.amount, 2):
+                    direction = 1
+                elif diff == round(-curr.amount, 2):
+                    direction = -1
+                break
+
+    for i in range(1, len(transactions)):
+        curr = transactions[i]
+        prev = transactions[i-1]
+        
+        if curr.runningBalance is not None and prev.runningBalance is not None:
+            expected_diff = round(curr.amount, 2) if direction == 1 else round(-curr.amount, 2)
+            actual_diff = round(curr.runningBalance - prev.runningBalance, 2)
+            
+            if abs(actual_diff - expected_diff) > 0.02:
+                if curr.amount != 0.0:
+                    anomaly_txns.append({
+                        "txn": curr,
+                        "prev_bal": prev.runningBalance,
+                        "curr_bal": curr.runningBalance,
+                        "diff": actual_diff,
+                        "amount": curr.amount
+                    })
+
+    print(f"Total Txns: {len(transactions)} | Suspicious (0.0): {len(zero_txns)} | Anomalies Mathématiques: {len(anomaly_txns)}")
     print("--- [Agent: AMOUNT_VERIFICATION][INPUT_END] ---")
     
-    if not zero_txns:
+    if not zero_txns and not anomaly_txns:
         return {
-            "logs": [f"Vérification montants: OK ({len(transactions)} transactions, aucun montant à 0)."]
+            "logs": [f"Vérification mathématique : OK ({len(transactions)} transactions, balance parfaite)."]
         }
     
-    # Build a targeted prompt for re-extraction
-    suspect_descriptions = "\n".join([
-        f"- Date: {t.date}, Description: '{t.description}' (montant actuel: 0.00)"
-        for t in zero_txns
-    ])
+    suspect_lines = []
+    for t in zero_txns:
+         suspect_lines.append(f"- Date: {t.date}, Desc: '{t.description}' (montant 0.00)")
+         
+    for an in anomaly_txns:
+         t = an["txn"]
+         suspect_lines.append(f"- Date: {t.date}, Desc: '{t.description}', Montant extrait: {an['amount']} | Solde précédent: {an['prev_bal']}, Solde affiché: {an['curr_bal']}. Écart attendu: {an['amount']}, Écart réel constaté: {an['diff']}. (Erreur de signe ou oubli avant cette ligne ?)")
+         
+    suspect_descriptions = "\n".join(suspect_lines)
     
     prompt = f"""
-    ATTENTION: Lors de l'extraction précédente, les transactions suivantes ont été extraites avec un montant de 0.00,
-    ce qui est très probablement une erreur.
+    ALERTE: Lors de l'extraction, des anomalies mathématiques ont été détectées en vérifiant les "soldes courants" (running balance).
     
-    Transactions suspectes :
+    Lignes problématiques :
     {suspect_descriptions}
     
-    Relis attentivement le document bancaire ci-joint et retrouve le VRAI montant pour chacune de ces transactions.
-    Le montant doit être positif pour un crédit et négatif pour un débit.
+    Relis attentivement le document bancaire ci-joint et retrouve la VRAIE transaction (ou vérifie son signe +/-) pour corriger ces erreurs. 
+    1) Si une transaction a été totalement oubliée par l'agent précédent (ce qui fausse le solde), extrais la transaction manquante complète et inclue-la.
+    2) Si le signe du montant est erroné (ex: Débit au lieu de Crédit), corrige-le (Positif = crédit/recette, Négatif = débit/dépense).
     
-    Retourne UNIQUEMENT ces transactions avec le montant corrigé.
-    Si tu ne peux vraiment pas trouver le montant, laisse 0.0 mais c'est un dernier recours.
+    Retourne UNIQUEMENT les transactions corrigées ou oubliées, avec leur montant parfaitement ajusté, et le runningBalance correspondant.
     """
     
     message = HumanMessage(
@@ -316,33 +377,43 @@ def amount_verification_node(state: AgentState):
         structured_llm = flash_llm.with_structured_output(TransactionList)
         result = structured_llm.invoke([message])
         
-        # Build correction map: description -> corrected amount
         correction_map = {}
         for corrected_txn in result.transactions:
-            if corrected_txn.amount != 0.0:
-                correction_map[corrected_txn.description.strip().lower()] = corrected_txn.amount
-        
-        # Apply corrections
+            key = (corrected_txn.date, corrected_txn.description.strip().lower()[:20])
+            correction_map[key] = corrected_txn
+            
+        updated_transactions = []
         corrections_applied = 0
         still_zero = 0
-        updated_transactions = []
+        
         for t in transactions:
-            if t.amount == 0.0:
-                key = t.description.strip().lower()
-                if key in correction_map:
-                    t.amount = correction_map[key]
-                    corrections_applied += 1
-                else:
+            key = (t.date, t.description.strip().lower()[:20])
+            if key in correction_map and correction_map[key].amount != 0.0:
+                t.amount = correction_map[key].amount
+                t.runningBalance = correction_map[key].runningBalance
+                corrections_applied += 1
+                del correction_map[key]
+            else:
+                if t.amount == 0.0:
                     still_zero += 1
             updated_transactions.append(t)
+            
+        added_missing = 0
+        for rem_key, rem_txn in correction_map.items():
+            if rem_txn.amount != 0.0:
+                updated_transactions.append(rem_txn)
+                added_missing += 1
+        
+        # Sort to ensure any missing txns inserted at the end are placed in chronologic order
+        updated_transactions.sort(key=lambda x: str(x.date))
         
         print("--- [Agent: AMOUNT_VERIFICATION][OUTPUT_START] ---")
-        print(f"Corrections Applied: {corrections_applied} | Still Zero: {still_zero}")
+        print(f"Corrections Applied: {corrections_applied} | Added Missing: {added_missing} | Still Zero: {still_zero}")
         print("--- [Agent: AMOUNT_VERIFICATION][OUTPUT_END] ---")
 
-        log_msg = f"Vérification montants: {corrections_applied} corrigé(s)"
+        log_msg = f"Vérification montants: {corrections_applied} corrigé(s), {added_missing} rattrapé(s)"
         if still_zero > 0:
-            log_msg += f", {still_zero} toujours à 0 (vérification manuelle recommandée)"
+            log_msg += f" ({still_zero} toujours à 0)"
         
         return {
             "extracted_transactions": updated_transactions,

@@ -498,7 +498,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           <thead className="bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
             <tr>
               <th className="px-6 py-3 font-semibold text-slate-400 w-32">Date</th>
-              <th className="px-6 py-3 font-semibold text-slate-400">Libellé</th>
+              <th className="px-6 py-3 font-semibold text-slate-400">Libellé & Notes</th>
               <th className="px-6 py-3 font-semibold text-slate-400 w-32">Justificatif</th>
               <th className="px-6 py-3 font-semibold text-slate-400 w-32">Montant</th>
               <th className="px-6 py-3 font-semibold text-slate-400 w-48">Compte</th>
@@ -537,20 +537,35 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                     ) : t.date}
                   </td>
 
-                  {/* DESCRIPTION */}
+                  {/* DESCRIPTION & NOTES */}
                   <td className="px-6 py-4 font-medium text-slate-200">
                     {isEditing ? (
-                      <input
-                        type="text"
-                        value={editForm.description || ''}
-                        onChange={e => setEditForm({ ...editForm, description: e.target.value })}
-                        className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white"
-                      />
+                      <div className="flex flex-col gap-2">
+                        <input
+                          type="text"
+                          value={editForm.description || ''}
+                          onChange={e => setEditForm({ ...editForm, description: e.target.value })}
+                          className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-white text-sm"
+                          placeholder="Libellé"
+                        />
+                        <textarea
+                          value={editForm.notes || ''}
+                          onChange={e => setEditForm({ ...editForm, notes: e.target.value })}
+                          className="bg-slate-950 border border-slate-600 rounded px-2 py-1 w-full focus:outline-none focus:border-blue-500 text-slate-300 text-xs resize-none"
+                          placeholder="Ajouter une note (visible uniquement ici)..."
+                          rows={2}
+                        />
+                      </div>
                     ) : (
                       <div className="flex flex-col" title={t.fullRawText || t.description}>
                         <span>{t.description}</span>
+                        {t.notes && (
+                          <span className="text-xs text-blue-300/80 mt-1 italic border-l-2 border-blue-500/30 pl-2 whitespace-pre-wrap">
+                            {t.notes}
+                          </span>
+                        )}
                         {t.fullRawText && t.fullRawText !== t.description && (
-                          <span className="text-[10px] text-slate-500 font-normal italic line-clamp-1 opacity-70" title={t.fullRawText}>
+                          <span className="text-[10px] text-slate-500 font-normal italic line-clamp-1 opacity-70 mt-1" title={t.fullRawText}>
                             {t.fullRawText}
                           </span>
                         )}

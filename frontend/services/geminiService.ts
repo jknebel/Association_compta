@@ -128,16 +128,6 @@ export const parseBankStatementPDF = async (
     const data = await response.json();
     console.log("Backend Logs:", data.logs);
 
-    // DEBUG: Download the raw JSON response
-    const jsonStr = JSON.stringify(data.transactions, null, 2);
-    const blobResp = new Blob([jsonStr], { type: "application/json" });
-    const url = URL.createObjectURL(blobResp);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `backend_response_${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-
     return {
       transactions: data.transactions || [],
       newAccounts: []
