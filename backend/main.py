@@ -87,6 +87,7 @@ class ReceiptExtraction(BaseModel):
     amount: Optional[float] = None
     content: Optional[str] = None
     date: Optional[str] = None
+    isRefund: bool = False
 class AnalyzeReceiptRequest(BaseModel):
     base64Data: str
     mimeType: str
@@ -177,6 +178,8 @@ class AgentState(BaseModel):
     worker_a_txns: Annotated[List[Transaction], operator.add] = []
     worker_b_txns: Annotated[List[Transaction], operator.add] = []
     itinerant_txns: Annotated[List[Transaction], operator.add] = []
+    visual_itinerant_txns: Annotated[List[Transaction], operator.add] = []
+    integrity_report: str = "OK_COMPLET"
     extracted_transactions: List[Transaction] = []
     classification_a_txns: Annotated[List[Transaction], operator.add] = []
     classification_b_txns: Annotated[List[Transaction], operator.add] = []
@@ -367,41 +370,199 @@ def itinerant_worker_node(state: AgentState):
         "logs": [f"Ouvrier Itinérant : {len(final_list)} txns extraites par balayage de pages."]
     }
 
+def visual_itinerant_node(state: AgentState):
+    """Visual Itinerant Worker: Processes the PDF visually chunk by chunk (1-2 pages)"""
+    print("--- [Agent: VISUAL_ITINERANT][INPUT_START] ---")
+    
+    pdf_bytes = base64.b64decode(state.pdf_base64)
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        return {"logs": [f"Erreur Ouvrier Visuel Itinérant : {str(e)}"]}
+        
+    page_count = len(doc)
+    if page_count == 0:
+        return {"logs": ["Ouvrier Visuel Itinérant : Pas de pages à traiter."]}
+
+    all_visual_txns = []
+    batch_size = 2
+    step = 1
+    
+    flash_llm = get_llm()
+    structured_llm = flash_llm.with_structured_output(TransactionList)
+    
+    for i in range(0, page_count, step):
+        images_content = []
+        for j in range(i, min(i + batch_size, page_count)):
+            try:
+                page = doc.load_page(j)
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                b64_img = base64.b64encode(pix.tobytes("jpeg")).decode("utf-8")
+                images_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
+                    }
+                )
+            except Exception as e:
+                print(f"Erreur rendu page {j}: {e}")
+        
+        if not images_content:
+            break
+            
+        print(f"Visual Itinerant Worker: Processing chunk starting at page {i+1}")
+        
+        prompt = """
+        Tu es l'Ouvrier Visuel Itinérant. Analyser visuellement ces pages de relevé bancaire (jusqu'à 2 pages avec chevauchement).
+        ATTENTION À LA POSITION SPATIALE DES MONTANTS :
+        - Colonnes de GAUCHE (Débits/Retraits) = montants NÉGATIFS (-).
+        - Colonnes de DROITE (Crédits/Dépôts) = montants POSITIFS (+).
+        GARANTIR LE BON SIGNE EST TA MISSION PRINCIPALE.
+        
+        RÈGLES :
+        1. Date (YYYY-MM-DD), Montant (AVEC LE BON SIGNE), Libellé court, et SOLDE (runningBalance) si visible.
+        2. fullRawText : Copie le texte lié tel que tu le vois.
+        3. REPORT : Lie les informations coupées entre pages si nécessaire. Ignore les lignes "SOLDE REPORTER".
+        """
+        
+        message_content = [{"type": "text", "text": prompt}] + images_content
+        message = HumanMessage(content=message_content)
+        
+        try:
+            result = structured_llm.invoke([message])
+            all_visual_txns.extend(result.transactions)
+        except Exception as e:
+            print(f"Visual Itinerant Error on chunk {i}: {e}")
+            
+    doc.close()
+    
+    unique_txns = {}
+    for t in all_visual_txns:
+        key = f"{t.runningBalance}" if t.runningBalance else f"{t.date}_{t.amount}_{t.description[:15]}"
+        if key not in unique_txns:
+            unique_txns[key] = t
+            
+    final_list = sorted(unique_txns.values(), key=lambda x: str(x.date or "9999-12-31"))
+    print(f"--- [Agent: VISUAL_ITINERANT][OUTPUT] Found {len(final_list)} unique txns. ---")
+    
+    return {
+        "visual_itinerant_txns": final_list,
+        "logs": [f"Ouvrier Visuel Itinérant : {len(final_list)} txns extraites par balayage visuel."]
+    }
+
+def integrity_auditor_node(state: AgentState):
+    """
+    Superviseur de Complétude : 
+    Vérifie si des montants ou mots-clés (Frais, Commission...) du texte brut
+    ont été manqués par les ouvriers.
+    """
+    print("--- [Agent: INTEGRITY_AUDITOR][INPUT_START] ---")
+    
+    all_extracted = state.worker_a_txns + state.worker_b_txns + state.itinerant_txns + state.visual_itinerant_txns
+    
+    prompt = f"""
+    Tu es le Superviseur de Complétude.
+    Voici le TEXTE BRUT original du document bancaire :
+    ---
+    {state.raw_text}
+    ---
+    
+    Voici TOUTES les transactions qui ont été extraites jusqu'à présent (format JSON) :
+    ---
+    {json.dumps([t.model_dump() for t in all_extracted], ensure_ascii=False)}
+    ---
+    
+    Ta mission :
+    Vérifie si des transactions évidentes dans le texte brut manquent dans la liste extraite.
+    Fais particulièrement attention aux "Frais", "Commission", "Agios", "Cotisation", ou petits montants.
+    
+    Si RIEN ne manque et que tout semble extrait correctement, réponds EXACTEMENT : "OK_COMPLET" sans aucun autre texte.
+    Sinon, liste clairement les éléments manquants (date, libellé approximatif, montant) pour qu'ils soient récupérés par le contre-maître.
+    """
+    
+    flash_llm = get_llm()
+    try:
+        response = flash_llm.invoke(prompt)
+        report = response.content.strip()
+        print(f"Integrity Report Preview: {report[:100]}...")
+        return {
+            "integrity_report": report,
+            "logs": [f"Superviseur de Complétude : {'OK' if report == 'OK_COMPLET' else 'Manques détectés'}."]
+        }
+    except Exception as e:
+        print(f"Integrity Auditor Error: {e}")
+        return {
+             "integrity_report": "OK_COMPLET",
+             "logs": [f"Erreur Superviseur : {str(e)}"]
+        }
+
 def foreman_consensus_node(state: AgentState):
     """
     Foreman (Le Contre-maître) : 
-    1. Compare les résultats de A, B et Itinérant.
-    2. Fusionne les données en utilisant le Running Balance comme ancre.
-    3. Tranche les divergences et valide la mathématique.
+    1. Compare les résultats des ouvriers.
+    2. Utilise le Superviseur (integrity_report) pour lancer une mini-extraction si besoin.
+    3. Fusionne les données.
+    4. Tranche les divergences (Visuel en Juge de paix pour les signes).
     """
     print("--- [Agent: FOREMAN][INPUT_START] ---")
+    extra_txns = []
+    
+    if state.integrity_report and state.integrity_report != "OK_COMPLET":
+        print("Foreman: Attempting targeted extraction based on Integrity Report...")
+        prompt = f"""
+        Tu es le Contre-maître. Le rapport d'intégrité a signalé des transactions manquantes :
+        RAPPORT DU SUPERVISEUR :
+        {state.integrity_report}
+        
+        TEXTE BRUT ORIGINAL :
+        {state.raw_text}
+        
+        Extrais UNIQUEMENT les transactions mentionnées dans le rapport qui manquaient (format JSON avec Date, Montant, Libellé, runningBalance).
+        """
+        try:
+            flash_llm = get_llm()
+            structured_llm = flash_llm.with_structured_output(TransactionList)
+            result = structured_llm.invoke(prompt)
+            extra_txns = result.transactions
+            print(f"Foreman recovered {len(extra_txns)} transactions.")
+        except Exception as e:
+            print(f"Foreman recovery error: {e}")
+
     a_txns = state.worker_a_txns
     b_txns = state.worker_b_txns
     i_txns = state.itinerant_txns
+    v_txns = state.visual_itinerant_txns
     
-    all_versions = a_txns + b_txns + i_txns
+    # Construction d'un index des signes basé sur l'Ouvrier Visuel (Juge de paix)
+    visual_sign_lookup = {}
+    for t in v_txns:
+        # Clé robuste : date + montant absolu + début libellé
+        desc = (t.description or "")[:10].lower()
+        key = f"{t.date}_{abs(t.amount)}_{desc}"
+        visual_sign_lookup[key] = 1 if t.amount >= 0 else -1
+
+    all_versions = a_txns + b_txns + i_txns + v_txns + extra_txns
     
-    # Stratégie de fusion par solde (runningBalance est notre ancre de vérité)
+    # Stratégie de fusion par solde
     merged_map = {}
     for t in all_versions:
+        # Correction de signe par le Visuel (Juge de paix) avant fusion
+        desc = (t.description or "")[:10].lower()
+        v_key = f"{t.date}_{abs(t.amount)}_{desc}"
+        if v_key in visual_sign_lookup:
+            t.amount = abs(t.amount) * visual_sign_lookup[v_key]
+
         if t.runningBalance is not None:
             key = f"{t.runningBalance}"
-            # On privilégie celui qui a le plus de texte brut ou plus de détails
             if key not in merged_map or len(t.fullRawText or "") > len(merged_map[key].fullRawText or ""):
                 merged_map[key] = t
         else:
-            # Fallback si pas de solde (clé moins fiable)
             key = f"{t.date}_{t.amount}_{t.description[:10]}"
             if key not in merged_map:
                 merged_map[key] = t
                 
     merged_list = sorted(merged_map.values(), key=lambda x: str(x.date or "9999-12-31"))
     
-    # Vérification Balance et Correction de Signe Stricte
-    anomalies = []
-    min_expected = state.page_count * 4
-    
-    # On recalcule les montants en fonction de la balance (La source de vérité)
     final_verified_txns = []
     for i in range(len(merged_list)):
         t = merged_list[i]
@@ -409,16 +570,16 @@ def foreman_consensus_node(state: AgentState):
             prev = merged_list[i-1]
             if prev.runningBalance is not None and t.runningBalance is not None:
                 actual_diff = round(t.runningBalance - prev.runningBalance, 2)
-                # FORCE le signe : si la balance a baissé, c'est un débit (-)
                 if abs(actual_diff - t.amount) > 0.01:
-                    # Si l'IA a mis +, mais que la balance dit -, on corrige
-                    print(f"Correction de signe pour {t.description}: {t.amount} -> {actual_diff}")
+                    print(f"Correction de signe mathématique ou montant pour {t.description}: {t.amount} -> {actual_diff}")
                     t.amount = actual_diff
         final_verified_txns.append(t)
 
-    log_msgs = [f"Foreman : {len(final_verified_txns)} transactions validées après consensus (3 agents)."]
-    if len(final_verified_txns) < min_expected:
-        log_msgs.append(f"⚠️ Volume suspect ({len(final_verified_txns)} txns pour {state.page_count} pages).")
+    log_msgs = [f"Foreman : {len(final_verified_txns)} transactions validées après consensus."]
+    if state.integrity_report != "OK_COMPLET" and extra_txns:
+        log_msgs.append(f"Foreman : Récupération effectuée ({len(extra_txns)} récupérées suite au rapport).")
+    elif state.integrity_report != "OK_COMPLET":
+        log_msgs.append("Foreman : Tentative de récupération échouée malgré le rapport d'intégrité.")
 
     return {
         "extracted_transactions": final_verified_txns,
@@ -538,6 +699,8 @@ workflow.add_node("vision", vision_node)
 workflow.add_node("worker_a", worker_a_node)
 workflow.add_node("worker_b", worker_b_node)
 workflow.add_node("itinerant", itinerant_worker_node)
+workflow.add_node("visual_itinerant", visual_itinerant_node)
+workflow.add_node("integrity_auditor", integrity_auditor_node)
 workflow.add_node("foreman", foreman_consensus_node)
 workflow.add_node("classifier_a", classifier_a_node)
 workflow.add_node("classifier_b", classifier_b_node)
@@ -547,9 +710,15 @@ workflow.set_entry_point("vision")
 workflow.add_edge("vision", "worker_a")
 workflow.add_edge("vision", "worker_b")
 workflow.add_edge("vision", "itinerant")
-workflow.add_edge("worker_a", "foreman")
-workflow.add_edge("worker_b", "foreman")
-workflow.add_edge("itinerant", "foreman")
+workflow.add_edge("vision", "visual_itinerant")
+
+workflow.add_edge("worker_a", "integrity_auditor")
+workflow.add_edge("worker_b", "integrity_auditor")
+workflow.add_edge("itinerant", "integrity_auditor")
+workflow.add_edge("visual_itinerant", "integrity_auditor")
+
+workflow.add_edge("integrity_auditor", "foreman")
+
 workflow.add_edge("foreman", "classifier_a")
 workflow.add_edge("foreman", "classifier_b")
 workflow.add_edge("classifier_a", "judge")
@@ -643,6 +812,7 @@ async def process_receipt(
         1. Le montant TOTAL (amount) en float.
         2. Le contenu/marchand/description (content).
         3. La date (date) au format YYYY-MM-DD.
+        4. isRefund (booléen) : true si c'est explicitement un "Avoir" ou "Remboursement" ou "Refund", false sinon.
         """
         
         message = HumanMessage(
@@ -664,44 +834,94 @@ async def process_receipt(
             target_amount = abs(extraction.amount)
             unlinked_txns = [t for t in txns_list if not t.receiptUrl]
             
-            # Priority 2: Match against charges (amount < 0) with exactly the same amount
-            candidates_amount = [t for t in unlinked_txns if t.amount < 0 and abs(abs(t.amount) - target_amount) < 0.05]
+            # 3. Sécurité sur les Signes : On cherche des débits (-) par défaut, sauf si isRefund
+            if getattr(extraction, "isRefund", False):
+                print(f"Reçu de type Remboursement/Avoir détecté. Recherche de Crédit (montant > 0) pour {target_amount}")
+                filtered_txns = [t for t in unlinked_txns if t.amount is not None and t.amount > 0]
+            else:
+                print(f"Reçu standard détecté. Recherche de Débit (montant < 0) pour {target_amount}")
+                filtered_txns = [t for t in unlinked_txns if t.amount is not None and t.amount < 0]
             
-            if len(candidates_amount) == 1:
-                matched_id = candidates_amount[0].id
-            elif len(candidates_amount) > 1:
-                # Priority 5: If 2 similar amounts, resolve using date and content
-                for c in candidates_amount:
-                    if extraction.date and c.date == extraction.date:
-                        matched_id = c.id
-                        break
-                    if extraction.content and c.description and (c.description.lower() in extraction.content.lower() or extraction.content.lower() in c.description.lower()):
-                        matched_id = c.id
-                        break
+            # 2. Matching Multi-Critères avec Pondération
+            candidates = []
             
-            # Priority 3: If no charge with same amount, check in remarks/notes/description
-            if not matched_id:
+            for t in filtered_txns:
+                t_amount = abs(t.amount)
+                
+                # Montant exact (marge de 0.05)
+                if abs(t_amount - target_amount) <= 0.05:
+                    score = 1 # Score + (Montant exact uniquement)
+                    reasons = ["Score + (Montant exact)"]
+                    
+                    # Score +++ : Date exacte
+                    if extraction.date and t.date == extraction.date:
+                        score += 2 # Score +++
+                        reasons.append("Score +++ (Date exacte)")
+                        
+                    # Score ++ : Nom du marchand présent dans fullRawText
+                    if extraction.content:
+                        # 1. Utilisation du fullRawText : on combine description, notes et fullRawText
+                        search_space = (str(t.description or "") + " " + str(t.notes or "") + " " + str(t.fullRawText or "")).lower()
+                        ext_content = extraction.content.lower().strip()
+                        significant_words = [w for w in ext_content.split() if len(w) >= 4]
+                        
+                        match_found = False
+                        if len(ext_content) > 3 and ext_content in search_space:
+                            match_found = True
+                        elif significant_words:
+                            for word in significant_words:
+                                if word in search_space:
+                                    match_found = True
+                                    break
+                                    
+                        if match_found:
+                            score += 1 # Score ++
+                            reasons.append("Score ++ (Marchand dans fullRawText)")
+                    
+                    # Calcul de la différence de date pour le départage
+                    date_diff = 9999
+                    if extraction.date and t.date:
+                        try:
+                            from datetime import datetime
+                            d1 = datetime.strptime(extraction.date, "%Y-%m-%d")
+                            d2 = datetime.strptime(t.date, "%Y-%m-%d")
+                            date_diff = abs((d1 - d2).days)
+                        except:
+                            pass
+                            
+                    candidates.append({
+                        "id": t.id,
+                        "score": score,
+                        "date_diff": date_diff,
+                        "reasons": reasons
+                    })
+            
+            if candidates:
+                # Tri : Score décroissant, puis différence de jours croissante (proximité de date)
+                candidates.sort(key=lambda x: (-x["score"], x["date_diff"]))
+                best_match = candidates[0]
+                matched_id = best_match["id"]
+                print(f"Match trouvé : {matched_id} | Score : {best_match['score']} | Diff jours : {best_match['date_diff']}")
+                print(f"Critères de match : {', '.join(best_match['reasons'])}")
+            else:
+                # 4. Gestion des Transactions "Orphelines" : Pas de correspondance stricte trouvée.
+                # Priority Fallback: check in remarks/notes/description if amount is mentioned as text.
+                print("Aucun candidat avec montant exact. Recherche par texte (orphelines/montants groupés)...")
                 candidates_remarks = []
                 for t in unlinked_txns:
-                    text_to_search = (str(t.description or "") + " " + str(t.notes or "")).lower()
-                    # Look for string representation of the amount
+                    text_to_search = (str(t.description or "") + " " + str(t.notes or "") + " " + str(t.fullRawText or "")).lower()
                     if str(target_amount) in text_to_search or str(int(target_amount)) in text_to_search:
                         candidates_remarks.append(t)
                 
                 if len(candidates_remarks) == 1:
                     matched_id = candidates_remarks[0].id
+                    print(f"Match de fallback par texte brut pour {matched_id}")
                 elif len(candidates_remarks) > 1:
                     for c in candidates_remarks:
                         if extraction.date and c.date == extraction.date:
                             matched_id = c.id
+                            print(f"Match de fallback par texte brut + date pour {matched_id}")
                             break
-                            
-            # Priority 4: if still nothing, try date + content match
-            if not matched_id and extraction.date and extraction.content:
-                for t in unlinked_txns:
-                    if t.date == extraction.date and t.description and (t.description.lower() in extraction.content.lower() or extraction.content.lower() in t.description.lower()):
-                        matched_id = t.id
-                        break
                         
         print(f"Matched transaction: {matched_id}")
         
