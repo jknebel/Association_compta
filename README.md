@@ -1,82 +1,114 @@
 # 📊 AssoCompta AI
 
-[![Statut](https://img.shields.io/badge/Statut-En%20d%C3%A9veloppement-orange)](https://github.com/jknebel/Association_compta)
-[![Tech Stack](https://img.shields.io/badge/Stack-React%20%7C%20FastAPI%20%7C%20Gemini-blue)](https://github.com/jknebel/Association_compta)
+> [!IMPORTANT]
+> **PROJET EN COURS DE DÉVELOPPEMENT**
+> Cette application est actuellement en phase active de développement (V2). Certaines fonctionnalités peuvent être instables et l'interface est sujette à des modifications fréquentes.
 
-> **⚠️ Note : Ce projet est actuellement en cours de développement.**  
-> L'application est fonctionnelle mais certaines fonctionnalités avancées et optimisations sont encore en phase de test.
+[![Statut](https://img.shields.io/badge/Statut-En%20D%C3%A9veloppement-orange.svg?style=for-the-badge)](https://github.com/jknebel/Association_compta)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/Frontend-React%2018-61DAFB.svg?style=for-the-badge&logo=react&logoColor=black)](https://reactjs.org/)
+[![Gemini](https://img.shields.io/badge/AI-Google%20Gemini%202.0-4285F4.svg?style=for-the-badge&logo=google-gemini&logoColor=white)](https://ai.google.dev/)
 
-## 🚀 Présentation
+**AssoCompta AI** est une solution intelligente de gestion comptable automatisée pour les associations. En utilisant des systèmes multi-agents (LangGraph) et la puissance des LLM (Gemini), le projet vise à éliminer la saisie manuelle fastidieuse en transformant des documents bruts en écritures comptables structurées.
 
-**AssoCompta AI** est une solution intelligente de gestion comptable conçue spécifiquement pour les associations. Elle automatise la saisie et le rapprochement comptable en s'appuyant sur l'intelligence artificielle (Google Gemini) et une architecture multi-agents (LangGraph).
-
-L'objectif est de transformer des relevés bancaires complexes et des reçus froissés en une comptabilité structurée et conforme au Plan Comptable Associatif, avec un minimum d'effort humain.
+---
 
 ## ✨ Fonctionnalités Clés
 
-- **🤖 Extraction Intelligente de Relevés** : Analyse multi-agents des relevés bancaires PDF/images via LangGraph pour une précision maximale.
-- **📄 Gestion des Justificatifs** : Analyse automatique des factures et reçus avec extraction de montants et dates.
-- **🏷️ Catégorisation Automatique** : Mapping intelligent vers le Plan Comptable basé sur l'historique de l'association.
-- **🕵️ Système de Consensus AI** : Utilisation de plusieurs agents (Vision, Worker, Auditor, Judge) pour valider l'intégrité des données extraites.
-- **📊 Tableaux de Bord** : Visualisation claire de la santé financière de l'association.
-- **☁️ Cloud-Native** : Synchronisation temps réel via Firebase et déploiement flexible (Docker/Cloud Run).
+- **🤖 Pipeline Multi-Agents (LangGraph)** : Extraction robuste des relevés bancaires avec double vérification (Workers A/B) et audit d'intégrité.
+- **📄 Vision Intelligence** : Analyse visuelle des reçus et factures pour extraire montants, dates et libellés.
+- **🧠 Apprentissage par l'Historique** : Système de classification intelligent qui apprend de vos validations passées pour suggérer les bons comptes.
+- **💬 Chat Expert** : Posez des questions sur votre comptabilité en langage naturel et obtenez des réponses basées sur vos données réelles.
+- **📊 Ledger Dynamique** : Visualisation en temps réel de la balance, filtrage intelligent et export Excel.
+- **🔒 Sécurisé & Cloud** : Authentification et stockage temps réel via Firebase.
 
-## 🛠️ Architecture Technique
+---
 
-### Frontend
-- **Framework** : React 18 avec Vite
-- **Langage** : TypeScript
-- **Styling** : Tailwind CSS
-- **Icônes** : Lucide React
-- **Base de données/Auth** : Firebase SDK
+## 🏗️ Architecture du Pipeline AI
 
-### Backend
-- **Framework** : FastAPI (Python)
-- **AI Orchestration** : LangChain & LangGraph
-- **Modèles LLM** : Google Gemini (Flash & Pro)
-- **Traitement PDF** : PyMuPDF (fitz)
-- **Database Admin** : Firebase Admin SDK
+Le cœur du projet repose sur un graphe d'agents collaboratifs orchestrés par **LangGraph**. Ce système garantit une précision maximale même sur des PDF complexes de plusieurs pages.
 
-## 📦 Installation et Setup
-
-### Prérequis
-- Node.js (v18+)
-- Python (3.10+)
-- Un projet Firebase configuré
-- Une clé API Google Gemini (AI Studio)
-
-### 1. Configuration du Backend
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate # Sur Windows: venv\Scripts\activate
-pip install -r requirements.txt
-```
-Créez un fichier `.env` dans `backend/` :
-```env
-GOOGLE_API_KEY=votre_cle_gemini
-# Firebase credentials (ADC ou serviceAccountKey.json)
-```
-
-### 2. Configuration du Frontend
-```bash
-npm install
-```
-Créez un fichier `.env.local` à la racine :
-```env
-VITE_FIREBASE_API_KEY=...
-# Autres config Firebase...
-```
-
-### 3. Lancement
-- **Backend** : `uvicorn main:app --reload` (depuis le dossier `backend`)
-- **Frontend** : `npm run dev` (depuis la racine)
-
-## 🐳 Docker
-Le projet inclut des Dockerfiles pour le déploiement.
-```bash
-docker build -t assocompta-backend ./backend
+```mermaid
+graph TD
+    A[📄 PDF Relevé] --> B[Agent Vision]
+    B --> C{Workers Parallèles}
+    C --> D[Worker A: Standard]
+    C --> E[Worker B: Redondant]
+    C --> F[Worker Itinérant: Découpage]
+    C --> G[Worker Visuel: Spatial]
+    
+    D & E & F & G --> H[Agent Audit d'Intégrité]
+    H --> I[Agent Foreman: Consensus]
+    
+    I --> J{Classification}
+    J --> K[Comptable A: Historique]
+    J --> L[Comptable B: Contextuel]
+    
+    K & L --> M[Agent Judge: Harmonisation]
+    M --> N[🚀 Transactions Validées]
 ```
 
 ---
-*Développé avec ❤️ pour simplifier la vie des trésoriers d'associations.*
+
+## 🛠️ Stack Technique
+
+| Composant | Technologie |
+| :--- | :--- |
+| **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, Lucide Icons |
+| **Backend** | FastAPI (Python 3.12), LangChain, LangGraph |
+| **IA / LLM** | Google Gemini 2.0 Flash (Vision & Text) |
+| **Data / Auth** | Firebase (Firestore, Auth, Storage) |
+| **Traitement PDF** | PyMuPDF (fitz) |
+| **Déploiement** | Docker, Google Cloud Run |
+
+---
+
+## 🚀 Installation & Configuration
+
+### Prérequis
+- Python 3.10+ & Node.js 18+
+- Un projet Firebase configuré
+- Une clé API [Google AI Studio](https://aistudio.google.com/)
+
+### 1. Backend
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+Créez un `.env` dans le dossier `backend` :
+```env
+GOOGLE_API_KEY=votre_cle_gemini
+# Pour Firebase, utilisez l'ADC ou placez serviceAccountKey.json
+```
+
+### 2. Frontend
+```bash
+npm install
+npm run dev
+```
+Créez un `.env.local` à la racine :
+```env
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_PROJECT_ID=...
+# ... autres configs Firebase
+```
+
+---
+
+## 🐳 Docker
+Le projet peut être conteneurisé facilement :
+```bash
+docker build -t assocompta-backend ./backend
+docker run -p 8000:8000 assocompta-backend
+```
+
+---
+
+## 🤝 Contribution
+Les contributions sont les bienvenues ! Pour des changements majeurs, veuillez d'abord ouvrir une issue pour discuter de ce que vous aimeriez changer.
+
+---
+*Développé avec ❤️ pour simplifier la gestion associative.*
