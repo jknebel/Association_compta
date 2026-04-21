@@ -8,7 +8,7 @@
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/Frontend-React%2018-61DAFB.svg?style=for-the-badge&logo=react&logoColor=black)](https://reactjs.org/)
 [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini%202.0-4285F4.svg?style=for-the-badge&logo=google-gemini&logoColor=white)](https://ai.google.dev/)
-
+[![Licence](https://img.shields.io/badge/Licence-CC%20BY--NC%204.0-lightgrey.svg?style=for-the-badge)](http://creativecommons.org/licenses/by-nc/4.0/)
 **AssoCompta AI** est une solution intelligente de gestion comptable automatisée pour les associations. En utilisant des systèmes multi-agents (LangGraph) et la puissance des LLM (Gemini), le projet vise à éliminer la saisie manuelle fastidieuse en transformant des documents bruts en écritures comptables structurées.
 
 ---
@@ -104,7 +104,16 @@ Le projet peut être conteneurisé facilement :
 docker build -t assocompta-backend ./backend
 docker run -p 8000:8000 assocompta-backend
 ```
+## 📄 Licence
+Ce projet est mis à disposition selon les termes de la Licence Creative Commons Attribution - Pas d’Utilisation Commerciale 4.0 International.
 
+En résumé :
+
+✅ Autorisé : L'utilisation, la modification et la distribution de ce code pour des associations à but non lucratif, des étudiants, ou pour des projets personnels.
+
+❌ Interdit : Toute utilisation de ce code ou de cette application à des fins commerciales (générer des revenus, vendre un service basé sur ce projet) sans accord préalable explicite de l'auteur.
+
+Pour plus de détails, veuillez consulter le fichier LICENSE à la racine de ce dépôt.
 ---
 
 ## 🤝 Contribution
