@@ -590,41 +590,43 @@ def foreman_consensus_node(state: AgentState):
     # Group by date to handle same-day order better
     merged_list = sorted(merged_map.values(), key=lambda x: parse_date(x.date))
     
-    final_verified_txns = []
-    chain_broken_msg = None
+    # --- PRÉ-FILTRAGE DES ANCRES POUR LA VÉRIFICATION ---
+    # On sépare les transactions réelles des lignes de solde pour éviter les fausses ruptures
     SOLDE_KEYWORDS = ["SOLDE REPORTE", "SOLDE REPORTER", "SOLDE AU", "NOUVEAU SOLDE", "TOTAL DES MOUVEMENTS", "REPORT DE SOLDE", "SOLDE INITIAL", "SOLDE EN VOTRE FAVEUR", "SOLDE EN NOTRE FAVEUR"]
     
-    ghost_count = 0
-    MAX_GHOSTS = 20 # Preventive limit for payload size
-
+    real_txns = []
+    anchors = []
     for t in merged_list:
         desc_upper = (t.description or "").upper()
-        is_anchor = any(kw in desc_upper for kw in SOLDE_KEYWORDS)
-        
-        # If it's an anchor, we usually expect amount to be 0
-        if is_anchor and t.amount != 0:
-            # Sometimes AI puts the balance in amount. Let's fix it.
-            if t.runningBalance == t.amount:
-                t.amount = 0
-        
+        if any(kw in desc_upper for kw in SOLDE_KEYWORDS):
+            anchors.append(t)
+        else:
+            real_txns.append(t)
+    
+    final_verified_txns = []
+    chain_broken_msg = None
+    
+    ghost_count = 0
+    MAX_GHOSTS = 30 # Limit for safety
+
+    # On vérifie la chaîne uniquement sur les transactions RÉELLES
+    for t in real_txns:
         if len(final_verified_txns) > 0:
             prev = final_verified_txns[-1]
             if prev.runningBalance is not None and t.runningBalance is not None:
-                # If current is anchor, the amount doesn't contribute to the diff, 
-                # but the balance should match the previous one.
-                expected_diff = t.amount if not is_anchor else 0
+                expected_diff = t.amount
                 actual_diff = round(t.runningBalance - prev.runningBalance, 2)
                 
                 if abs(actual_diff - expected_diff) > 0.01:
                     # Sign correction (+ instead of -)
-                    if not is_anchor and abs(actual_diff + t.amount) < 0.01:
+                    if abs(actual_diff + t.amount) < 0.01:
                         print(f"Correction de signe détectée pour {t.description}: {t.amount} -> {actual_diff}")
                         t.amount = actual_diff
                     else:
                         gap = round(actual_diff - expected_diff, 2)
                         print(f"RUPTURE DE CHAÎNE détectée avant {t.description}. Prévu: {prev.runningBalance + expected_diff}, Réel: {t.runningBalance}, Différence (trou): {gap}")
                         
-                        if state.recovery_attempts < 2: # Reduced to 2 to save time/tokens
+                        if state.recovery_attempts < 2: 
                             chain_broken_msg = f"RUPTURE CHAINE: Il manque {gap} CHF entre '{prev.description}' (Solde: {prev.runningBalance}) et '{t.description}' (Solde: {t.runningBalance})."
                             break 
                         else:
