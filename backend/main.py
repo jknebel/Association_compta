@@ -10,7 +10,7 @@ from datetime import datetime
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Firebase Admin (Server Side)
 import firebase_admin
