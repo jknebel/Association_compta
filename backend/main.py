@@ -587,43 +587,63 @@ def foreman_consensus_node(state: AgentState):
             return f"{y}-{month.zfill(2)}-{d.zfill(2)}"
         return str(d_str)
 
+    # Group by date to handle same-day order better
     merged_list = sorted(merged_map.values(), key=lambda x: parse_date(x.date))
     
     final_verified_txns = []
     chain_broken_msg = None
-    SOLDE_KEYWORDS = ["SOLDE REPORTE", "SOLDE REPORTER", "SOLDE AU", "NOUVEAU SOLDE", "TOTAL DES MOUVEMENTS", "REPORT DE SOLDE", "SOLDE INITIAL"]
+    SOLDE_KEYWORDS = ["SOLDE REPORTE", "SOLDE REPORTER", "SOLDE AU", "NOUVEAU SOLDE", "TOTAL DES MOUVEMENTS", "REPORT DE SOLDE", "SOLDE INITIAL", "SOLDE EN VOTRE FAVEUR", "SOLDE EN NOTRE FAVEUR"]
     
+    ghost_count = 0
+    MAX_GHOSTS = 20 # Preventive limit for payload size
+
     for t in merged_list:
-        # Ignorer la vérification mathématique si c'est explicitement une ligne d'ancrage sans montant utile
-        is_anchor = any(kw in (t.description or "").upper() for kw in SOLDE_KEYWORDS)
+        desc_upper = (t.description or "").upper()
+        is_anchor = any(kw in desc_upper for kw in SOLDE_KEYWORDS)
+        
+        # If it's an anchor, we usually expect amount to be 0
+        if is_anchor and t.amount != 0:
+            # Sometimes AI puts the balance in amount. Let's fix it.
+            if t.runningBalance == t.amount:
+                t.amount = 0
         
         if len(final_verified_txns) > 0:
             prev = final_verified_txns[-1]
-            if prev.runningBalance is not None and t.runningBalance is not None and not is_anchor:
+            if prev.runningBalance is not None and t.runningBalance is not None:
+                # If current is anchor, the amount doesn't contribute to the diff, 
+                # but the balance should match the previous one.
+                expected_diff = t.amount if not is_anchor else 0
                 actual_diff = round(t.runningBalance - prev.runningBalance, 2)
                 
-                if abs(actual_diff - t.amount) > 0.01:
-                    # Correction de signe (+ au lieu de -)
-                    if abs(actual_diff + t.amount) < 0.01:
+                if abs(actual_diff - expected_diff) > 0.01:
+                    # Sign correction (+ instead of -)
+                    if not is_anchor and abs(actual_diff + t.amount) < 0.01:
                         print(f"Correction de signe détectée pour {t.description}: {t.amount} -> {actual_diff}")
                         t.amount = actual_diff
                     else:
-                        gap = round(actual_diff - t.amount, 2)
-                        print(f"RUPTURE DE CHAÎNE détectée avant {t.description}. Prévu: {prev.runningBalance + t.amount}, Réel: {t.runningBalance}, Différence (trou): {gap}")
+                        gap = round(actual_diff - expected_diff, 2)
+                        print(f"RUPTURE DE CHAÎNE détectée avant {t.description}. Prévu: {prev.runningBalance + expected_diff}, Réel: {t.runningBalance}, Différence (trou): {gap}")
                         
-                        if state.recovery_attempts < 3:
-                            chain_broken_msg = f"RUPTURE CHAINE: Il manque exactement {gap} CHF entre la ligne '{prev.description}' (Solde: {prev.runningBalance}) et la ligne '{t.description}' (Solde: {t.runningBalance}). Trouve la ou les transactions manquantes totalisant {gap} CHF."
-                            break # On arrête le traitement pour déclencher la boucle
+                        if state.recovery_attempts < 2: # Reduced to 2 to save time/tokens
+                            chain_broken_msg = f"RUPTURE CHAINE: Il manque {gap} CHF entre '{prev.description}' (Solde: {prev.runningBalance}) et '{t.description}' (Solde: {t.runningBalance})."
+                            break 
                         else:
-                            print(f"Limite d'essais atteinte. Insertion d'une Transaction Fantôme de {gap} CHF.")
-                            ghost = Transaction(
-                                date=t.date,
-                                description="ERREUR IA: TRANSACTION MANQUANTE",
-                                amount=gap,
-                                runningBalance=round(prev.runningBalance + gap, 2),
-                                fullRawText="Généré automatiquement suite à une rupture de chaîne non résolue après 3 essais."
-                            )
-                            final_verified_txns.append(ghost)
+                            if ghost_count < MAX_GHOSTS:
+                                print(f"Insertion d'une Transaction Fantôme de {gap} CHF.")
+                                ghost = Transaction(
+                                    date=t.date,
+                                    description=f"ÉCART DE SOLDE DÉTECTÉ ({gap} CHF)",
+                                    amount=gap,
+                                    runningBalance=round(prev.runningBalance + gap, 2),
+                                    fullRawText=f"Rupture de chaîne automatique. Prévu: {prev.runningBalance + expected_diff}, Réel: {t.runningBalance}"
+                                )
+                                final_verified_txns.append(ghost)
+                                ghost_count += 1
+                                # Now update prev for the current transaction
+                                prev = ghost
+                            else:
+                                print("Trop de ruptures de chaîne. Arrêt des corrections fantômes.")
+                                break
 
         final_verified_txns.append(t)
 
@@ -705,49 +725,50 @@ def classifier_a_node(state: AgentState):
         for a in accounts
     ])
     
-    prompt = f"""
-    Tu es le Comptable A. Ta spécialité est le rapprochement par HISTORIQUE.
+    # --- BATCHED CLASSIFICATION ---
+    all_txns = state.extracted_transactions
+    if not all_txns:
+        return {"classification_a_txns": [], "logs": ["Comptable A : Aucune transaction à classer."]}
+
+    batch_size = 50
+    all_classified = []
+    global_thinking = ""
     
-    CONTEXTE GLOBAL DE L'ASSOCIATION :
-    {state.global_context or "Aucun contexte particulier."}
-    
-    MODÈLES PASSÉS :
-    {history_context}
-    
-    PLAN COMPTABLE :
-    {accounts_info}
-    
-    RÈGLES :
-    1. Si un libellé ressemble à l'historique, utilise le même 'accountId'.
-    2. Respecte les signes : un montant négatif est une CHARGE, positif est un PRODUIT (sauf comptes MIXTE).
-    
-    TRANSACTIONS À CLASSER (JSON) :
-    {json.dumps([t.model_dump() for t in state.extracted_transactions])}
-    """
-    try:
-        flash_llm = get_llm()
-        structured_llm = flash_llm.with_structured_output(ClassifiedTransactionList)
-        result = structured_llm.invoke(prompt)
+    flash_llm = get_llm()
+    structured_llm = flash_llm.with_structured_output(ClassifiedTransactionList)
+
+    for i in range(0, len(all_txns), batch_size):
+        batch = all_txns[i : i + batch_size]
+        print(f"Classifier A: Processing batch {i//batch_size + 1} ({len(batch)} txns)")
         
-        # --- DETAILED OUTPUT LOGGING ---
-        classified_count = sum(1 for t in result.transactions if t.accountId)
-        print(f"--- [Agent: CLASSIFIER_A][OUTPUT] {len(result.transactions)} txns retournées, {classified_count} avec accountId ---")
-        print(f"  THINKING: {result.thinking[:200]}...")
-        for t in result.transactions[:5]:
-            print(f"  CLASSIFIER_A: '{t.description[:40]}' -> accountId={t.accountId} | reasoning={t.accountChoiceReasoning[:50]}...")
-        if len(result.transactions) > 5:
-            print(f"  ... et {len(result.transactions) - 5} autres")
+        prompt = f"""
+        Tu es le Comptable A (Historique). Batch {i//batch_size + 1}.
         
-        return {
-            "classification_a_txns": result.transactions,
-            "classification_a_thinking": result.thinking,
-            "logs": [f"Comptable A : {classified_count}/{len(result.transactions)} classées par historique."]
-        }
-    except Exception as e:
-        print(f"Classifier A Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return {"classification_a_txns": [], "classification_a_thinking": f"Erreur: {str(e)}", "logs": [f"Erreur Comptable A : {str(e)}"]}
+        CONTEXTE :
+        {state.global_context or "N/A"}
+        MODÈLES :
+        {history_context}
+        PLAN :
+        {accounts_info}
+        
+        TRANSACTIONS (JSON) :
+        {json.dumps([t.model_dump() for t in batch])}
+        """
+        try:
+            result = structured_llm.invoke(prompt)
+            all_classified.extend(result.transactions)
+            if not global_thinking: global_thinking = result.thinking
+        except Exception as e:
+            print(f"Batch Classifier A Error: {e}")
+            for t in batch:
+                all_classified.append(ClassifiedTransaction(**t.model_dump(), accountChoiceReasoning="Erreur lors de la classification IA"))
+
+    classified_count = sum(1 for t in all_classified if t.accountId)
+    return {
+        "classification_a_txns": all_classified,
+        "classification_a_thinking": global_thinking or "Classification terminée.",
+        "logs": [f"Comptable A : {classified_count}/{len(all_classified)} classées."]
+    }
 
 def classifier_b_node(state: AgentState):
     """Classifier B: Contextual extraction (members, specific keywords)."""
@@ -758,53 +779,51 @@ def classifier_b_node(state: AgentState):
         for a in accounts
     ])
     
-    prompt = f"""
-    Tu es le Comptable B. Ta spécialité est l'analyse des DÉTAILS (fullRawText).
+    # --- BATCHED CLASSIFICATION ---
+    all_txns = state.extracted_transactions
+    if not all_txns:
+        return {"classification_b_txns": [], "logs": ["Comptable B : Aucune transaction à classer."]}
+
+    batch_size = 50
+    all_classified = []
+    global_thinking = ""
     
-    CONTEXTE GLOBAL DE L'ASSOCIATION :
-    {state.global_context or "Aucun contexte particulier."}
-    
-    PLAN COMPTABLE :
-    {accounts_info}
-    
-    RÈGLES DE CLASSIFICATION :
-    1. Si un compte est marqué 'Suivi: OUI', il s'agit d'un compte de membres (cotisations). 
-       Pour ces transactions, tu DOIS extraire le nom du membre dans 'detectedMemberName'.
-       Priorité pour trouver le nom : 
-       a) Dans le texte de communication ou la description.
-       b) Si rien n'est trouvé, cherche le nom de la personne ayant fait le virement (ex: "Virement de Jean Dupont").
-    2. Si 'fullRawText' contient des mots comme "COTISATION", "ADHESION", ou "MEMBRE", utilise en priorité le compte marqué 'Suivi: OUI'.
-    3. Pour les autres transactions, utilise le nom (label) et la description du compte pour trouver la meilleure correspondance.
-    4. Signes : Un montant négatif (-) est une CHARGE, un montant positif (+) est un PRODUIT.
-    
-    TRANSACTIONS À CLASSER (JSON) :
-    {json.dumps([t.model_dump() for t in state.extracted_transactions])}
-    """
-    try:
-        flash_llm = get_llm()
-        structured_llm = flash_llm.with_structured_output(ClassifiedTransactionList)
-        result = structured_llm.invoke(prompt)
+    flash_llm = get_llm()
+    structured_llm = flash_llm.with_structured_output(ClassifiedTransactionList)
+
+    for i in range(0, len(all_txns), batch_size):
+        batch = all_txns[i : i + batch_size]
+        print(f"Classifier B: Processing batch {i//batch_size + 1} ({len(batch)} txns)")
         
-        # --- DETAILED OUTPUT LOGGING ---
-        classified_count = sum(1 for t in result.transactions if t.accountId)
-        member_count = sum(1 for t in result.transactions if t.detectedMemberName)
-        print(f"--- [Agent: CLASSIFIER_B][OUTPUT] {len(result.transactions)} txns retournées, {classified_count} avec accountId, {member_count} avec memberName ---")
-        print(f"  THINKING: {result.thinking[:200]}...")
-        for t in result.transactions[:5]:
-            print(f"  CLASSIFIER_B: '{t.description[:40]}' -> accountId={t.accountId} | reasoning={t.accountChoiceReasoning[:50]}...")
-        if len(result.transactions) > 5:
-            print(f"  ... et {len(result.transactions) - 5} autres")
+        prompt = f"""
+        Tu es le Comptable B (Détails/Membres). Batch {i//batch_size + 1}.
         
-        return {
-            "classification_b_txns": result.transactions,
-            "classification_b_thinking": result.thinking,
-            "logs": [f"Comptable B : {classified_count}/{len(result.transactions)} classées contextuellement, {member_count} membres détectés."]
-        }
-    except Exception as e:
-        print(f"Classifier B Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return {"classification_b_txns": [], "classification_b_thinking": f"Erreur: {str(e)}", "logs": [f"Erreur Comptable B : {str(e)}"]}
+        CONTEXTE :
+        {state.global_context or "N/A"}
+        PLAN :
+        {accounts_info}
+        
+        RÈGLES :
+        - Extraire 'detectedMemberName' pour les comptes de membres (Suivi: OUI).
+        
+        TRANSACTIONS (JSON) :
+        {json.dumps([t.model_dump() for t in batch])}
+        """
+        try:
+            result = structured_llm.invoke(prompt)
+            all_classified.extend(result.transactions)
+            if not global_thinking: global_thinking = result.thinking
+        except Exception as e:
+            print(f"Batch Classifier B Error: {e}")
+            for t in batch:
+                all_classified.append(ClassifiedTransaction(**t.model_dump(), accountChoiceReasoning="Erreur lors de la classification IA"))
+
+    classified_count = sum(1 for t in all_classified if t.accountId)
+    return {
+        "classification_b_txns": all_classified,
+        "classification_b_thinking": global_thinking or "Classification terminée.",
+        "logs": [f"Comptable B : {classified_count}/{len(all_classified)} classées."]
+    }
 
 def classification_consensus_node(state: AgentState):
     """The Judge: Uses an LLM to harmonize mapping based on Classifier A and B's reasoning."""
