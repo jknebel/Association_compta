@@ -11,7 +11,7 @@ import {
 import type { Firestore } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import type { FirebaseStorage } from 'firebase/storage';
-import { Account, Transaction, Receipt } from '../../types';
+import { Account, Transaction, Receipt, TransactionStatus } from '../../types';
 import { useState, useEffect } from 'react';
 import type { User } from 'firebase/auth';
 
@@ -419,6 +419,39 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         }
     };
 
+    const closeFiscalYear = async (finalAccounts: Account[], transactionsToArchive: Transaction[]) => {
+        if (shouldUseLocalStorage) {
+            // 1. Update Accounts in state & storage
+            localStorage.setItem('asso_compta_accounts_v5', JSON.stringify(finalAccounts));
+            setAccounts(finalAccounts);
+            
+            // 2. Archive Transactions in state & storage
+            const archivedIds = new Set(transactionsToArchive.map(t => t.id));
+            setTransactions(prev => {
+                const updated = prev.map(t => archivedIds.has(t.id) ? { ...t, status: TransactionStatus.ARCHIVED } : t);
+                localStorage.setItem('asso_compta_transactions_v5', JSON.stringify(updated));
+                return updated;
+            });
+            return;
+        }
+
+        if (user) {
+            const batch = writeBatch(db);
+            
+            // 1. Update Accounts
+            finalAccounts.forEach(acc => {
+                batch.set(doc(db, "users", user.uid, "accounts", acc.id), sanitize(acc));
+            });
+            
+            // 2. Archive Transactions
+            transactionsToArchive.forEach(txn => {
+                batch.update(doc(db, "users", user.uid, "transactions", txn.id), { status: TransactionStatus.ARCHIVED });
+            });
+            
+            await batch.commit();
+        }
+    };
+
     return {
         accounts,
         transactions,
@@ -437,6 +470,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         globalAiContext,
         saveReceipt, // Exposed
         deleteReceipt, // Exposed
-        uploadReceiptFile
+        uploadReceiptFile,
+        closeFiscalYear
     };
 };

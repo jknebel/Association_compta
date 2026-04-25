@@ -42,7 +42,8 @@ function App() {
         deleteReceipt,
         deleteTransactions,
         globalAiContext,
-        saveGlobalAiContext
+        saveGlobalAiContext,
+        closeFiscalYear
     } = useDataService(user, guestMode);
 
     // Handle new transactions from Upload Agent
@@ -735,6 +736,7 @@ function App() {
                     autoMatchProgress={autoMatchProgress}
                     onGuessMember={handleGuessMember}
                     onAddReceipt={handleAddReceipt}
+                    onCloseFiscalYear={closeFiscalYear}
                 />
             )}
 

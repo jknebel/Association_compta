@@ -19,8 +19,9 @@ interface LedgerViewProps {
   onClearAll: (ids?: string[]) => void;
   onArchiveAll: () => void;
   autoMatchProgress: { current: number, total: number, message: string } | null;
-  onGuessMember: (t: Transaction, accountId: string | undefined) => void;
+  onGuessMember: (t: Transaction) => Promise<string | null>;
   onAddReceipt?: (receipt: import('../../types').Receipt) => void;
+  onCloseFiscalYear: (finalAccounts: Account[], transactionsToArchive: Transaction[]) => Promise<void>;
 }
 
 export const LedgerView: React.FC<LedgerViewProps> = ({
@@ -35,7 +36,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   onArchiveAll,
   autoMatchProgress,
   onGuessMember,
-  onAddReceipt
+  onAddReceipt,
+  onCloseFiscalYear
 }) => {
   const [filter, setFilter] = useState('ALL');
   const [search, setSearch] = useState('');
@@ -931,6 +933,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         loading={isAuditing}
         transactions={transactions}
         accounts={accounts}
+        onCloseFiscalYear={onCloseFiscalYear}
       />
     </div >
   );

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { X, Printer, CheckCircle, AlertTriangle, FileText, Bot, Receipt } from 'lucide-react';
+import { X, Printer, CheckCircle, AlertTriangle, FileText, Bot, Receipt, Archive, Loader2 } from 'lucide-react';
 import { Transaction, Account, AccountType } from '../../types';
 
 interface AuditModalProps {
@@ -10,10 +10,12 @@ interface AuditModalProps {
     loading: boolean;
     transactions: Transaction[];
     accounts: Account[];
+    onCloseFiscalYear: (finalAccounts: Account[], transactionsToArchive: Transaction[]) => Promise<void>;
 }
 
-export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, report, loading, transactions, accounts }) => {
-    const [activeTab, setActiveTab] = useState<'REPORT' | 'AUDIT'>('REPORT');
+export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, report, loading, transactions, accounts, onCloseFiscalYear }) => {
+    const [activeTab, setActiveTab] = useState<'REPORT' | 'AUDIT' | 'CLOSING'>('REPORT');
+    const [isClosing, setIsClosing] = useState(false);
 
     if (!isOpen) return null;
 
@@ -86,6 +88,13 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, report,
                         >
                             <Bot size={16} />
                             Audit IA
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('CLOSING')}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'CLOSING' ? 'bg-white text-orange-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                        >
+                            <Archive size={16} />
+                            Clôture & Archivage
                         </button>
                     </div>
 
@@ -260,6 +269,113 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, report,
                                 <ReactMarkdown>{report}</ReactMarkdown>
                             </div>
                         )}
+                    </div>
+
+                    {/* TAB: CLOSING CONTROL */}
+                    <div className={`${activeTab === 'CLOSING' ? 'block' : 'hidden'} print:hidden p-8`}>
+                        <div className="max-w-4xl mx-auto space-y-8">
+                            <div className="bg-orange-50 border border-orange-200 p-4 rounded-lg flex gap-4 text-orange-800">
+                                <AlertTriangle className="shrink-0" />
+                                <div>
+                                    <h4 className="font-bold">Contrôle de Fin d'Exercice</h4>
+                                    <p className="text-sm">Vérifiez que les soldes calculés par le système correspondent aux soldes réels de vos comptes. La clôture archivera définitivement ces {transactions.length} écritures.</p>
+                                </div>
+                            </div>
+
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="border-b border-slate-200 text-xs uppercase text-slate-500 font-bold">
+                                        <th className="py-3">Compte</th>
+                                        <th className="py-3 text-right">Solde Actuel</th>
+                                        <th className="py-3 text-right">Solde de Clôture Cible</th>
+                                        <th className="py-3 text-right">Écart</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {accounts.filter(a => a.initialBalance !== 0 || transactions.some(t => t.accountId === a.id)).map(acc => {
+                                        const movements = transactions.filter(t => t.accountId === acc.id).reduce((sum, t) => sum + t.amount, 0);
+                                        const calculated = (acc.initialBalance || 0) + movements;
+                                        const target = acc.closingBalance;
+                                        const gap = target !== undefined ? calculated - target : null;
+
+                                        return (
+                                            <tr key={acc.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                                                <td className="py-4">
+                                                    <div className="font-bold text-slate-800">{acc.label}</div>
+                                                    <div className="text-xs text-slate-500 font-mono">{acc.code}</div>
+                                                </td>
+                                                <td className="py-4 text-right font-mono text-slate-700">{calculated.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}</td>
+                                                <td className="py-4 text-right font-mono text-slate-700">
+                                                    {target !== undefined ? target.toLocaleString('fr-CH', { minimumFractionDigits: 2 }) : <span className="text-slate-400 italic">Non défini</span>}
+                                                </td>
+                                                <td className="py-4 text-right">
+                                                    {gap !== null ? (
+                                                        <span className={`font-mono text-sm font-bold px-2 py-1 rounded ${Math.abs(gap) < 0.01 ? 'text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                                            {Math.abs(gap) < 0.01 ? '✓ OK' : `${gap > 0 ? '+' : ''}${gap.toFixed(2)}`}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-slate-400 text-xs italic">Manquant</span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+
+                            <div className="bg-slate-100 p-6 rounded-xl border border-slate-200">
+                                <h4 className="font-bold text-slate-800 mb-4">Actions de Clôture</h4>
+                                <div className="space-y-4">
+                                    <div className="flex items-start gap-3 text-sm text-slate-600">
+                                        <CheckCircle className="text-emerald-500 shrink-0 mt-0.5" size={16} />
+                                        <span>Les {transactions.length} écritures seront marquées comme "Archivées" et n'apparaîtront plus dans le journal courant.</span>
+                                    </div>
+                                    <div className="flex items-start gap-3 text-sm text-slate-600">
+                                        <CheckCircle className="text-emerald-500 shrink-0 mt-0.5" size={16} />
+                                        <span>Le solde de clôture cible deviendra le nouveau solde initial pour l'exercice suivant.</span>
+                                    </div>
+                                    
+                                    <div className="pt-6 border-t border-slate-200 flex flex-col items-center gap-4">
+                                        <p className="text-xs text-slate-500 text-center max-w-md italic">
+                                            Assurez-vous d'avoir imprimé ou sauvegardé votre rapport de clôture avant de valider. 
+                                            Cette action est définitive pour l'organisation des données.
+                                        </p>
+                                        <button
+                                            disabled={isClosing}
+                                            onClick={async () => {
+                                                if (!window.confirm("Êtes-vous sûr de vouloir clôturer l'exercice ?\n\n- Les transactions seront archivées.\n- Le solde initial sera mis à jour.")) return;
+                                                
+                                                setIsClosing(true);
+                                                try {
+                                                    // Prepare final accounts
+                                                    const finalAccounts = accounts.map(acc => {
+                                                        const movements = transactions.filter(t => t.accountId === acc.id).reduce((sum, t) => sum + t.amount, 0);
+                                                        const calculated = (acc.initialBalance || 0) + movements;
+                                                        return {
+                                                            ...acc,
+                                                            initialBalance: acc.closingBalance !== undefined ? acc.closingBalance : calculated,
+                                                            closingBalance: undefined // Reset for next year
+                                                        };
+                                                    });
+                                                    
+                                                    await onCloseFiscalYear(finalAccounts, transactions);
+                                                    alert("Clôture effectuée avec succès ! L'application va redémarrer sur le nouvel exercice.");
+                                                    onClose();
+                                                } catch (e) {
+                                                    alert("Erreur lors de la clôture.");
+                                                } finally {
+                                                    setIsClosing(false);
+                                                }
+                                            }}
+                                            className={`px-8 py-3 rounded-xl font-bold text-lg shadow-xl transition-all flex items-center gap-3 ${isClosing ? 'bg-slate-400 cursor-wait' : 'bg-gradient-to-r from-orange-500 to-rose-600 text-white hover:from-orange-600 hover:to-rose-700 shadow-orange-500/20 hover:scale-105'}`}
+                                        >
+                                            {isClosing ? <Loader2 className="animate-spin" /> : <Archive size={20} />}
+                                            Clôturer & Archiver l'Année
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
