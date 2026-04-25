@@ -711,6 +711,28 @@ Loyer mensuel : Agence Immo Suisse..."
                             <option value="">(Compte Principal)</option>
                             {potentialParents.map(p => <option key={p.id} value={p.id}>{p.code} - {p.label}</option>)}
                           </select>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-slate-500 block mb-1">Solde Initial</label>
+                              <input 
+                                type="number" 
+                                value={data.initialBalance || 0} 
+                                onChange={(e) => handleChange('initialBalance', parseFloat(e.target.value))} 
+                                className="w-full bg-slate-950 text-emerald-400 border border-slate-700 rounded px-2 py-1 text-xs" 
+                                placeholder="0.00"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-500 block mb-1">Solde de Clôture</label>
+                              <input 
+                                type="number" 
+                                value={data.closingBalance || ''} 
+                                onChange={(e) => handleChange('closingBalance', e.target.value ? parseFloat(e.target.value) : undefined)} 
+                                className="w-full bg-slate-950 text-blue-400 border border-slate-700 rounded px-2 py-1 text-xs" 
+                                placeholder="Non défini"
+                              />
+                            </div>
+                          </div>
                         </div>
                       ) : (
                         <div className="flex flex-col">
@@ -731,6 +753,20 @@ Loyer mensuel : Agence Immo Suisse..."
                             </div>
                           )}
                           <div className={`text-xs text-slate-500 mt-1 ${level === 3 ? 'pl-8' : ''}`}>{data.description}</div>
+                          {(data.initialBalance !== undefined || data.closingBalance !== undefined) && (
+                            <div className={`flex gap-3 mt-2 ${level === 3 ? 'pl-8' : level === 2 ? 'pl-4' : ''}`}>
+                              {data.initialBalance !== undefined && (
+                                <span className="text-[10px] bg-emerald-950/30 text-emerald-500 border border-emerald-900/50 px-1.5 py-0.5 rounded">
+                                  Initial: {data.initialBalance.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}
+                                </span>
+                              )}
+                              {data.closingBalance !== undefined && (
+                                <span className="text-[10px] bg-blue-950/30 text-blue-500 border border-blue-900/50 px-1.5 py-0.5 rounded">
+                                  Clôture: {data.closingBalance.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
                     </td>

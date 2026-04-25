@@ -67,6 +67,8 @@ class Account(BaseModel):
     description: Optional[str] = None
     isMembership: bool = False
     iaContext: Optional[str] = None
+    initialBalance: float = 0.0
+    closingBalance: Optional[float] = None
 
 class Transaction(BaseModel):
     id: Optional[str] = None
