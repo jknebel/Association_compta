@@ -45,6 +45,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   const [endDate, setEndDate] = useState('');
   const [minAmount, setMinAmount] = useState('');
   const [maxAmount, setMaxAmount] = useState('');
+  const [accountFilter, setAccountFilter] = useState('');
 
   // Editing State
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -100,7 +101,11 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     if (minAmount !== '' && t.amount < Number(minAmount)) matchesAmount = false;
     if (maxAmount !== '' && t.amount > Number(maxAmount)) matchesAmount = false;
 
-    return matchesFilter && matchesSearch && matchesDate && matchesAmount;
+    // Account filter
+    let matchesAccount = true;
+    if (accountFilter && t.accountId !== accountFilter) matchesAccount = false;
+
+    return matchesFilter && matchesSearch && matchesDate && matchesAmount && matchesAccount;
   }).sort((a, b) => dateToTimestamp(b.date) - dateToTimestamp(a.date));
 
   const clearFilters = () => {
@@ -110,6 +115,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     setEndDate('');
     setMinAmount('');
     setMaxAmount('');
+    setAccountFilter('');
   };
 
   const startEditing = (t: Transaction) => {
@@ -448,6 +454,32 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
           <div className="hidden md:block w-px h-6 bg-slate-800"></div>
 
+          {/* Account Filter */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 text-slate-500 min-w-fit">
+              <Filter size={16} />
+              <span className="text-sm font-medium">Compte:</span>
+            </div>
+            <select
+              value={accountFilter}
+              onChange={(e) => setAccountFilter(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200 w-48"
+            >
+              <option value="">Tous les comptes</option>
+              {accounts
+                .filter(a => a.type !== AccountType.MIXED)
+                .sort((a, b) => a.code.localeCompare(b.code))
+                .map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.code} - {acc.label}
+                  </option>
+                ))
+              }
+            </select>
+          </div>
+
+          <div className="hidden md:block w-px h-6 bg-slate-800"></div>
+
           {/* Amount Range */}
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 text-slate-500 min-w-fit">
@@ -473,7 +505,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
           {/* Active Filters Clear Button */}
           {
-            (startDate || endDate || minAmount || maxAmount || search || filter !== 'ALL') && (
+            (startDate || endDate || minAmount || maxAmount || search || filter !== 'ALL' || accountFilter) && (
               <button
                 onClick={clearFilters}
                 className="ml-auto flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg transition-colors"
