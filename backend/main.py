@@ -298,6 +298,7 @@ def pre_parser_node(state: AgentState):
     
     starting_bal = 0.0
     total_dates = 0
+    cleaned_pages = []
     
     for page_text in state.raw_pages:
         lines = page_text.split('\n')

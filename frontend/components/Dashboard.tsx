@@ -45,6 +45,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
     .filter(d => d.value > 0);
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
+  
+  // 4. State for Balance Editing Modal
+  const [editingAccount, setEditingAccount] = React.useState<Account | null>(null);
+  const [tempBalance, setTempBalance] = React.useState<number>(0);
 
   // --- HELPERS ---
 
@@ -154,20 +158,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
         <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-lg border-l-4 border-l-blue-500">
           <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Solde à l'ouverture</h3>
           {accounts.filter(a => a.type === AccountType.ASSET).slice(0, 1).map(acc => (
-            <div key={acc.id} className="mt-1 flex items-baseline">
+            <div key={acc.id} className="mt-1 flex items-baseline group cursor-pointer" onClick={() => {
+                setEditingAccount(acc);
+                setTempBalance(acc.initialBalance || 0);
+            }}>
               <span className="text-slate-500 text-xs mr-1">CHF</span>
-              <input 
-                type="number" 
-                step="0.01" 
-                defaultValue={acc.initialBalance || 0} 
-                onBlur={(e) => {
-                  const val = parseFloat(e.target.value);
-                  if (!isNaN(val) && val !== acc.initialBalance) onUpdateAccount({ ...acc, initialBalance: val });
-                }}
-                className="bg-transparent border-b border-slate-800 hover:border-slate-600 focus:border-blue-500 text-xl font-black text-white w-24 focus:outline-none transition-colors"
-              />
+              <span className="text-xl font-black text-white group-hover:text-blue-400 transition-colors">
+                {formatAmount(acc.initialBalance || 0)}
+              </span>
+              <Edit2 size={12} className="ml-2 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
           ))}
+          {accounts.filter(a => a.type === AccountType.ASSET).length === 0 && (
+            <p className="text-xs text-slate-500 mt-2 italic">Aucun compte ACTIF défini.</p>
+          )}
         </div>
 
         <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-lg">
@@ -351,6 +355,46 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
           </table>
         </div>
       </div>
+
+      {/* BALANCE EDIT MODAL */}
+      {editingAccount && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-blue-500/30 rounded-2xl p-8 max-w-sm w-full shadow-2xl animate-in fade-in zoom-in duration-200">
+            <h3 className="text-xl font-bold text-white mb-2">Modifier le Solde Initial</h3>
+            <p className="text-slate-400 text-sm mb-6">Compte : {editingAccount.label} ({editingAccount.code})</p>
+            
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 mb-6">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Nouveau Solde (CHF)</label>
+                <input 
+                    type="number"
+                    step="0.01"
+                    autoFocus
+                    value={tempBalance}
+                    onChange={(e) => setTempBalance(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-transparent text-2xl font-black text-emerald-400 focus:outline-none"
+                />
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setEditingAccount(null)}
+                className="px-6 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors text-sm font-medium"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={async () => {
+                  await onUpdateAccount({ ...editingAccount, initialBalance: tempBalance });
+                  setEditingAccount(null);
+                }}
+                className="px-6 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-500 font-bold shadow-lg shadow-blue-900/40 transition-all text-sm"
+              >
+                Confirmer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
