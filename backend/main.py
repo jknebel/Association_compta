@@ -675,9 +675,10 @@ def foreman_consensus_node(state: AgentState):
             real_txns.append(t)
     
     # --- VÉRIFICATION DE LA CHAÎNE MATHÉMATIQUE ---
-    # On initialise avec le solde de départ extrait par le pré-parser
     current_balance = state.starting_balance
     last_description = "SOLDE INITIAL"
+    ghost_count = 0
+    MAX_GHOSTS = 30
     
     # On utilise une liste temporaire pour la validation
     verified_txns_internal = []

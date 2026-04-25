@@ -116,7 +116,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
             {formatAmount(balance)}
           </td>
           <td className={`px-6 py-3 text-right font-bold font-mono ${total >= 0 ? 'text-emerald-400' : 'text-rose-400'} bg-slate-950/30`}>
-            {depth === 0 ? formatAmount(total) : ''}
+            {formatAmount(total)}
           </td>
         </tr>
         {children.sort((a, b) => a.code.localeCompare(b.code)).map(child => renderAccountRow(child, depth + 1))}
