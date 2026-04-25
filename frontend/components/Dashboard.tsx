@@ -1,6 +1,6 @@
 import React from 'react';
 import { Account, Transaction, AccountType, TransactionStatus } from '../../types';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 interface DashboardProps {
   transactions: Transaction[];
@@ -124,12 +124,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
     <div className="p-8 max-w-7xl mx-auto space-y-8 text-slate-200">
       <header className="flex justify-between items-end mb-8">
         <div>
-          <h2 className="text-3xl font-bold text-white">Tableau de Bord</h2>
-          <p className="text-slate-400">Situation financière basée sur les transactions validées.</p>
+          <h2 className="text-3xl font-bold text-white">Vue d'ensemble financière</h2>
+          <p className="text-slate-400">Analyse en temps réel de la santé de votre association.</p>
         </div>
         <div className="text-right">
-          <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Date du jour</div>
-          <div className="text-slate-200 font-mono">{new Date().toLocaleDateString('fr-CH')}</div>
+          <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Exercice en cours</div>
+          <div className="text-slate-200 font-mono">{new Date().getFullYear()}</div>
         </div>
       </header>
 
@@ -205,8 +205,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl h-80">
-          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Répartition des Charges</h3>
+        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl h-[400px]">
+          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Dépenses par Catégorie</h3>
           {expenseChartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -215,7 +215,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
                   cx="50%"
                   cy="50%"
                   innerRadius={60}
-                  outerRadius={80}
+                  outerRadius={100}
                   paddingAngle={5}
                   dataKey="value"
                   label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
@@ -233,30 +233,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
           ) : <div className="h-full flex items-center justify-center text-slate-600 italic">Aucune donnée</div>}
         </div>
 
-        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl h-80">
-          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Répartition des Produits</h3>
+        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl h-[400px]">
+          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Sources de Revenus</h3>
           {incomeChartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={incomeChartData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                >
-                  {incomeChartData.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
+              <BarChart
+                data={incomeChartData}
+                layout="vertical"
+                margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                <XAxis type="number" stroke="#64748b" fontSize={10} />
+                <YAxis dataKey="name" type="category" stroke="#64748b" fontSize={10} width={100} />
                 <Tooltip 
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}
-                  itemStyle={{ color: '#f1f5f9' }}
+                   contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}
+                   itemStyle={{ color: '#f1f5f9' }}
                 />
-              </PieChart>
+                <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} />
+              </BarChart>
             </ResponsiveContainer>
           ) : <div className="h-full flex items-center justify-center text-slate-600 italic">Aucune donnée</div>}
         </div>
