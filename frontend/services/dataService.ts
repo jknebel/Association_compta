@@ -57,6 +57,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [receipts, setReceipts] = useState<Receipt[]>([]);
+    const [globalAiContext, setGlobalAiContext] = useState<string>("");
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -68,10 +69,12 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             const savedAcc = localStorage.getItem('asso_compta_accounts_v5');
             const savedTxn = localStorage.getItem('asso_compta_transactions_v5');
             const savedRcpt = localStorage.getItem('asso_compta_receipts_v5');
+            const savedContext = localStorage.getItem('asso_compta_ai_context_v5');
 
             if (savedAcc) setAccounts(JSON.parse(savedAcc));
             if (savedTxn) setTransactions(JSON.parse(savedTxn));
             if (savedRcpt) setReceipts(JSON.parse(savedRcpt));
+            if (savedContext) setGlobalAiContext(savedContext);
 
             setLoading(false);
             return;
@@ -110,15 +113,29 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             (snapshot) => {
                 const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Receipt));
                 setReceipts(data);
-                setLoading(false);
             },
             (err) => setError(err.message)
+        );
+
+        const unsubAiConfig = onSnapshot(
+            doc(db, "users", user.uid, "settings", "aiConfig"),
+            (docSnap) => {
+                if (docSnap.exists()) {
+                    setGlobalAiContext(docSnap.data().context || "");
+                }
+                setLoading(false);
+            },
+            (err) => {
+                console.warn("AiConfig fetch error (might not exist yet):", err);
+                setLoading(false);
+            }
         );
 
         return () => {
             unsubAccounts();
             unsubTransactions();
             unsubReceipts();
+            unsubAiConfig();
         };
     }, [user, shouldUseLocalStorage]);
 
@@ -244,77 +261,94 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         }
     };
 
-    const deleteAllTransactions = async () => {
+    const deleteTransactions = async (ids?: string[]) => {
         if (shouldUseLocalStorage) {
-            localStorage.removeItem('asso_compta_transactions_v5');
-            setTransactions([]);
-
-            // Unlink receipts in local storage
-            setReceipts(prev => {
-                const newR = prev.map(r => r.linkedTransactionId ? { ...r, linkedTransactionId: undefined } : r);
-                localStorage.setItem('asso_compta_receipts_v5', JSON.stringify(newR));
-                return newR;
-            });
+            if (!ids) {
+                // DELETE ALL
+                localStorage.removeItem('asso_compta_transactions_v5');
+                setTransactions([]);
+                // Unlink receipts
+                setReceipts(prev => {
+                    const newR = prev.map(r => r.linkedTransactionId ? { ...r, linkedTransactionId: undefined } : r);
+                    localStorage.setItem('asso_compta_receipts_v5', JSON.stringify(newR));
+                    return newR;
+                });
+            } else {
+                // DELETE SELECTIVE
+                setTransactions(prev => {
+                    const newTxns = prev.filter(t => !ids.includes(t.id));
+                    localStorage.setItem('asso_compta_transactions_v5', JSON.stringify(newTxns));
+                    return newTxns;
+                });
+                setReceipts(prev => {
+                    const newR = prev.map(r => (r.linkedTransactionId && ids.includes(r.linkedTransactionId)) ? { ...r, linkedTransactionId: undefined } : r);
+                    localStorage.setItem('asso_compta_receipts_v5', JSON.stringify(newR));
+                    return newR;
+                });
+            }
             return;
         }
         if (user) {
-            // Function to commit batches in chunks
-            const commitBatch = async (batchOp: any) => {
-                await batchOp.commit();
-            };
-
-            const qTxns = query(collection(db, "users", user.uid, "transactions"));
-            const snapshotTxns = await getDocs(qTxns);
-
-            let batch = writeBatch(db);
-            let count = 0;
-            const validBatches = [];
-
             try {
+                let docsToDelete = [];
+                if (!ids) {
+                    const qTxns = query(collection(db, "users", user.uid, "transactions"));
+                    const snapshotTxns = await getDocs(qTxns);
+                    docsToDelete = snapshotTxns.docs.map(d => d.ref);
+                } else {
+                    docsToDelete = ids.map(id => doc(db, "users", user.uid, "transactions", id));
+                }
+
+                if (docsToDelete.length === 0) return;
+
+                let batch = writeBatch(db);
+                let count = 0;
+                
                 // 1. Delete Transactions
-                for (const documentSnapshot of snapshotTxns.docs) {
-                    batch.delete(documentSnapshot.ref);
+                for (const ref of docsToDelete) {
+                    batch.delete(ref);
                     count++;
                     if (count >= 400) {
-                        validBatches.push(batch);
+                        await batch.commit();
                         batch = writeBatch(db);
                         count = 0;
                     }
                 }
 
-                // 2. Unlink Receipts
-                const qReceipts = query(collection(db, "users", user.uid, "receipts"));
-                const snapshotReceipts = await getDocs(qReceipts);
-
-                for (const documentSnapshot of snapshotReceipts.docs) {
-                    const data = documentSnapshot.data();
-                    if (data.linkedTransactionId) {
-                        batch.update(documentSnapshot.ref, { linkedTransactionId: deleteField() });
-                        count++;
-                        if (count >= 400) {
-                            validBatches.push(batch);
-                            batch = writeBatch(db);
-                            count = 0;
+                // 2. Unlink Receipts (only if full delete, otherwise too complex for now or we just let it be)
+                if (!ids) {
+                    const qReceipts = query(collection(db, "users", user.uid, "receipts"));
+                    const snapshotReceipts = await getDocs(qReceipts);
+                    for (const documentSnapshot of snapshotReceipts.docs) {
+                        const data = documentSnapshot.data();
+                        if (data.linkedTransactionId) {
+                            batch.update(documentSnapshot.ref, { linkedTransactionId: deleteField() });
+                            count++;
+                            if (count >= 400) {
+                                await batch.commit();
+                                batch = writeBatch(db);
+                                count = 0;
+                            }
                         }
                     }
                 }
 
-                // Commit pending
-                if (count > 0) {
-                    validBatches.push(batch);
-                }
-
-                console.log(`Deleting ${snapshotTxns.size} transactions and unlinking receipts in ${validBatches.length} batches.`);
-
-                // Execute all batches
-                for (const b of validBatches) {
-                    await b.commit();
-                }
-                console.log("Deletion complete.");
+                if (count > 0) await batch.commit();
             } catch (error) {
                 console.error("Error deleting transactions:", error);
-                throw error; // Propagate to caller
+                throw error;
             }
+        }
+    };
+
+    const saveGlobalAiContext = async (text: string) => {
+        if (shouldUseLocalStorage) {
+            localStorage.setItem('asso_compta_ai_context_v5', text);
+            setGlobalAiContext(text);
+            return;
+        }
+        if (user) {
+            await setDoc(doc(db, "users", user.uid, "settings", "aiConfig"), { context: text }, { merge: true });
         }
     };
 
@@ -398,7 +432,9 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         saveTransaction,
         saveTransactions,
         deleteTransaction,
-        deleteAllTransactions,
+        deleteTransactions,
+        saveGlobalAiContext,
+        globalAiContext,
         saveReceipt, // Exposed
         deleteReceipt, // Exposed
         uploadReceiptFile

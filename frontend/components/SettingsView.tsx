@@ -10,6 +10,8 @@ import * as LucideIcons from 'lucide-react';
 interface SettingsViewProps {
   accounts: Account[];
   onUpdateAccounts: (accounts: Account[]) => Promise<void> | void;
+  globalContext?: string;
+  onSaveContext?: (text: string) => Promise<void> | void;
 }
 
 // Dynamic Icon Loading Helper
@@ -29,11 +31,23 @@ const COMMON_ICONS = [
   'Camera', 'Smartphone', 'Sun', 'Moon', 'Star'
 ];
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ accounts, onUpdateAccounts }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ 
+  accounts, 
+  onUpdateAccounts,
+  globalContext,
+  onSaveContext
+}) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tempAccount, setTempAccount] = useState<Account | null>(null);
   const [showIconSelector, setShowIconSelector] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [tempAiContext, setTempAiContext] = useState(globalContext || "");
+
+  // Sync temp context when global props changes
+  useEffect(() => {
+    setTempAiContext(globalContext || "");
+  }, [globalContext]);
 
   // IMPORT STATE
   const [pendingImport, setPendingImport] = useState<Account[] | null>(null);
@@ -425,6 +439,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ accounts, onUpdateAc
           <button onClick={handleExportConfig} className="flex items-center gap-2 px-3 py-2 bg-slate-800 text-slate-300 rounded border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors text-sm font-medium">
             <Download size={16} /> Exporter JSON
           </button>
+          <button 
+            onClick={() => setShowAiModal(true)} 
+            className="flex items-center gap-2 px-3 py-2 bg-indigo-900/30 text-indigo-300 rounded border border-indigo-500/30 hover:bg-indigo-900/50 hover:text-white transition-all text-sm font-bold shadow-lg shadow-indigo-950/20 ml-2"
+          >
+            <LucideIcons.Sparkles size={16} /> Informations IA
+          </button>
         </div>
       </header>
 
@@ -503,6 +523,71 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ accounts, onUpdateAc
               >
                 <CheckCircle size={16} />
                 Confirmer le Remplacement
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI CONTEXT MODAL */}
+      {showAiModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-indigo-500/30 rounded-2xl p-8 max-w-2xl w-full shadow-2xl animate-in fade-in zoom-in duration-300">
+            <div className="flex justify-between items-start mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-600 rounded-lg">
+                    <LucideIcons.Sparkles className="text-white" size={20} />
+                </div>
+                <div>
+                    <h3 className="text-xl font-bold text-white">Mémoire et Instructions IA</h3>
+                    <p className="text-slate-400 text-sm">Aidez l'IA à classer vos transactions avec vos propres règles.</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                   setShowAiModal(false);
+                   setTempAiContext(globalContext || "");
+                }} 
+                className="text-slate-500 hover:text-white transition-colors p-1"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4 mb-6">
+                <p className="text-sm text-slate-300 leading-relaxed">
+                    Copiez ici toute information utile : liste des membres, noms des fournisseurs récurrents, ou règles spécifiques (ex: "Le paiement 'Netflix' va toujours dans le compte 6500").
+                </p>
+                <textarea 
+                    value={tempAiContext}
+                    onChange={(e) => setTempAiContext(e.target.value)}
+                    placeholder="Ex: Liste des membres : Jean Dupont, Marie Curie... 
+Loyer mensuel : Agence Immo Suisse..."
+                    className="w-full h-64 bg-slate-950 border border-slate-700 rounded-xl p-4 text-slate-200 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none scrollbar-thin scrollbar-thumb-indigo-900"
+                />
+            </div>
+
+            <div className="flex gap-3 justify-end pt-4 border-t border-slate-800">
+              <button
+                onClick={() => {
+                  setShowAiModal(false);
+                  setTempAiContext(globalContext || "");
+                }}
+                className="px-6 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors text-sm font-medium"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={async () => {
+                  if (onSaveContext) {
+                    await onSaveContext(tempAiContext);
+                  }
+                  setShowAiModal(false);
+                }}
+                className="px-6 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 font-bold shadow-lg shadow-indigo-900/40 transition-all text-sm flex items-center gap-2"
+              >
+                <Save size={18} />
+                Enregistrer pour l'IA
               </button>
             </div>
           </div>

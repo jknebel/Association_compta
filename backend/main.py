@@ -15,6 +15,7 @@ from pydantic import BaseModel
 # Firebase Admin (Server Side)
 import firebase_admin
 from firebase_admin import credentials, firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 # LangChain / LangGraph
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -144,7 +145,7 @@ def get_user_history_context(user_id: str, limit: int = 200) -> str:
         # Search for transactions with an assigned accountId (validated by human or confident AI)
         docs = (
             db.collection("users").document(user_id).collection("transactions")
-            .where("accountId", "!=", None)
+            .where(filter=FieldFilter("accountId", "!=", None))
             .order_by("accountId") # Required by Firestore for != clauses
             .order_by("date", direction=firestore.Query.DESCENDING)
             .limit(limit)
@@ -184,6 +185,7 @@ class AgentState(BaseModel):
     classification_a_txns: Annotated[List[Transaction], operator.add] = []
     classification_b_txns: Annotated[List[Transaction], operator.add] = []
     page_count: int = 0
+    global_context: str = ""
     logs: Annotated[List[str], operator.add] = []
 
 def vision_node(state: AgentState):
@@ -591,10 +593,17 @@ def classifier_a_node(state: AgentState):
     print("--- [Agent: CLASSIFIER_A][INPUT_START] ---")
     history_context = get_user_history_context(state.user_id)
     accounts = state.existing_accounts
-    accounts_info = "\n".join([f"ID: {a.id} | Code: {a.code} | Nom: {a.label}" for a in accounts])
+    accounts_info = "\n".join([
+        f"ID: {a.id} | Code: {a.code} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'}" 
+        for a in accounts
+    ])
     
     prompt = f"""
     Tu es le Comptable A. Ta spécialité est le rapprochement par HISTORIQUE.
+    
+    CONTEXTE GLOBAL DE L'ASSOCIATION :
+    {state.global_context or "Aucun contexte particulier."}
+    
     MODÈLES PASSÉS :
     {history_context}
     
@@ -621,16 +630,29 @@ def classifier_b_node(state: AgentState):
     """Classifier B: Contextual extraction (members, specific keywords)."""
     print("--- [Agent: CLASSIFIER_B][INPUT_START] ---")
     accounts = state.existing_accounts
-    accounts_info = "\n".join([f"ID: {a.id} | Nom: {a.label}" for a in accounts])
+    accounts_info = "\n".join([
+        f"ID: {a.id} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'}" 
+        for a in accounts
+    ])
     
     prompt = f"""
     Tu es le Comptable B. Ta spécialité est l'analyse des DÉTAILS (fullRawText).
+    
+    CONTEXTE GLOBAL DE L'ASSOCIATION :
+    {state.global_context or "Aucun contexte particulier."}
+    
     PLAN COMPTABLE :
     {accounts_info}
     
-    RÈGLES :
-    1. Cherche les noms de membres dans 'fullRawText' et extrais-les dans 'detectedMemberName'.
-    2. Si 'fullRawText' contient "COTISATION" ou "ADHESION", utilise le compte correspondant.
+    RÈGLES DE CLASSIFICATION :
+    1. Si un compte est marqué 'Suivi: OUI', il s'agit d'un compte de membres (cotisations). 
+       Pour ces transactions, tu DOIS extraire le nom du membre dans 'detectedMemberName'.
+       Priorité pour trouver le nom : 
+       a) Dans le texte de communication ou la description.
+       b) Si rien n'est trouvé, cherche le nom de la personne ayant fait le virement (ex: "Virement de Jean Dupont").
+    2. Si 'fullRawText' contient des mots comme "COTISATION", "ADHESION", ou "MEMBRE", utilise en priorité le compte marqué 'Suivi: OUI'.
+    3. Pour les autres transactions, utilise le nom (label) et la description du compte pour trouver la meilleure correspondance.
+    4. Signes : Un montant négatif (-) est une CHARGE, un montant positif (+) est un PRODUIT.
     
     TRANSACTIONS À CLASSER (JSON) :
     {json.dumps([t.model_dump() for t in state.extracted_transactions])}
@@ -667,6 +689,13 @@ def classification_consensus_node(state: AgentState):
             if tb.detectedMemberName:
                 txn.detectedMemberName = tb.detectedMemberName
         
+        # Priority Fallback: If a member name is detected but no account is assigned,
+        # assign the first available membership account.
+        if txn.detectedMemberName and not txn.accountId:
+            membership_acc = next((a for a in state.existing_accounts if a.isMembership), None)
+            if membership_acc:
+                txn.accountId = membership_acc.id
+
         # Final safety check: validate accountId exists
         valid_ids = {a.id for a in state.existing_accounts}
         if txn.accountId and txn.accountId not in valid_ids:
@@ -737,10 +766,12 @@ def health_check():
 async def process_statement(
     file: UploadFile = File(...),
     accounts: str = Form(...),
-    userId: str = Form(...) 
+    userId: str = Form(...),
+    context: Optional[str] = Form("")
 ):
     try:
         print(f"Processing file: {file.filename} for user: {userId}")
+        print(f"Global Context length: {len(context) if context else 0}")
         content = await file.read()
         b64_pdf = base64.b64encode(content).decode("utf-8")
         
@@ -755,7 +786,8 @@ async def process_statement(
         initial_state = AgentState(
             user_id=userId,
             pdf_base64=b64_pdf,
-            existing_accounts=accounts_list
+            existing_accounts=accounts_list,
+            global_context=context or ""
         )
         
         output = compiled_app.invoke(initial_state)

@@ -14,9 +14,10 @@ interface UploadViewProps {
   user: User | null; // Pass user for API Context
   onProcessComplete: (newTransactions: Transaction[], newAccounts: Account[], matchedReceiptIds: string[]) => void;
   onProcessingChange?: (isProcessing: boolean) => void;
+  globalContext?: string;
 }
 
-export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, receipts, user, onProcessComplete, onProcessingChange }) => {
+export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, receipts, user, onProcessComplete, onProcessingChange, globalContext }) => {
   const [activeMode, setActiveMode] = useState<'PDF' | 'EXCEL'>('PDF');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,7 +92,7 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
             const base64Data = (reader.result as string).split(',')[1];
             try {
               const userId = user ? user.uid : "guest";
-              const result = await parseBankStatementPDF(base64Data, accounts, transactions, userId);
+              const result = await parseBankStatementPDF(base64Data, accounts, transactions, userId, globalContext);
               if (!result || !result.transactions) throw new Error("Échec de l'extraction des transactions.");
 
               rawTransactions = result.transactions.map((t: any, idx: number) => ({

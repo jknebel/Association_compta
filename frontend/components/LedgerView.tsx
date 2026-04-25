@@ -16,7 +16,7 @@ interface LedgerViewProps {
   onDeleteTransaction: (id: string) => void;
   onAutoMatch: () => void;
   onReanalyzeAll: () => void;
-  onClearAll: () => void;
+  onClearAll: (ids?: string[]) => void;
   onArchiveAll: () => void;
   autoMatchProgress: { current: number, total: number, message: string } | null;
   onGuessMember: (t: Transaction, accountId: string | undefined) => void;
@@ -368,9 +368,9 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
           <button
             className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
-            onClick={onClearAll}
+            onClick={() => onClearAll(filteredTransactions.map(t => t.id))}
             disabled={!!autoMatchProgress}
-            title="Supprimer TOUTES les transactions pour recommencer"
+            title={transactions.length === filteredTransactions.length ? "Supprimer TOUTES les transactions" : "Supprimer uniquement les transactions FILTRÉES"}
           >
             <Trash2 size={16} />
             Tout Effacer

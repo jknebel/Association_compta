@@ -40,7 +40,9 @@ function App() {
         deleteTransaction,
         saveReceipt,
         deleteReceipt,
-        deleteAllTransactions
+        deleteTransactions,
+        globalAiContext,
+        saveGlobalAiContext
     } = useDataService(user, guestMode);
 
     // Handle new transactions from Upload Agent
@@ -312,18 +314,23 @@ function App() {
         setTimeout(() => setAutoMatchProgress(null), 2000);
     };
 
-    const handleClearAllTransactions = async () => {
-        if (!confirm("ATTENTION : Vous êtes sur le point de supprimer DÉFINITIVEMENT toutes les transactions.\n\nCette action est irréversible. Voulez-vous continuer ?")) {
-            return;
-        }
+    const handleClearTransactions = async (ids?: string[]) => {
+        const count = ids ? ids.length : transactions.length;
+        if (count === 0) return;
 
-        if (!confirm("Êtes-vous vraiment sûr ? Cela effacera toutes les transactions, ainsi que les membres détectés associés et les liens avec les justificatifs.")) {
+        const msg = ids 
+            ? `Voulez-vous vraiment supprimer les ${count} transactions sélectionnées/filtrées ?`
+            : "ATTENTION : Vous êtes sur le point de supprimer DÉFINITIVEMENT toutes les transactions.";
+        
+        if (!confirm(msg)) return;
+
+        if (!ids && !confirm("Êtes-vous vraiment sûr ? Cela effacera toutes les transactions, ainsi que les membres détectés associés et les liens avec les justificatifs.")) {
             return;
         }
 
         try {
-            await deleteAllTransactions();
-            alert("Toutes les transactions ont été supprimées.");
+            await deleteTransactions(ids);
+            alert(ids ? `${count} transactions supprimées.` : "Toutes les transactions ont été supprimées.");
         } catch (error) {
             console.error(error);
             alert("Une erreur est survenue lors de la suppression. Vérifiez la console.");
@@ -700,6 +707,7 @@ function App() {
                     user={user}
                     onProcessComplete={handleProcessComplete}
                     onProcessingChange={setIsUploading}
+                    globalContext={globalAiContext}
                 />
             )}
 
@@ -722,7 +730,7 @@ function App() {
                     onDeleteTransaction={handleDeleteTransaction}
                     onAutoMatch={handleRunAutoMatching}
                     onReanalyzeAll={handleReanalyzeAll}
-                    onClearAll={handleClearAllTransactions}
+                    onClearAll={handleClearTransactions}
                     onArchiveAll={handleArchiveAllTransactions}
                     autoMatchProgress={autoMatchProgress}
                     onGuessMember={handleGuessMember}
@@ -737,7 +745,12 @@ function App() {
             )}
 
             {activeTab === 'settings' && (
-                <SettingsView accounts={accounts} onUpdateAccounts={handleUpdateAccounts} />
+                <SettingsView 
+                    accounts={accounts} 
+                    onUpdateAccounts={handleUpdateAccounts} 
+                    globalContext={globalAiContext}
+                    onSaveContext={saveGlobalAiContext}
+                />
             )}
 
             {/* View Python removed */}

@@ -94,8 +94,9 @@ export const processReceiptBackend = async (
 export const parseBankStatementPDF = async (
   base64Pdf: string,
   existingAccounts: Account[],
-  historyTransactions: Transaction[] = [], // Not used in new backend flow (handled by backend DB lookup) but kept for signature compat
-  userId: string = "guest"
+  historyTransactions: Transaction[] = [],
+  userId: string = "guest",
+  globalContext: string = ""
 ): Promise<{ transactions: any[], newAccounts: any[] }> => {
 
   // Create Form Data (Specific handling for file upload)
@@ -113,6 +114,7 @@ export const parseBankStatementPDF = async (
   formData.append('file', blob, 'statement.pdf');
   formData.append('accounts', JSON.stringify(existingAccounts));
   formData.append('userId', userId);
+  formData.append('globalContext', globalContext);
 
   try {
     const response = await fetch(`${API_URL}/process-bank-statement`, {
