@@ -679,6 +679,7 @@ def foreman_consensus_node(state: AgentState):
     last_description = "SOLDE INITIAL"
     ghost_count = 0
     MAX_GHOSTS = 30
+    chain_broken_msg = None
     
     # On utilise une liste temporaire pour la validation
     verified_txns_internal = []
