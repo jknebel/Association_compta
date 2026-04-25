@@ -114,7 +114,7 @@ export const parseBankStatementPDF = async (
   formData.append('file', blob, 'statement.pdf');
   formData.append('accounts', JSON.stringify(existingAccounts));
   formData.append('userId', userId);
-  formData.append('globalContext', globalContext);
+  formData.append('context', globalContext);
 
   try {
     const response = await fetch(`${API_URL}/process-bank-statement`, {

@@ -828,6 +828,8 @@ async def process_statement(
     try:
         print(f"Processing file: {file.filename} for user: {userId}")
         print(f"Global Context length: {len(context) if context else 0}")
+        if context:
+            print(f"Global Context preview: {context[:200]}...")
         content = await file.read()
         b64_pdf = base64.b64encode(content).decode("utf-8")
         
@@ -835,6 +837,11 @@ async def process_statement(
         try:
             raw_accounts = json.loads(accounts)
             accounts_list = [Account(**a) for a in raw_accounts]
+            # Log accounts with iaContext for debugging
+            accounts_with_context = [a for a in accounts_list if a.iaContext]
+            print(f"Accounts received: {len(accounts_list)} total, {len(accounts_with_context)} with iaContext")
+            for a in accounts_with_context:
+                print(f"  Account '{a.label}' (ID: {a.id}) iaContext: {a.iaContext[:80]}...")
         except Exception as e:
             print(f"Account parsing error: {e}")
             raise HTTPException(status_code=400, detail="Invalid accounts JSON format")
