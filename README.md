@@ -17,8 +17,9 @@
 ## ✨ Fonctionnalités Clés
 
 - **🤖 Pipeline Multi-Agents (LangGraph)** : Extraction robuste des relevés bancaires avec double vérification (Workers A/B) et audit d'intégrité.
+- **🧠 Raisonnement IA Avancé (Chain of Thought)** : Les agents classifieurs (A et B) justifient chaque choix de compte (transaction par transaction), permettant au Juge IA de prendre des décisions finales éclairées.
+- **🎯 Contexte Métier Dynamique** : Injection de règles spécifiques (ex: instructions de cotisations, gestion des membres) directement dans l'invite des agents via un contexte global.
 - **📄 Vision Intelligence** : Analyse visuelle des reçus et factures pour extraire montants, dates et libellés.
-- **🧠 Apprentissage par l'Historique** : Système de classification intelligent qui apprend de vos validations passées pour suggérer les bons comptes.
 - **💬 Chat Expert** : Posez des questions sur votre comptabilité en langage naturel et obtenez des réponses basées sur vos données réelles.
 - **📊 Ledger Dynamique** : Visualisation en temps réel de la balance, filtrage intelligent et export Excel.
 - **🔒 Sécurisé & Cloud** : Authentification et stockage temps réel via Firebase.
@@ -41,12 +42,12 @@ graph TD
     D & E & F & G --> H[Agent Audit d'Intégrité]
     H --> I[Agent Foreman: Consensus]
     
-    I --> J{Classification}
-    J --> K[Comptable A: Historique]
-    J --> L[Comptable B: Contextuel]
+    I --> J{Classification Avancée}
+    J --> K[Comptable A: Historique + Reasoning]
+    J --> L[Comptable B: Contexte + Membres + Reasoning]
     
-    K & L --> M[Agent Judge: Harmonisation]
-    M --> N[🚀 Transactions Validées]
+    K & L --> M[Agent Judge: Superviseur LLM]
+    M --> N[🚀 Transactions Validées avec Justifications]
 ```
 
 ---
