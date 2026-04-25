@@ -698,7 +698,14 @@ function App() {
                 </div>
             )}
 
-            {activeTab === 'dashboard' && <Dashboard transactions={transactions} accounts={accounts} onUpdateAccount={saveAccount} />}
+            {activeTab === 'dashboard' && (
+                <Dashboard 
+                    transactions={transactions} 
+                    accounts={accounts} 
+                    onUpdateAccount={saveAccount} 
+                    onNavigate={setActiveTab}
+                />
+            )}
 
             {activeTab === 'upload' && (
                 <UploadView
