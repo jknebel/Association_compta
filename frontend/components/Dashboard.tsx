@@ -170,7 +170,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
             </div>
           ))}
           {accounts.filter(a => a.type === AccountType.ASSET).length === 0 && (
-            <p className="text-xs text-slate-500 mt-2 italic">Aucun compte ACTIF défini.</p>
+            <div 
+              className="mt-2 p-2 border border-dashed border-slate-700 rounded-lg hover:border-blue-500 hover:bg-blue-500/5 cursor-pointer transition-all"
+              onClick={() => window.location.hash = '#settings'}
+            >
+              <p className="text-[10px] text-slate-500 italic">Aucun compte ACTIF défini.</p>
+              <p className="text-[9px] text-blue-400 font-bold mt-1">Cliquez pour configurer dans le Plan Comptable</p>
+            </div>
           )}
         </div>
 
