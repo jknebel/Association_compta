@@ -134,12 +134,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
       </header>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg border-l-4 border-l-blue-500">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Verification Card (Calculated Balance at Last Transaction) */}
+        <div className="bg-slate-900 p-4 rounded-xl border border-amber-500/30 shadow-lg bg-gradient-to-br from-slate-900 to-amber-900/5">
+          <h3 className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">Solde au {
+            transactions.length > 0 
+              ? [...transactions].sort((a,b) => b.date.split('.').reverse().join('-').localeCompare(a.date.split('.').reverse().join('-')))[0].date
+              : '—'
+          }</h3>
+          <p className="text-xl font-black text-white mt-1">
+            CHF {formatAmount(
+              (accounts.find(a => a.type === AccountType.ASSET)?.initialBalance || 0) + 
+              transactions.reduce((sum, t) => sum + t.amount, 0)
+            )}
+          </p>
+          <p className="text-[9px] text-slate-500 mt-1 italic">Vérification avec relevé papier</p>
+        </div>
+
+        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-lg border-l-4 border-l-blue-500">
           <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Solde à l'ouverture</h3>
           {accounts.filter(a => a.type === AccountType.ASSET).slice(0, 1).map(acc => (
-            <div key={acc.id} className="mt-2">
-              <span className="text-slate-500 text-xs mr-2">CHF</span>
+            <div key={acc.id} className="mt-1 flex items-baseline">
+              <span className="text-slate-500 text-xs mr-1">CHF</span>
               <input 
                 type="number" 
                 step="0.01" 
@@ -148,26 +164,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
                   const val = parseFloat(e.target.value);
                   if (!isNaN(val) && val !== acc.initialBalance) onUpdateAccount({ ...acc, initialBalance: val });
                 }}
-                className="bg-transparent border-b border-slate-800 hover:border-slate-600 focus:border-blue-500 text-2xl font-black text-white w-32 focus:outline-none transition-colors"
+                className="bg-transparent border-b border-slate-800 hover:border-slate-600 focus:border-blue-500 text-xl font-black text-white w-24 focus:outline-none transition-colors"
               />
             </div>
           ))}
-          {accounts.filter(a => a.type === AccountType.ASSET).length === 0 && <p className="text-slate-600 text-xs mt-2">Aucun compte financier</p>}
         </div>
 
-        <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg">
+        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-lg">
           <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Recettes (Validées)</h3>
-          <p className="text-2xl font-black text-emerald-400 mt-2">CHF {formatAmount(totalIncome)}</p>
+          <p className="text-xl font-black text-emerald-400 mt-1">CHF {formatAmount(totalIncome)}</p>
         </div>
 
-        <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg">
+        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-lg">
           <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Dépenses (Validées)</h3>
-          <p className="text-2xl font-black text-rose-400 mt-2">CHF {formatAmount(Math.abs(totalExpense))}</p>
+          <p className="text-xl font-black text-rose-400 mt-1">CHF {formatAmount(Math.abs(totalExpense))}</p>
         </div>
 
-        <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg relative overflow-hidden bg-gradient-to-br from-slate-900 to-blue-900/10">
+        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-lg relative overflow-hidden bg-gradient-to-br from-slate-900 to-blue-900/10">
           <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Trésorerie Totale</h3>
-          <p className={`text-2xl font-black mt-2 ${(accounts.find(a => a.type === AccountType.ASSET)?.initialBalance || 0) + netResult >= 0 ? 'text-blue-400' : 'text-orange-400'}`}>
+          <p className={`text-xl font-black mt-1 ${(accounts.find(a => a.type === AccountType.ASSET)?.initialBalance || 0) + netResult >= 0 ? 'text-blue-400' : 'text-orange-400'}`}>
             CHF {formatAmount((accounts.find(a => a.type === AccountType.ASSET)?.initialBalance || 0) + netResult)}
           </p>
           <div className={`absolute bottom-0 left-0 h-1 w-full ${(accounts.find(a => a.type === AccountType.ASSET)?.initialBalance || 0) + netResult >= 0 ? 'bg-blue-500' : 'bg-orange-500'} opacity-30`}></div>
