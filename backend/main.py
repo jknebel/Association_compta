@@ -85,9 +85,12 @@ class Transaction(BaseModel):
 class TransactionList(BaseModel):
     transactions: List[Transaction]
 
+class ClassifiedTransaction(Transaction):
+    accountChoiceReasoning: str = Field(description="Raisonnement détaillé pour le choix du compte de cette transaction précise (pourquoi ce compte et pas un autre ?)")
+
 class ClassifiedTransactionList(BaseModel):
-    thinking: str
-    transactions: List[Transaction]
+    thinking: str = Field(description="Réflexion globale avant de commencer la classification des transactions.")
+    transactions: List[ClassifiedTransaction]
 
 class ReceiptExtraction(BaseModel):
     amount: Optional[float] = None
@@ -187,9 +190,9 @@ class AgentState(BaseModel):
     visual_itinerant_txns: Annotated[List[Transaction], operator.add] = []
     integrity_report: str = "OK_COMPLET"
     extracted_transactions: List[Transaction] = []
-    classification_a_txns: Annotated[List[Transaction], operator.add] = []
+    classification_a_txns: Annotated[List[ClassifiedTransaction], operator.add] = []
     classification_a_thinking: str = ""
-    classification_b_txns: Annotated[List[Transaction], operator.add] = []
+    classification_b_txns: Annotated[List[ClassifiedTransaction], operator.add] = []
     classification_b_thinking: str = ""
     page_count: int = 0
     global_context: str = ""
@@ -650,7 +653,7 @@ def classifier_a_node(state: AgentState):
         print(f"--- [Agent: CLASSIFIER_A][OUTPUT] {len(result.transactions)} txns retournées, {classified_count} avec accountId ---")
         print(f"  THINKING: {result.thinking[:200]}...")
         for t in result.transactions[:5]:
-            print(f"  CLASSIFIER_A: '{t.description[:40]}' -> accountId={t.accountId} | member={t.detectedMemberName}")
+            print(f"  CLASSIFIER_A: '{t.description[:40]}' -> accountId={t.accountId} | reasoning={t.accountChoiceReasoning[:50]}...")
         if len(result.transactions) > 5:
             print(f"  ... et {len(result.transactions) - 5} autres")
         
@@ -707,7 +710,7 @@ def classifier_b_node(state: AgentState):
         print(f"--- [Agent: CLASSIFIER_B][OUTPUT] {len(result.transactions)} txns retournées, {classified_count} avec accountId, {member_count} avec memberName ---")
         print(f"  THINKING: {result.thinking[:200]}...")
         for t in result.transactions[:5]:
-            print(f"  CLASSIFIER_B: '{t.description[:40]}' -> accountId={t.accountId} | member={t.detectedMemberName}")
+            print(f"  CLASSIFIER_B: '{t.description[:40]}' -> accountId={t.accountId} | reasoning={t.accountChoiceReasoning[:50]}...")
         if len(result.transactions) > 5:
             print(f"  ... et {len(result.transactions) - 5} autres")
         
@@ -787,6 +790,8 @@ def classification_consensus_node(state: AgentState):
         classified_count = sum(1 for t in final_txns if t.accountId)
         print(f"--- [Agent: JUDGE][OUTPUT] {classified_count}/{len(final_txns)} transactions avec compte ---")
         print(f"  THINKING: {result.thinking[:200]}...")
+        for t in final_txns[:5]:
+            print(f"  JUDGE: '{t.description[:40]}' -> accountId={t.accountId} | reasoning={t.accountChoiceReasoning[:50]}...")
         
         return {
             "extracted_transactions": final_txns,
