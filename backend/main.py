@@ -190,7 +190,10 @@ class AgentState(BaseModel):
     worker_b_txns: Annotated[List[Transaction], operator.add] = []
     itinerant_txns: Annotated[List[Transaction], operator.add] = []
     visual_itinerant_txns: Annotated[List[Transaction], operator.add] = []
-    integrity_report: str = "OK_COMPLET"
+    integrity_report: Optional[str] = None
+    recovery_attempts: int = 0
+    expected_transaction_count: int = 0 # Nouveau : pour la vérification finale
+    logs: Annotated[List[str], operator.add] = []
     extracted_transactions: List[Transaction] = []
     classification_a_txns: Annotated[List[ClassifiedTransaction], operator.add] = []
     classification_a_thinking: str = ""
@@ -198,8 +201,6 @@ class AgentState(BaseModel):
     classification_b_thinking: str = ""
     page_count: int = 0
     global_context: str = ""
-    logs: Annotated[List[str], operator.add] = []
-    recovery_attempts: int = 0
 
 def vision_node(state: AgentState):
     """Vision Extraction: Image/PDF -> Raw Text"""
@@ -281,6 +282,68 @@ def vision_node(state: AgentState):
             "raw_text": "",
             "logs": [f"Erreur de vision: {str(e)}"]
         }
+
+def pre_parser_node(state: AgentState):
+    """
+    BCV Pre-Parser: Filters raw text using strict anchor order.
+    Logic: 
+    - Page 1: [SOLDE REPORTE] -> keep -> [SOLDE A REPORTER] (stop)
+    - Page X: [REPORT] -> keep -> [SOLDE A REPORTER] (stop)
+    - Last:   [REPORT] -> keep -> [SOLDE EN] (stop)
+    """
+    print("--- [Agent: PRE_PARSER][INPUT_START] ---")
+    import re
+    date_pattern = re.compile(r'\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})')
+    
+    cleaned_pages = []
+    total_dates = 0
+    
+    for page_text in state.raw_pages:
+        lines = page_text.split('\n')
+        keep = False
+        page_content = []
+        
+        for line in lines:
+            upper_line = line.upper().strip()
+            
+            # 1. On vérifie d'abord les mots-clés de FIN (Stop)
+            # IMPORTANT: On le fait avant le début car "REPORT" est contenu dans "SOLDE A REPORTER"
+            if "SOLDE A REPORTER" in upper_line or "SOLDE EN" in upper_line:
+                keep = False
+                continue
+            
+            # 2. On vérifie ensuite les mots-clés de DÉBUT (Start)
+            if "SOLDE REPORTE" in upper_line:
+                keep = True
+                page_content.append(line) # On garde la ligne de départ (Page 1)
+                continue
+            elif "REPORT" in upper_line:
+                # C'est un report de haut de page (Page 2+)
+                keep = True
+                # On ne l'ajoute pas à page_content car c'est un doublon du solde précédent
+                continue
+                
+            # 3. Si on est dans une zone active, on garde la ligne
+            if keep:
+                # Nettoyage basique pour éviter les lignes de titres de colonnes
+                if any(x in upper_line for x in ["DATE", "VALEUR", "LIBELLÉ", "DÉBIT", "CRÉDIT", "SOLDE"]):
+                    continue
+                    
+                page_content.append(line)
+                if date_pattern.search(line):
+                    total_dates += 1
+        
+        cleaned_pages.append("\n".join(page_content))
+    
+    full_cleaned_text = "\n--- NOUVELLE PAGE ---\n".join(cleaned_pages)
+    print(f"Pre-Parser: Found {total_dates} potential transactions.")
+    
+    return {
+        "raw_text": full_cleaned_text,
+        "raw_pages": cleaned_pages,
+        "expected_transaction_count": total_dates,
+        "logs": [f"Pré-Parser : Filtrage BCV appliqué. {total_dates} écritures détectées."]
+    }
 
 def worker_a_node(state: AgentState):
     """Worker A: Structured Extraction (Standard Strategy)"""
@@ -486,24 +549,23 @@ def integrity_auditor_node(state: AgentState):
     
     all_extracted = state.worker_a_txns + state.worker_b_txns + state.itinerant_txns + state.visual_itinerant_txns
     
+    # On déduplique grossièrement pour comparer au nombre attendu
+    unique_count = len({f"{t.date}_{t.amount}_{t.runningBalance}" for t in all_extracted})
+    
     prompt = f"""
     Tu es le Superviseur de Complétude.
-    Voici le TEXTE BRUT original du document bancaire :
+    RÈGLE BCV : Le Pré-Parser a détecté {state.expected_transaction_count} dates de transactions dans le document.
+    Nous en avons extrait {unique_count} uniques jusqu'à présent.
+    
+    TEXTE BRUT FILTRÉ :
     ---
     {state.raw_text}
     ---
     
-    Voici TOUTES les transactions qui ont été extraites jusqu'à présent (format JSON) :
-    ---
-    {json.dumps([t.model_dump() for t in all_extracted], ensure_ascii=False)}
-    ---
-    
     Ta mission :
-    Vérifie si des transactions évidentes dans le texte brut manquent dans la liste extraite.
-    Fais particulièrement attention aux "Frais", "Commission", "Agios", "Cotisation", ou petits montants.
-    
-    Si RIEN ne manque et que tout semble extrait correctement, réponds EXACTEMENT : "OK_COMPLET" sans aucun autre texte.
-    Sinon, liste clairement les éléments manquants (date, libellé approximatif, montant) pour qu'ils soient récupérés par le contre-maître.
+    1. Si le nombre extrait ({unique_count}) est inférieur au nombre attendu ({state.expected_transaction_count}), cherche activement ce qui manque.
+    2. Si tout semble là et que le compte est bon, réponds EXACTEMENT : "OK_COMPLET".
+    3. Sinon, liste les éléments manquants (date, libellé, montant).
     """
     
     flash_llm = get_llm()
@@ -920,6 +982,7 @@ def classification_consensus_node(state: AgentState):
 # Build Graph
 workflow = StateGraph(AgentState)
 workflow.add_node("vision", vision_node)
+workflow.add_node("pre_parser", pre_parser_node)
 workflow.add_node("worker_a", worker_a_node)
 workflow.add_node("worker_b", worker_b_node)
 workflow.add_node("itinerant", itinerant_worker_node)
@@ -932,12 +995,17 @@ workflow.add_node("classifier_a", classifier_a_node)
 workflow.add_node("classifier_b", classifier_b_node)
 workflow.add_node("judge", classification_consensus_node)
 
+# Circuit : Vision -> Pre-Parser -> Workers (Parallel) -> Auditor -> Foreman -> (Recovery) -> Classifiers -> Judge
 workflow.set_entry_point("vision")
-workflow.add_edge("vision", "worker_a")
-workflow.add_edge("vision", "worker_b")
-workflow.add_edge("vision", "itinerant")
-workflow.add_edge("vision", "visual_itinerant")
+workflow.add_edge("vision", "pre_parser")
 
+# Fan-out vers les ouvriers
+workflow.add_edge("pre_parser", "worker_a")
+workflow.add_edge("pre_parser", "worker_b")
+workflow.add_edge("pre_parser", "itinerant")
+workflow.add_edge("pre_parser", "visual_itinerant")
+
+# Fan-in vers l'auditeur
 workflow.add_edge("worker_a", "integrity_auditor")
 workflow.add_edge("worker_b", "integrity_auditor")
 workflow.add_edge("itinerant", "integrity_auditor")
