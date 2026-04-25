@@ -1,13 +1,14 @@
 import React from 'react';
-import { Account, Transaction, AccountType } from '../../types';
+import { Account, Transaction, AccountType, TransactionStatus } from '../../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 interface DashboardProps {
   transactions: Transaction[];
   accounts: Account[];
+  onUpdateAccount: (account: Account) => Promise<void> | void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, onUpdateAccount }) => {
   const totalIncome = transactions
     .filter(t => t.amount > 0)
     .reduce((sum, t) => sum + t.amount, 0);
@@ -118,6 +119,119 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts }) 
         </div>
       </div>
 
+      {/* Detailed Account Performance (Approved Only) */}
+      <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-950/50">
+          <h3 className="text-lg font-bold text-slate-200">Situation des Comptes (Vérifié)</h3>
+          <span className="text-xs text-emerald-500 font-medium px-2 py-1 bg-emerald-500/10 rounded-full border border-emerald-500/20">
+            Transactions Approuvées Uniquement
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-slate-950 text-slate-400 text-xs uppercase tracking-wider">
+              <tr>
+                <th className="px-6 py-3 font-semibold">Code / Compte</th>
+                <th className="px-6 py-3 font-semibold text-right">Solde Initial</th>
+                <th className="px-6 py-3 font-semibold text-right">Débit (Charges)</th>
+                <th className="px-6 py-3 font-semibold text-right">Crédit (Produits)</th>
+                <th className="px-6 py-3 font-semibold text-right">Solde Période</th>
+                <th className="px-6 py-3 font-semibold text-right text-emerald-400">Total Cumulé</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800">
+              {accounts.map(acc => {
+                const accTxns = transactions.filter(t => t.accountId === acc.id && t.status === TransactionStatus.APPROVED);
+                const initial = acc.initialBalance || 0;
+                const debit = Math.abs(accTxns.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0));
+                const credit = accTxns.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0);
+                const balance = credit - debit;
+                const total = initial + balance;
+
+                if (debit === 0 && credit === 0 && initial === 0) return null; // Skip empty accounts for clarity
+
+                return (
+                  <tr key={acc.id} className="hover:bg-slate-800/50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="font-medium text-slate-200">{acc.label}</div>
+                      <div className="text-xs text-slate-500 font-mono">{acc.code}</div>
+                    </td>
+                    <td className="px-6 py-4 text-right text-slate-500 font-mono italic">
+                      {initial.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-6 py-4 text-right text-rose-400 font-mono">
+                      {debit > 0 ? debit.toLocaleString('fr-CH', { minimumFractionDigits: 2 }) : '—'}
+                    </td>
+                    <td className="px-6 py-4 text-right text-emerald-400 font-mono">
+                      {credit > 0 ? credit.toLocaleString('fr-CH', { minimumFractionDigits: 2 }) : '—'}
+                    </td>
+                    <td className={`px-6 py-4 text-right font-bold font-mono ${balance >= 0 ? 'text-blue-400' : 'text-orange-400'}`}>
+                      {balance.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-6 py-4 text-right font-bold text-emerald-400 font-mono bg-emerald-500/5">
+                      {total.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Pending Transactions Summary */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 p-6">
+          <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
+            <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
+            En cours de validation
+          </h3>
+          <div className="space-y-4">
+            {[TransactionStatus.REVIEW_NEEDED, TransactionStatus.PENDING_REVIEW, TransactionStatus.PENDING].map(status => {
+              const txns = transactions.filter(t => t.status === status);
+              const total = txns.reduce((sum, t) => sum + t.amount, 0);
+              const count = txns.length;
+              if (count === 0) return null;
+
+              return (
+                <div key={status} className="flex justify-between items-center p-3 bg-slate-950 rounded-lg border border-slate-800">
+                  <div>
+                    <div className="text-xs text-slate-500 font-medium">
+                      {status === TransactionStatus.REVIEW_NEEDED ? 'À VÉRIFIER' : status === TransactionStatus.PENDING_REVIEW ? 'EN ATTENTE DE REVUE' : 'EN ATTENTE'}
+                    </div>
+                    <div className="text-sm font-bold text-slate-200">{count} transaction{count > 1 ? 's' : ''}</div>
+                  </div>
+                  <div className={`text-sm font-mono font-bold ${total >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {total >= 0 ? '+' : ''}{total.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+              );
+            })}
+            {transactions.filter(t => t.status !== TransactionStatus.APPROVED && t.status !== TransactionStatus.ARCHIVED).length === 0 && (
+              <div className="text-center py-4 text-slate-600 italic text-sm">
+                Aucune transaction en attente. Votre comptabilité est à jour !
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 p-6 flex flex-col justify-center items-center text-center">
+          <div className="text-xs text-slate-500 uppercase font-bold mb-2">Progression de la saisie</div>
+          <div className="text-4xl font-black text-slate-100 mb-2">
+            {Math.round((transactions.filter(t => t.status === TransactionStatus.APPROVED).length / (transactions.filter(t => t.status !== TransactionStatus.ARCHIVED).length || 1)) * 100)}%
+          </div>
+          <div className="w-full bg-slate-800 rounded-full h-2 mt-4 max-w-xs">
+            <div 
+              className="bg-blue-600 h-2 rounded-full transition-all duration-1000" 
+              style={{ width: `${(transactions.filter(t => t.status === TransactionStatus.APPROVED).length / (transactions.filter(t => t.status !== TransactionStatus.ARCHIVED).length || 1)) * 100}%` }}
+            ></div>
+          </div>
+          <p className="text-[10px] text-slate-500 mt-4">
+            {transactions.filter(t => t.status === TransactionStatus.APPROVED).length} validées sur {transactions.filter(t => t.status !== TransactionStatus.ARCHIVED).length} actives
+          </p>
+        </div>
+      </div>
+
       {/* Account Balances Section */}
       <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center">
@@ -157,8 +271,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts }) 
                       <div className="font-medium text-slate-200">{acc.label}</div>
                       <div className="text-xs text-slate-500 font-mono">{acc.code}</div>
                     </td>
-                    <td className="px-6 py-4 text-right text-slate-400 font-mono">
-                      {initial.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}
+                    <td className="px-6 py-4 text-right">
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        defaultValue={initial}
+                        onBlur={(e) => {
+                          const val = parseFloat(e.target.value);
+                          if (!isNaN(val) && val !== initial) {
+                            onUpdateAccount({ ...acc, initialBalance: val });
+                          }
+                        }}
+                        className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-right text-emerald-500 font-mono text-xs w-24 focus:border-emerald-500 focus:outline-none transition-all"
+                      />
                     </td>
                     <td className="px-6 py-4 text-right text-slate-400 font-mono">
                       {movements >= 0 ? '+' : ''}{movements.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}
