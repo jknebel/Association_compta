@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Account, AccountType } from '../../types';
 import {
   Plus, Trash2, Save, Upload, Download, Folder, FolderOpen,
@@ -41,6 +41,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [tempAccount, setTempAccount] = useState<Account | null>(null);
   const [showIconSelector, setShowIconSelector] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const deleteConfirmIdRef = useRef<string | null>(null);
   const [showAiModal, setShowAiModal] = useState(false);
   const [tempAiContext, setTempAiContext] = useState(globalContext || "");
   const [contextAccount, setContextAccount] = useState<Account | null>(null);
@@ -133,8 +134,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [accounts]);
 
   useEffect(() => {
+    deleteConfirmIdRef.current = deleteConfirmId;
     if (deleteConfirmId) {
-      const timer = setTimeout(() => setDeleteConfirmId(null), 3000);
+      const timer = setTimeout(() => {
+        setDeleteConfirmId(null);
+        deleteConfirmIdRef.current = null;
+      }, 3000);
       return () => clearTimeout(timer);
     }
   }, [deleteConfirmId]);
@@ -214,10 +219,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const handleDeleteClick = (id: string, e: React.MouseEvent) => {
-    e.preventDefault();
     e.stopPropagation();
 
-    if (deleteConfirmId === id) {
+    if (deleteConfirmIdRef.current === id) {
+      // Second click: confirmed deletion
       const children = accounts.filter(a => a.parentId === id);
       let updatedAccounts;
       if (children.length > 0) {
@@ -229,8 +234,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       }
       onUpdateAccounts(updatedAccounts);
       setDeleteConfirmId(null);
+      deleteConfirmIdRef.current = null;
     } else {
+      // First click: arm confirmation
       setDeleteConfirmId(id);
+      deleteConfirmIdRef.current = id;
     }
   };
 

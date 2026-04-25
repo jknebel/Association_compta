@@ -578,11 +578,27 @@ def foreman_consensus_node(state: AgentState):
                     t.amount = actual_diff
         final_verified_txns.append(t)
 
+    # --- FILTRAGE SOLDE REPORTE ---
+    # Ces lignes ne sont PAS des transactions réelles, ce sont des soldes reportés.
+    SOLDE_KEYWORDS = ["SOLDE REPORTE", "SOLDE REPORTER", "SOLDE AU", "NOUVEAU SOLDE", "TOTAL DES MOUVEMENTS", "REPORT DE SOLDE"]
+    before_filter = len(final_verified_txns)
+    final_verified_txns = [
+        t for t in final_verified_txns 
+        if not any(kw in (t.description or "").upper() for kw in SOLDE_KEYWORDS)
+    ]
+    filtered_count = before_filter - len(final_verified_txns)
+    if filtered_count > 0:
+        print(f"--- [Agent: FOREMAN] Filtré {filtered_count} lignes SOLDE REPORTE ---")
+
     log_msgs = [f"Foreman : {len(final_verified_txns)} transactions validées après consensus."]
+    if filtered_count > 0:
+        log_msgs.append(f"Foreman : {filtered_count} lignes 'SOLDE REPORTE' filtrées (non-transactions).")
     if state.integrity_report != "OK_COMPLET" and extra_txns:
         log_msgs.append(f"Foreman : Récupération effectuée ({len(extra_txns)} récupérées suite au rapport).")
     elif state.integrity_report != "OK_COMPLET":
         log_msgs.append("Foreman : Tentative de récupération échouée malgré le rapport d'intégrité.")
+
+    print(f"--- [Agent: FOREMAN][OUTPUT] {len(final_verified_txns)} txns finales (filtré {filtered_count} soldes reportés) ---")
 
     return {
         "extracted_transactions": final_verified_txns,
@@ -622,10 +638,21 @@ def classifier_a_node(state: AgentState):
         flash_llm = get_llm()
         structured_llm = flash_llm.with_structured_output(TransactionList)
         result = structured_llm.invoke(prompt)
-        return {"classification_a_txns": result.transactions, "logs": ["Comptable A : Classification par historique terminée."]}
+        
+        # --- DETAILED OUTPUT LOGGING ---
+        classified_count = sum(1 for t in result.transactions if t.accountId)
+        print(f"--- [Agent: CLASSIFIER_A][OUTPUT] {len(result.transactions)} txns retournées, {classified_count} avec accountId ---")
+        for t in result.transactions[:5]:
+            print(f"  CLASSIFIER_A: '{t.description[:40]}' -> accountId={t.accountId} | member={t.detectedMemberName}")
+        if len(result.transactions) > 5:
+            print(f"  ... et {len(result.transactions) - 5} autres")
+        
+        return {"classification_a_txns": result.transactions, "logs": [f"Comptable A : {classified_count}/{len(result.transactions)} classées par historique."]}
     except Exception as e:
         print(f"Classifier A Error: {e}")
-        return {"logs": [f"Erreur Comptable A : {str(e)}"]}
+        import traceback
+        traceback.print_exc()
+        return {"classification_a_txns": [], "logs": [f"Erreur Comptable A : {str(e)}"]}
 
 def classifier_b_node(state: AgentState):
     """Classifier B: Contextual extraction (members, specific keywords)."""
@@ -662,10 +689,22 @@ def classifier_b_node(state: AgentState):
         flash_llm = get_llm()
         structured_llm = flash_llm.with_structured_output(TransactionList)
         result = structured_llm.invoke(prompt)
-        return {"classification_b_txns": result.transactions, "logs": ["Comptable B : Analyse contextuelle terminée."]}
+        
+        # --- DETAILED OUTPUT LOGGING ---
+        classified_count = sum(1 for t in result.transactions if t.accountId)
+        member_count = sum(1 for t in result.transactions if t.detectedMemberName)
+        print(f"--- [Agent: CLASSIFIER_B][OUTPUT] {len(result.transactions)} txns retournées, {classified_count} avec accountId, {member_count} avec memberName ---")
+        for t in result.transactions[:5]:
+            print(f"  CLASSIFIER_B: '{t.description[:40]}' -> accountId={t.accountId} | member={t.detectedMemberName}")
+        if len(result.transactions) > 5:
+            print(f"  ... et {len(result.transactions) - 5} autres")
+        
+        return {"classification_b_txns": result.transactions, "logs": [f"Comptable B : {classified_count}/{len(result.transactions)} classées contextuellement, {member_count} membres détectés."]}
     except Exception as e:
         print(f"Classifier B Error: {e}")
-        return {"logs": [f"Erreur Comptable B : {str(e)}"]}
+        import traceback
+        traceback.print_exc()
+        return {"classification_b_txns": [], "logs": [f"Erreur Comptable B : {str(e)}"]}
 
 def classification_consensus_node(state: AgentState):
     """The Judge: Harmonizes mapping and ensures no transaction is left empty if a clear match exists."""
@@ -673,20 +712,30 @@ def classification_consensus_node(state: AgentState):
     a_results = state.classification_a_txns
     b_results = state.classification_b_txns
     
+    print(f"  JUDGE: Received {len(a_results)} from Classifier A, {len(b_results)} from Classifier B")
+    print(f"  JUDGE: Extracted transactions to process: {len(state.extracted_transactions)}")
+    
     final_txns = []
+    valid_ids = {a.id for a in state.existing_accounts}
+    
     for i in range(len(state.extracted_transactions)):
         orig = state.extracted_transactions[i]
         ta = a_results[i] if i < len(a_results) else None
         tb = b_results[i] if i < len(b_results) else None
         
         txn = orig.model_copy()
+        source = "none"
         
         # Priority logic
         if ta and ta.accountId:
             txn.accountId = ta.accountId
+            source = "A"
         if tb:
             if tb.accountId and not txn.accountId:
                 txn.accountId = tb.accountId
+                source = "B"
+            elif tb.accountId and txn.accountId:
+                source = "A (B aussi)"
             if tb.detectedMemberName:
                 txn.detectedMemberName = tb.detectedMemberName
         
@@ -696,12 +745,15 @@ def classification_consensus_node(state: AgentState):
             membership_acc = next((a for a in state.existing_accounts if a.isMembership), None)
             if membership_acc:
                 txn.accountId = membership_acc.id
+                source = "fallback-member"
 
         # Final safety check: validate accountId exists
-        valid_ids = {a.id for a in state.existing_accounts}
         if txn.accountId and txn.accountId not in valid_ids:
+            print(f"  JUDGE WARNING: accountId '{txn.accountId}' invalide pour '{txn.description[:30]}', reset à None")
             txn.accountId = None
+            source = "INVALID->None"
 
+        print(f"  JUDGE: [{source}] '{txn.description[:35]}' -> accountId={txn.accountId} | member={txn.detectedMemberName}")
         final_txns.append(txn)
         
     # Final Sorting (Oldest to Newest) and Formatting (DD.MM.YY)
@@ -718,9 +770,12 @@ def classification_consensus_node(state: AgentState):
             except:
                 pass
 
+    classified_count = sum(1 for t in final_txns if t.accountId)
+    print(f"--- [Agent: JUDGE][OUTPUT] {classified_count}/{len(final_txns)} transactions avec un compte assigné ---")
+
     return {
         "extracted_transactions": final_txns,
-        "logs": ["Le Juge : Cohérence des comptes et format de date JJ.MM.AA validés."]
+        "logs": [f"Le Juge : {classified_count}/{len(final_txns)} classées. Format date JJ.MM.AA validé."]
     }
 
 # Build Graph

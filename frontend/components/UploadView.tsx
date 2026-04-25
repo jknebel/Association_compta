@@ -67,6 +67,36 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
     return { processedTxns, matchedReceiptIds: matchedIds };
   };
 
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    
+    // Create a synthetic event-like object for reuse
+    const syntheticEvent = {
+      target: { files: e.dataTransfer.files }
+    } as unknown as React.ChangeEvent<HTMLInputElement>;
+    
+    handleFileUpload(syntheticEvent);
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -131,11 +161,6 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
         if (existingSignatures.has(signature)) {
           return false; // Skip duplicate
         }
-        // Also check for duplicates WITHIN the import itself (if PDF has same line twice?)
-        // (Bank statements usually don't have exact same line twice unless it's real, but good to be careful. 
-        //  Actually, real dupes in same day same amount same desc are possible. 
-        //  Let's keep them if they appear multiple times in the source, but reject if they match existing DB.)
-        //  Wait, 'existingSignatures' only covers DB. Simple check is fine.
         return true;
       });
 
@@ -143,7 +168,6 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
 
       if (duplicatesCount > 0) {
         console.log(`Skipped ${duplicatesCount} duplicates.`);
-        // Optional: Notify user via UI (handled via success message below usually, or we can set a specific message)
       }
 
       if (newUniqueTransactions.length === 0) {
@@ -198,9 +222,15 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
         <div className="p-12 flex flex-col items-center justify-center bg-slate-900/50">
           {!isProcessing ? (
             <div
-              className={`w-full max-w-lg border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center cursor-pointer transition-all group ${activeMode === 'PDF' ? 'border-blue-800 hover:border-blue-600 hover:bg-slate-800' : 'border-green-800 hover:border-green-600 hover:bg-slate-800'
+              className={`w-full max-w-lg border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center cursor-pointer transition-all group ${
+                isDragging 
+                  ? 'border-blue-400 bg-blue-900/20 scale-[1.02]'
+                  : activeMode === 'PDF' ? 'border-blue-800 hover:border-blue-600 hover:bg-slate-800' : 'border-green-800 hover:border-green-600 hover:bg-slate-800'
                 }`}
               onClick={() => fileInputRef.current?.click()}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
             >
               <div className={`h-16 w-16 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform ${activeMode === 'PDF' ? 'bg-blue-900/50 text-blue-400' : 'bg-green-900/50 text-green-400'
                 }`}>
