@@ -89,7 +89,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
             </div>
           </td>
           <td className="px-6 py-3 text-right text-slate-500 font-mono text-xs italic">
-            {depth === 0 ? (
+            {(acc.type === AccountType.ASSET || acc.type === AccountType.LIABILITY) && depth === 0 ? (
                <input 
                  type="number" 
                  step="0.01" 
@@ -134,21 +134,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
       </header>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 shadow-lg">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Recettes (Validées)</h3>
-          <p className="text-3xl font-black text-emerald-400 mt-2">CHF {formatAmount(totalIncome)}</p>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg border-l-4 border-l-blue-500">
+          <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Solde à l'ouverture</h3>
+          {accounts.filter(a => a.type === AccountType.ASSET).slice(0, 1).map(acc => (
+            <div key={acc.id} className="mt-2">
+              <span className="text-slate-500 text-xs mr-2">CHF</span>
+              <input 
+                type="number" 
+                step="0.01" 
+                defaultValue={acc.initialBalance || 0} 
+                onBlur={(e) => {
+                  const val = parseFloat(e.target.value);
+                  if (!isNaN(val) && val !== acc.initialBalance) onUpdateAccount({ ...acc, initialBalance: val });
+                }}
+                className="bg-transparent border-b border-slate-800 hover:border-slate-600 focus:border-blue-500 text-2xl font-black text-white w-32 focus:outline-none transition-colors"
+              />
+            </div>
+          ))}
+          {accounts.filter(a => a.type === AccountType.ASSET).length === 0 && <p className="text-slate-600 text-xs mt-2">Aucun compte financier</p>}
         </div>
-        <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 shadow-lg">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Dépenses (Validées)</h3>
-          <p className="text-3xl font-black text-rose-400 mt-2">CHF {formatAmount(Math.abs(totalExpense))}</p>
+
+        <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg">
+          <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Recettes (Validées)</h3>
+          <p className="text-2xl font-black text-emerald-400 mt-2">CHF {formatAmount(totalIncome)}</p>
         </div>
-        <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 shadow-lg relative overflow-hidden">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Résultat Net</h3>
-          <p className={`text-3xl font-black mt-2 ${netResult >= 0 ? 'text-blue-400' : 'text-orange-400'}`}>
-            CHF {formatAmount(netResult)}
+
+        <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg">
+          <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Dépenses (Validées)</h3>
+          <p className="text-2xl font-black text-rose-400 mt-2">CHF {formatAmount(Math.abs(totalExpense))}</p>
+        </div>
+
+        <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg relative overflow-hidden bg-gradient-to-br from-slate-900 to-blue-900/10">
+          <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Trésorerie Totale</h3>
+          <p className={`text-2xl font-black mt-2 ${(accounts.find(a => a.type === AccountType.ASSET)?.initialBalance || 0) + netResult >= 0 ? 'text-blue-400' : 'text-orange-400'}`}>
+            CHF {formatAmount((accounts.find(a => a.type === AccountType.ASSET)?.initialBalance || 0) + netResult)}
           </p>
-          <div className={`absolute bottom-0 left-0 h-1 w-full ${netResult >= 0 ? 'bg-blue-500' : 'bg-orange-500'} opacity-30`}></div>
+          <div className={`absolute bottom-0 left-0 h-1 w-full ${(accounts.find(a => a.type === AccountType.ASSET)?.initialBalance || 0) + netResult >= 0 ? 'bg-blue-500' : 'bg-orange-500'} opacity-30`}></div>
         </div>
       </div>
 
