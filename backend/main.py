@@ -85,6 +85,10 @@ class Transaction(BaseModel):
 class TransactionList(BaseModel):
     transactions: List[Transaction]
 
+class ClassifiedTransactionList(BaseModel):
+    thinking: str
+    transactions: List[Transaction]
+
 class ReceiptExtraction(BaseModel):
     amount: Optional[float] = None
     content: Optional[str] = None
@@ -184,7 +188,9 @@ class AgentState(BaseModel):
     integrity_report: str = "OK_COMPLET"
     extracted_transactions: List[Transaction] = []
     classification_a_txns: Annotated[List[Transaction], operator.add] = []
+    classification_a_thinking: str = ""
     classification_b_txns: Annotated[List[Transaction], operator.add] = []
+    classification_b_thinking: str = ""
     page_count: int = 0
     global_context: str = ""
     logs: Annotated[List[str], operator.add] = []
@@ -636,23 +642,28 @@ def classifier_a_node(state: AgentState):
     """
     try:
         flash_llm = get_llm()
-        structured_llm = flash_llm.with_structured_output(TransactionList)
+        structured_llm = flash_llm.with_structured_output(ClassifiedTransactionList)
         result = structured_llm.invoke(prompt)
         
         # --- DETAILED OUTPUT LOGGING ---
         classified_count = sum(1 for t in result.transactions if t.accountId)
         print(f"--- [Agent: CLASSIFIER_A][OUTPUT] {len(result.transactions)} txns retournées, {classified_count} avec accountId ---")
+        print(f"  THINKING: {result.thinking[:200]}...")
         for t in result.transactions[:5]:
             print(f"  CLASSIFIER_A: '{t.description[:40]}' -> accountId={t.accountId} | member={t.detectedMemberName}")
         if len(result.transactions) > 5:
             print(f"  ... et {len(result.transactions) - 5} autres")
         
-        return {"classification_a_txns": result.transactions, "logs": [f"Comptable A : {classified_count}/{len(result.transactions)} classées par historique."]}
+        return {
+            "classification_a_txns": result.transactions,
+            "classification_a_thinking": result.thinking,
+            "logs": [f"Comptable A : {classified_count}/{len(result.transactions)} classées par historique."]
+        }
     except Exception as e:
         print(f"Classifier A Error: {e}")
         import traceback
         traceback.print_exc()
-        return {"classification_a_txns": [], "logs": [f"Erreur Comptable A : {str(e)}"]}
+        return {"classification_a_txns": [], "classification_a_thinking": f"Erreur: {str(e)}", "logs": [f"Erreur Comptable A : {str(e)}"]}
 
 def classifier_b_node(state: AgentState):
     """Classifier B: Contextual extraction (members, specific keywords)."""
@@ -687,96 +698,110 @@ def classifier_b_node(state: AgentState):
     """
     try:
         flash_llm = get_llm()
-        structured_llm = flash_llm.with_structured_output(TransactionList)
+        structured_llm = flash_llm.with_structured_output(ClassifiedTransactionList)
         result = structured_llm.invoke(prompt)
         
         # --- DETAILED OUTPUT LOGGING ---
         classified_count = sum(1 for t in result.transactions if t.accountId)
         member_count = sum(1 for t in result.transactions if t.detectedMemberName)
         print(f"--- [Agent: CLASSIFIER_B][OUTPUT] {len(result.transactions)} txns retournées, {classified_count} avec accountId, {member_count} avec memberName ---")
+        print(f"  THINKING: {result.thinking[:200]}...")
         for t in result.transactions[:5]:
             print(f"  CLASSIFIER_B: '{t.description[:40]}' -> accountId={t.accountId} | member={t.detectedMemberName}")
         if len(result.transactions) > 5:
             print(f"  ... et {len(result.transactions) - 5} autres")
         
-        return {"classification_b_txns": result.transactions, "logs": [f"Comptable B : {classified_count}/{len(result.transactions)} classées contextuellement, {member_count} membres détectés."]}
+        return {
+            "classification_b_txns": result.transactions,
+            "classification_b_thinking": result.thinking,
+            "logs": [f"Comptable B : {classified_count}/{len(result.transactions)} classées contextuellement, {member_count} membres détectés."]
+        }
     except Exception as e:
         print(f"Classifier B Error: {e}")
         import traceback
         traceback.print_exc()
-        return {"classification_b_txns": [], "logs": [f"Erreur Comptable B : {str(e)}"]}
+        return {"classification_b_txns": [], "classification_b_thinking": f"Erreur: {str(e)}", "logs": [f"Erreur Comptable B : {str(e)}"]}
 
 def classification_consensus_node(state: AgentState):
-    """The Judge: Harmonizes mapping and ensures no transaction is left empty if a clear match exists."""
+    """The Judge: Uses an LLM to harmonize mapping based on Classifier A and B's reasoning."""
     print("--- [Agent: JUDGE][INPUT_START] ---")
-    a_results = state.classification_a_txns
-    b_results = state.classification_b_txns
     
-    print(f"  JUDGE: Received {len(a_results)} from Classifier A, {len(b_results)} from Classifier B")
-    print(f"  JUDGE: Extracted transactions to process: {len(state.extracted_transactions)}")
+    accounts = state.existing_accounts
+    accounts_info = "\n".join([
+        f"ID: {a.id} | Nom: {a.label} | Suivi: {'OUI' if a.isMembership else 'NON'}" 
+        for a in accounts
+    ])
     
-    final_txns = []
-    valid_ids = {a.id for a in state.existing_accounts}
+    prompt = f"""
+    Tu es le Juge Comptable Suprême. Tu dois consolider le travail de deux comptables (A et B) pour classifier une liste de transactions.
     
-    for i in range(len(state.extracted_transactions)):
-        orig = state.extracted_transactions[i]
-        ta = a_results[i] if i < len(a_results) else None
-        tb = b_results[i] if i < len(b_results) else None
-        
-        txn = orig.model_copy()
-        source = "none"
-        
-        # Priority logic
-        if ta and ta.accountId:
-            txn.accountId = ta.accountId
-            source = "A"
-        if tb:
-            if tb.accountId and not txn.accountId:
-                txn.accountId = tb.accountId
-                source = "B"
-            elif tb.accountId and txn.accountId:
-                source = "A (B aussi)"
-            if tb.detectedMemberName:
-                txn.detectedMemberName = tb.detectedMemberName
-        
-        # Priority Fallback: If a member name is detected but no account is assigned,
-        # assign the first available membership account.
-        if txn.detectedMemberName and not txn.accountId:
-            membership_acc = next((a for a in state.existing_accounts if a.isMembership), None)
-            if membership_acc:
-                txn.accountId = membership_acc.id
-                source = "fallback-member"
-
-        # Final safety check: validate accountId exists
-        if txn.accountId and txn.accountId not in valid_ids:
-            print(f"  JUDGE WARNING: accountId '{txn.accountId}' invalide pour '{txn.description[:30]}', reset à None")
-            txn.accountId = None
-            source = "INVALID->None"
-
-        print(f"  JUDGE: [{source}] '{txn.description[:35]}' -> accountId={txn.accountId} | member={txn.detectedMemberName}")
-        final_txns.append(txn)
-        
-    # Final Sorting (Oldest to Newest) and Formatting (DD.MM.YY)
-    # 1. Sort by ISO Date first
-    final_txns.sort(key=lambda x: str(x.date or "1900-01-01"))
+    PLAN COMPTABLE :
+    {accounts_info}
     
-    # 2. Reformat date strings for the user
-    for t in final_txns:
-        if t.date and "-" in t.date: # If ISO YYYY-MM-DD
-            try:
-                from datetime import datetime
-                dt = datetime.strptime(t.date, "%Y-%m-%d")
-                t.date = dt.strftime("%d.%m.%y")
-            except:
-                pass
-
-    classified_count = sum(1 for t in final_txns if t.accountId)
-    print(f"--- [Agent: JUDGE][OUTPUT] {classified_count}/{len(final_txns)} transactions avec un compte assigné ---")
-
-    return {
-        "extracted_transactions": final_txns,
-        "logs": [f"Le Juge : {classified_count}/{len(final_txns)} classées. Format date JJ.MM.AA validé."]
-    }
+    PENSÉE DU COMPTABLE A (Axé sur l'historique) :
+    {state.classification_a_thinking}
+    
+    PENSÉE DU COMPTABLE B (Axé sur le contexte et les membres) :
+    {state.classification_b_thinking}
+    
+    PROPOSITIONS A (JSON) :
+    {json.dumps([t.model_dump() for t in state.classification_a_txns])}
+    
+    PROPOSITIONS B (JSON) :
+    {json.dumps([t.model_dump() for t in state.classification_b_txns])}
+    
+    RÈGLES DU JUGE :
+    1. Pour chaque transaction de base, analyse les propositions de A et B.
+    2. Si B a détecté un membre et un compte de suivi (Suivi: OUI), privilégie souvent B pour les cotisations.
+    3. Si A a un match historique solide, et B n'a rien de spécial, privilégie A.
+    4. Assure-toi que les `accountId` finaux existent dans le plan comptable.
+    5. Fournis TA PENSÉE (thinking) justifiant tes choix clés avant de retourner la liste finale.
+    6. Respecte le format de date YYYY-MM-DD.
+    
+    TRANSACTIONS DE BASE À CLASSER (JSON) :
+    {json.dumps([t.model_dump() for t in state.extracted_transactions])}
+    """
+    
+    try:
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(ClassifiedTransactionList)
+        result = structured_llm.invoke(prompt)
+        
+        final_txns = result.transactions
+        valid_ids = {a.id for a in state.existing_accounts}
+        
+        # Format date and validate IDs
+        for t in final_txns:
+            if t.accountId and t.accountId not in valid_ids:
+                t.accountId = None
+            if t.date and "-" in t.date:
+                try:
+                    from datetime import datetime
+                    dt = datetime.strptime(t.date, "%Y-%m-%d")
+                    t.date = dt.strftime("%d.%m.%y")
+                except:
+                    pass
+                    
+        final_txns.sort(key=lambda x: str(x.date or "1900-01-01"))
+        
+        classified_count = sum(1 for t in final_txns if t.accountId)
+        print(f"--- [Agent: JUDGE][OUTPUT] {classified_count}/{len(final_txns)} transactions avec compte ---")
+        print(f"  THINKING: {result.thinking[:200]}...")
+        
+        return {
+            "extracted_transactions": final_txns,
+            "logs": [f"Le Juge : {classified_count}/{len(final_txns)} classées après réflexion."]
+        }
+    except Exception as e:
+        print(f"Judge LLM Error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Fallback to the original base transactions if the LLM fails
+        return {
+            "extracted_transactions": state.extracted_transactions,
+            "logs": [f"Erreur du Juge LLM : {str(e)}"]
+        }
 
 # Build Graph
 workflow = StateGraph(AgentState)
