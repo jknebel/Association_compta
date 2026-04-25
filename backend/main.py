@@ -192,7 +192,8 @@ class AgentState(BaseModel):
     visual_itinerant_txns: Annotated[List[Transaction], operator.add] = []
     integrity_report: Optional[str] = None
     recovery_attempts: int = 0
-    expected_transaction_count: int = 0 # Nouveau : pour la vérification finale
+    expected_transaction_count: int = 0
+    starting_balance: float = 0.0 # Nouveau : extrait par le pré-parser
     logs: Annotated[List[str], operator.add] = []
     extracted_transactions: List[Transaction] = []
     classification_a_txns: Annotated[List[ClassifiedTransaction], operator.add] = []
@@ -295,8 +296,7 @@ def pre_parser_node(state: AgentState):
     import re
     date_pattern = re.compile(r'\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})')
     
-    cleaned_pages = []
-    total_dates = 0
+    starting_bal = 0.0
     
     for page_text in state.raw_pages:
         lines = page_text.split('\n')
@@ -306,29 +306,28 @@ def pre_parser_node(state: AgentState):
         for line in lines:
             upper_line = line.upper().strip()
             
-            # 1. On vérifie d'abord les mots-clés de FIN (Stop)
-            # IMPORTANT: On le fait avant le début car "REPORT" est contenu dans "SOLDE A REPORTER"
+            # 1. STOP Keywords
             if "SOLDE A REPORTER" in upper_line or "SOLDE EN" in upper_line:
                 keep = False
                 continue
             
-            # 2. On vérifie ensuite les mots-clés de DÉBUT (Start)
+            # 2. START Keywords
             if "SOLDE REPORTE" in upper_line:
                 keep = True
-                page_content.append(line) # On garde la ligne de départ (Page 1)
-                continue
+                # Extraction du montant pour le passer proprement à l'IA sans inclure la ligne
+                amounts = re.findall(r"[\d' ]+\.\d{2}", line.replace("'", ""))
+                if amounts:
+                    try: starting_bal = float(amounts[-1].replace(" ", ""))
+                    except: pass
+                continue # On ne l'ajoute pas à page_content (Règle : non inclus)
             elif "REPORT" in upper_line:
-                # C'est un report de haut de page (Page 2+)
                 keep = True
-                # On ne l'ajoute pas à page_content car c'est un doublon du solde précédent
-                continue
+                continue # On ne l'ajoute pas à page_content (Règle : non inclus)
                 
-            # 3. Si on est dans une zone active, on garde la ligne
+            # 3. Content
             if keep:
-                # Nettoyage basique pour éviter les lignes de titres de colonnes
                 if any(x in upper_line for x in ["DATE", "VALEUR", "LIBELLÉ", "DÉBIT", "CRÉDIT", "SOLDE"]):
                     continue
-                    
                 page_content.append(line)
                 if date_pattern.search(line):
                     total_dates += 1
@@ -336,13 +335,13 @@ def pre_parser_node(state: AgentState):
         cleaned_pages.append("\n".join(page_content))
     
     full_cleaned_text = "\n--- NOUVELLE PAGE ---\n".join(cleaned_pages)
-    print(f"Pre-Parser: Found {total_dates} potential transactions.")
     
     return {
         "raw_text": full_cleaned_text,
         "raw_pages": cleaned_pages,
         "expected_transaction_count": total_dates,
-        "logs": [f"Pré-Parser : Filtrage BCV appliqué. {total_dates} écritures détectées."]
+        "starting_balance": starting_bal,
+        "logs": [f"Pré-Parser : Filtrage BCV (non-inclus). Solde initial détecté : {starting_bal} CHF."]
     }
 
 def worker_a_node(state: AgentState):
@@ -352,8 +351,10 @@ def worker_a_node(state: AgentState):
         return {"logs": ["Erreur: Aucun texte brut pour l'ouvrier A."]}
         
     prompt = f"""
-    Tu es l'Ouvrier A. Ton rôle est d'extraire TOUTES les transactions du document bancaire suivant.
-    RELEVÉ BRUT :
+    Tu es l'Ouvrier A. Extrais les transactions.
+    CONSIGNE : Le solde avant la première transaction est de {state.starting_balance} CHF.
+    
+    RELEVÉ NETTOYÉ :
     {state.raw_text}
     
         RÈGLES D'OR (LOGIQUE RELEVÉ BCV) :
