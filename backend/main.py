@@ -361,12 +361,12 @@ def worker_a_node(state: AgentState):
        - Page 1 : Les transactions sont ENTRE "SOLDE REPORTE" et "SOLDE A REPORTER" (exclus).
        - Pages suivantes : Les transactions sont ENTRE "REPORT" (en haut) et "SOLDE A REPORTER" (en bas, exclus).
        - Dernière page : Les transactions sont ENTRE "REPORT" et "SOLDE EN..." (exclus).
-    2. GESTION DES RAPPELS DE SOLDE :
-       - "SOLDE REPORTE" (Page 1) : C'est ton point de départ. Extrais-le comme ANCRE (Montant 0, Date, Solde).
-       - "REPORT" (Haut de page) : NE PAS extraire comme transaction, c'est un doublon du solde précédent.
-       - "SOLDE A REPORTER" / "SOLDE EN..." : Ce sont des bornes d'arrêt, ne pas les extraire comme transactions.
-    3. POUR CHAQUE LIGNE RÉELLE : Date (YYYY-MM-DD), Libellé (complet), Montant (Débit - / Crédit +), et SOLDE (runningBalance).
-    4. fullRawText : Copie tout le texte brut lié.
+    2. GESTION DES RAPPELS DE SOLDE (STRICT) :
+       - "SOLDE REPORTE" (Page 1) : Utilise-le UNIQUEMENT comme solde de départ pour tes calculs. NE L'INCLUS PAS dans ta liste de transactions JSON.
+       - "REPORT" (Haut de page) : À ignorer totalement, ne pas extraire.
+       - "SOLDE A REPORTER" / "SOLDE EN..." : Ce sont des bornes d'arrêt. NE PAS extraire.
+    3. AUCUN DOUBLON : Ta liste JSON ne doit contenir QUE les mouvements réels (Débit ou Crédit).
+    4. POUR CHAQUE LIGNE RÉELLE : Date (YYYY-MM-DD), Libellé (complet), Montant, et SOLDE (runningBalance).
     """
     try:
         flash_llm = get_llm()
@@ -508,8 +508,7 @@ def visual_itinerant_node(state: AgentState):
         RÈGLES (RELEVÉ BCV) :
         1. Date (YYYY-MM-DD), Montant (SIGNÉ), Libellé, et SOLDE (runningBalance).
         2. BORNES : Ignore tout ce qui précède "SOLDE REPORTE" ou "REPORT". Arrête-toi à "SOLDE A REPORTER" ou "SOLDE EN".
-        3. DOUBLONS : La ligne "REPORT" en haut de page ne doit PAS être extraite comme une transaction.
-        4. SOLDE REPORTE (Page 1) : À extraire comme point de départ (Montant 0).
+        3. EXCLUSION : Les lignes "SOLDE REPORTE", "REPORT", "SOLDE A REPORTER" ne sont PAS des transactions. NE PAS les inclure dans le JSON.
         """
         
         message_content = [{"type": "text", "text": prompt}] + images_content
