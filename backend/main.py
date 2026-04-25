@@ -293,12 +293,17 @@ def worker_a_node(state: AgentState):
     RELEVÉ BRUT :
     {state.raw_text}
     
-        RÈGLES STRICTES :
-    1. Repère les colonnes DÉBIT (-), CRÉDIT (+), et SOLDE (runningBalance).
-    2. Pour chaque ligne : Date (YYYY-MM-DD), Libellé (court), Montant, et SOLDE après opération.
-    3. Reconstitue les blocs coupés entre deux pages : si tu vois le mot "REPORT" en haut d'une page, c'est la suite de la transaction précédente.
-    4. fullRawText : Copie tout le texte brut lié à la transaction (obligatoire).
-    5. ANCRE INITIALE : Tu DOIS absolument extraire la ligne "SOLDE REPORTE" ou "SOLDE INITIAL" au tout début, avec un montant de 0 et son SOLDE (runningBalance). Elle est vitale pour la chaîne mathématique.
+        RÈGLES D'OR (LOGIQUE RELEVÉ BCV) :
+    1. STRUCTURE DES PAGES :
+       - Page 1 : Les transactions sont ENTRE "SOLDE REPORTE" et "SOLDE A REPORTER" (exclus).
+       - Pages suivantes : Les transactions sont ENTRE "REPORT" (en haut) et "SOLDE A REPORTER" (en bas, exclus).
+       - Dernière page : Les transactions sont ENTRE "REPORT" et "SOLDE EN..." (exclus).
+    2. GESTION DES RAPPELS DE SOLDE :
+       - "SOLDE REPORTE" (Page 1) : C'est ton point de départ. Extrais-le comme ANCRE (Montant 0, Date, Solde).
+       - "REPORT" (Haut de page) : NE PAS extraire comme transaction, c'est un doublon du solde précédent.
+       - "SOLDE A REPORTER" / "SOLDE EN..." : Ce sont des bornes d'arrêt, ne pas les extraire comme transactions.
+    3. POUR CHAQUE LIGNE RÉELLE : Date (YYYY-MM-DD), Libellé (complet), Montant (Débit - / Crédit +), et SOLDE (runningBalance).
+    4. fullRawText : Copie tout le texte brut lié.
     """
     try:
         flash_llm = get_llm()
@@ -317,9 +322,11 @@ def worker_b_node(state: AgentState):
     RELEVÉ BRUT :
     {state.raw_text}
     
-    RÈGLES identiques à A (Date, Montant, Débit/Crédit, SOLDE/runningBalance), mais sois EXTRÊMEMENT attentif aux petits caractères et aux dates répétées.
-    Note : Si le mot "REPORT" apparaît en majuscules en haut d'une page, il indique que l'information suivante appartient à la transaction de la page précédente. 
-    ANCRE INITIALE : Tu DOIS extraire la ligne "SOLDE REPORTE" ou "SOLDE INITIAL" au tout début (Montant 0, mais avec son runningBalance).
+        RÈGLES BCV :
+        - Début : Après "SOLDE REPORTE" (p1) ou "REPORT" (pX).
+        - Fin : Avant "SOLDE A REPORTER" ou "SOLDE EN".
+        - Ignorer les répétitions "REPORT" en haut de page.
+        - Focus sur Date, Montant, Solde, et Libellé complet.
     """
     try:
         flash_llm = get_llm()
@@ -356,12 +363,12 @@ def itinerant_worker_node(state: AgentState):
         TEXTE DU FRAGMENT :
         {chunk_text}
         
-        RÈGLES :
-        1. Extrais TOUTES les transactions de ce fragment.
-        2. Date (YYYY-MM-DD), Montant, Libellé, et SOLDE (runningBalance).
-        3. fullRawText : Copie tout le texte brut lié (vital).
-        4. GESTION DU "REPORT" : Si "REPORT" est en haut du texte, lie les données à la transaction parente si possible.
-        5. ANCRE INITIALE : Tu DOIS extraire les lignes "SOLDE REPORTE" ou "SOLDE INITIAL" (Montant 0, avec son runningBalance).
+        RÈGLES BCV :
+        1. STRUCTURE : Transactions entre "SOLDE REPORTE" (p1) ou "REPORT" et "SOLDE A REPORTER" ou "SOLDE EN".
+        2. DOUBLONS : NE PAS extraire "REPORT" en haut de page comme une transaction.
+        3. SOLDE REPORTE (Page 1) : Extraire comme ANCRE de départ (Montant 0).
+        4. RÉEL : Extraire Date, Libellé, Montant, Solde pour chaque mouvement réel.
+        5. fullRawText : Copie tout le texte brut lié (vital).
         """
         try:
             result = structured_llm.invoke(prompt)
@@ -435,10 +442,11 @@ def visual_itinerant_node(state: AgentState):
         - Colonnes de DROITE (Crédits/Dépôts) = montants POSITIFS (+).
         GARANTIR LE BON SIGNE EST TA MISSION PRINCIPALE.
         
-        RÈGLES :
-        1. Date (YYYY-MM-DD), Montant (AVEC LE BON SIGNE), Libellé court, et SOLDE (runningBalance) si visible.
-        2. fullRawText : Copie le texte lié tel que tu le vois.
-        3. REPORT : Lie les informations coupées entre pages si nécessaire. EXTRAIS AUSSI la ligne "SOLDE REPORTE" (montant 0, avec son runningBalance).
+        RÈGLES (RELEVÉ BCV) :
+        1. Date (YYYY-MM-DD), Montant (SIGNÉ), Libellé, et SOLDE (runningBalance).
+        2. BORNES : Ignore tout ce qui précède "SOLDE REPORTE" ou "REPORT". Arrête-toi à "SOLDE A REPORTER" ou "SOLDE EN".
+        3. DOUBLONS : La ligne "REPORT" en haut de page ne doit PAS être extraite comme une transaction.
+        4. SOLDE REPORTE (Page 1) : À extraire comme point de départ (Montant 0).
         """
         
         message_content = [{"type": "text", "text": prompt}] + images_content
@@ -591,8 +599,7 @@ def foreman_consensus_node(state: AgentState):
     merged_list = sorted(merged_map.values(), key=lambda x: parse_date(x.date))
     
     # --- PRÉ-FILTRAGE DES ANCRES POUR LA VÉRIFICATION ---
-    # On sépare les transactions réelles des lignes de solde pour éviter les fausses ruptures
-    SOLDE_KEYWORDS = ["SOLDE REPORTE", "SOLDE REPORTER", "SOLDE AU", "NOUVEAU SOLDE", "TOTAL DES MOUVEMENTS", "REPORT DE SOLDE", "SOLDE INITIAL", "SOLDE EN VOTRE FAVEUR", "SOLDE EN NOTRE FAVEUR"]
+    SOLDE_KEYWORDS = ["SOLDE REPORTE", "SOLDE REPORTER", "SOLDE AU", "NOUVEAU SOLDE", "TOTAL DES MOUVEMENTS", "REPORT DE SOLDE", "SOLDE INITIAL", "SOLDE EN"]
     
     real_txns = []
     anchors = []
