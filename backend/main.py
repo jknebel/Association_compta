@@ -194,6 +194,7 @@ class AgentState(BaseModel):
     recovery_attempts: int = 0
     expected_transaction_count: int = 0
     starting_balance: float = 0.0 # Nouveau : extrait par le pré-parser
+    detected_dates: List[str] = [] # Nouveau : pour le débogage
     logs: Annotated[List[str], operator.add] = []
     extracted_transactions: List[Transaction] = []
     classification_a_txns: Annotated[List[ClassifiedTransaction], operator.add] = []
@@ -298,9 +299,11 @@ def pre_parser_node(state: AgentState):
     
     starting_bal = 0.0
     total_dates = 0
+    detected_dates = []
     cleaned_pages = []
     
-    for page_text in state.raw_pages:
+    for i, page_text in enumerate(state.raw_pages):
+        page_num = i + 1
         lines = page_text.split('\n')
         keep = False
         page_content = []
@@ -315,6 +318,7 @@ def pre_parser_node(state: AgentState):
             
             # 2. START Keywords
             if "SOLDE REPORTE" in upper_line:
+                print(f"DEBUG: 'SOLDE REPORTE' détecté sur Page {page_num}")
                 keep = True
                 # Extraction du montant pour le passer proprement à l'IA sans inclure la ligne
                 amounts = re.findall(r"[\d' ]+\.\d{2}", line.replace("'", ""))
@@ -323,6 +327,7 @@ def pre_parser_node(state: AgentState):
                     except: pass
                 continue # On ne l'ajoute pas à page_content (Règle : non inclus)
             elif "REPORT" in upper_line:
+                print(f"DEBUG: 'REPORT' détecté sur Page {page_num}")
                 keep = True
                 continue # On ne l'ajoute pas à page_content (Règle : non inclus)
                 
@@ -331,19 +336,28 @@ def pre_parser_node(state: AgentState):
                 if any(x in upper_line for x in ["DATE", "VALEUR", "LIBELLÉ", "DÉBIT", "CRÉDIT", "SOLDE"]):
                     continue
                 page_content.append(line)
-                if date_pattern.search(line):
+                match = date_pattern.search(line)
+                if match:
+                    detected_dates.append(match.group())
                     total_dates += 1
         
         cleaned_pages.append("\n".join(page_content))
     
     full_cleaned_text = "\n--- NOUVELLE PAGE ---\n".join(cleaned_pages)
     
+    print(f"DEBUG: Total dates détectées: {len(detected_dates)}")
+    print(f"DEBUG: Liste des dates: {detected_dates}")
+
     return {
         "raw_text": full_cleaned_text,
         "raw_pages": cleaned_pages,
         "expected_transaction_count": total_dates,
+        "detected_dates": detected_dates,
         "starting_balance": starting_bal,
-        "logs": [f"Pré-Parser : Filtrage BCV (non-inclus). Solde initial détecté : {starting_bal} CHF."]
+        "logs": [
+            f"Pré-Parser : Filtrage BCV terminé. Solde initial : {starting_bal} CHF.",
+            f"Pré-Parser : {total_dates} dates détectées : {', '.join(detected_dates)}"
+        ]
     }
 
 def worker_a_node(state: AgentState):
@@ -1084,6 +1098,8 @@ async def process_statement(
         
         return {
             "transactions": output["extracted_transactions"],
+            "detected_dates": output.get("detected_dates", []),
+            "parser_output": output.get("raw_text", ""),
             "logs": output["logs"]
         }
         

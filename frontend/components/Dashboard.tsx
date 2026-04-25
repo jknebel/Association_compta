@@ -1,6 +1,7 @@
 import React from 'react';
 import { Account, Transaction, AccountType, TransactionStatus } from '../../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { Edit2 } from 'lucide-react';
 
 interface DashboardProps {
   transactions: Transaction[];
@@ -173,10 +174,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
           {accounts.filter(a => a.type === AccountType.ASSET).length === 0 && (
             <div 
               className="mt-2 p-2 border border-dashed border-slate-700 rounded-lg hover:border-blue-500 hover:bg-blue-500/5 cursor-pointer transition-all"
-              onClick={() => onNavigate('settings')}
+              onClick={() => {
+                const newAcc: Account = {
+                  id: 'acc_' + Date.now(),
+                  code: '1020',
+                  label: 'Compte Bancaire',
+                  description: 'Compte de trésorerie principal',
+                  type: AccountType.ASSET,
+                  isMembership: false,
+                  initialBalance: 0
+                };
+                setEditingAccount(newAcc);
+                setTempBalance(0);
+              }}
             >
               <p className="text-[10px] text-slate-500 italic">Aucun compte ACTIF défini.</p>
-              <p className="text-[9px] text-blue-400 font-bold mt-1">Cliquez pour configurer dans le Plan Comptable</p>
+              <p className="text-[9px] text-blue-400 font-bold mt-1">Cliquez pour configurer le solde initial</p>
             </div>
           )}
         </div>
