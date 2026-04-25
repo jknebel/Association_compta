@@ -577,20 +577,28 @@ def foreman_consensus_node(state: AgentState):
         if key not in merged_map or len(t.fullRawText or "") > len(merged_map[key].fullRawText or ""):
             merged_map[key] = t
                 
-    merged_list = sorted(merged_map.values(), key=lambda x: str(x.date or "9999-12-31"))
+    def parse_date(d_str):
+        if not d_str: return "9999-12-31"
+        import re
+        m = re.search(r"(\d{1,2})[\./-](\d{1,2})[\./-](\d{2,4})", str(d_str))
+        if m:
+            d, month, y = m.groups()
+            if len(y) == 2: y = "20" + y
+            return f"{y}-{month.zfill(2)}-{d.zfill(2)}"
+        return str(d_str)
+
+    merged_list = sorted(merged_map.values(), key=lambda x: parse_date(x.date))
     
     final_verified_txns = []
     chain_broken_msg = None
     SOLDE_KEYWORDS = ["SOLDE REPORTE", "SOLDE REPORTER", "SOLDE AU", "NOUVEAU SOLDE", "TOTAL DES MOUVEMENTS", "REPORT DE SOLDE", "SOLDE INITIAL"]
     
-    for i in range(len(merged_list)):
-        t = merged_list[i]
-        
+    for t in merged_list:
         # Ignorer la vérification mathématique si c'est explicitement une ligne d'ancrage sans montant utile
         is_anchor = any(kw in (t.description or "").upper() for kw in SOLDE_KEYWORDS)
         
-        if i > 0:
-            prev = merged_list[i-1]
+        if len(final_verified_txns) > 0:
+            prev = final_verified_txns[-1]
             if prev.runningBalance is not None and t.runningBalance is not None and not is_anchor:
                 actual_diff = round(t.runningBalance - prev.runningBalance, 2)
                 
