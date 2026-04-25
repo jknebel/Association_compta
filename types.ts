@@ -2,7 +2,9 @@
 export enum AccountType {
   INCOME = 'PRODUIT',
   EXPENSE = 'CHARGE',
-  MIXED = 'MIXTE'
+  MIXED = 'MIXTE',
+  ASSET = 'ACTIF',
+  LIABILITY = 'PASSIF'
 }
 
 export interface Account {

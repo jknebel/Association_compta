@@ -297,6 +297,7 @@ def pre_parser_node(state: AgentState):
     date_pattern = re.compile(r'\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})')
     
     starting_bal = 0.0
+    total_dates = 0
     
     for page_text in state.raw_pages:
         lines = page_text.split('\n')
