@@ -17,6 +17,7 @@
 ## ✨ Fonctionnalités Clés
 
 - **🤖 Pipeline Multi-Agents (LangGraph)** : Extraction robuste des relevés bancaires avec double vérification (Workers A/B) et audit d'intégrité.
+- **📚 Apprentissage par l'Historique (RAG)** : Système de classification intelligent qui apprend de vos validations passées. L'IA analyse les mois précédents pour catégoriser automatiquement les écritures récurrentes (ex: cotisations, parkings).
 - **🧠 Raisonnement IA Avancé (Chain of Thought)** : Les agents classifieurs (A et B) justifient chaque choix de compte (transaction par transaction), permettant au Juge IA de prendre des décisions finales éclairées.
 - **🎯 Contexte Métier Dynamique** : Injection de règles spécifiques (ex: instructions de cotisations, gestion des membres) directement dans l'invite des agents via un contexte global.
 - **📄 Vision Intelligence** : Analyse visuelle des reçus et factures pour extraire montants, dates et libellés.
