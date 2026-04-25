@@ -66,6 +66,7 @@ class Account(BaseModel):
     parentId: Optional[str] = None
     description: Optional[str] = None
     isMembership: bool = False
+    iaContext: Optional[str] = None
 
 class Transaction(BaseModel):
     id: Optional[str] = None
@@ -594,7 +595,7 @@ def classifier_a_node(state: AgentState):
     history_context = get_user_history_context(state.user_id)
     accounts = state.existing_accounts
     accounts_info = "\n".join([
-        f"ID: {a.id} | Code: {a.code} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'}" 
+        f"ID: {a.id} | Code: {a.code} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'} | Contexte IA: {a.iaContext or 'N/A'}" 
         for a in accounts
     ])
     
@@ -631,7 +632,7 @@ def classifier_b_node(state: AgentState):
     print("--- [Agent: CLASSIFIER_B][INPUT_START] ---")
     accounts = state.existing_accounts
     accounts_info = "\n".join([
-        f"ID: {a.id} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'}" 
+        f"ID: {a.id} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'} | Contexte IA: {a.iaContext or 'N/A'}" 
         for a in accounts
     ])
     
@@ -1101,7 +1102,7 @@ async def suggest_category(request: SuggestCategoryRequest):
         
         Task 2: Extract 'memberName' if available in 'fullRawText' or 'description'.
         
-        Accounts: {json.dumps(accounts_context)}
+        Accounts: {json.dumps([{"id": a.id, "label": a.label, "code": a.code, "description": a.description, "iaContext": a.iaContext} for a in accounts])}
         
         Return a strict JSON object: {{ "accountId": "ID_OR_NULL", "memberName": "EXTRACTED_NAME_OR_NULL" }}
         """
