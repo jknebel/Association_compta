@@ -672,51 +672,54 @@ def foreman_consensus_node(state: AgentState):
         else:
             real_txns.append(t)
     
-    final_verified_txns = []
-    chain_broken_msg = None
+    # --- VÉRIFICATION DE LA CHAÎNE MATHÉMATIQUE ---
+    # On initialise avec le solde de départ extrait par le pré-parser
+    current_balance = state.starting_balance
+    last_description = "SOLDE INITIAL"
     
-    ghost_count = 0
-    MAX_GHOSTS = 30 # Limit for safety
-
-    # On vérifie la chaîne uniquement sur les transactions RÉELLES
+    # On utilise une liste temporaire pour la validation
+    verified_txns_internal = []
+    
     for t in real_txns:
-        if len(final_verified_txns) > 0:
-            prev = final_verified_txns[-1]
-            if prev.runningBalance is not None and t.runningBalance is not None:
-                expected_diff = t.amount
-                actual_diff = round(t.runningBalance - prev.runningBalance, 2)
-                
-                if abs(actual_diff - expected_diff) > 0.01:
-                    # Sign correction (+ instead of -)
-                    if abs(actual_diff + t.amount) < 0.01:
-                        print(f"Correction de signe détectée pour {t.description}: {t.amount} -> {actual_diff}")
-                        t.amount = actual_diff
+        if current_balance is not None and t.runningBalance is not None:
+            expected_diff = t.amount
+            actual_diff = round(t.runningBalance - current_balance, 2)
+            
+            if abs(actual_diff - expected_diff) > 0.01:
+                # Tentative de correction de signe
+                if abs(actual_diff + t.amount) < 0.01:
+                    print(f"Correction de signe détectée pour {t.description}: {t.amount} -> {actual_diff}")
+                    t.amount = actual_diff
+                else:
+                    gap = round(actual_diff - expected_diff, 2)
+                    print(f"RUPTURE DE CHAÎNE détectée avant {t.description}. Prévu: {current_balance + expected_diff}, Réel: {t.runningBalance}, Différence (trou): {gap}")
+                    
+                    if state.recovery_attempts < 2: 
+                        chain_broken_msg = f"RUPTURE CHAINE: Il manque {gap} CHF entre '{last_description}' (Solde: {current_balance}) et '{t.description}' (Solde: {t.runningBalance})."
+                        break 
                     else:
-                        gap = round(actual_diff - expected_diff, 2)
-                        print(f"RUPTURE DE CHAÎNE détectée avant {t.description}. Prévu: {prev.runningBalance + expected_diff}, Réel: {t.runningBalance}, Différence (trou): {gap}")
-                        
-                        if state.recovery_attempts < 2: 
-                            chain_broken_msg = f"RUPTURE CHAINE: Il manque {gap} CHF entre '{prev.description}' (Solde: {prev.runningBalance}) et '{t.description}' (Solde: {t.runningBalance})."
-                            break 
+                        if ghost_count < MAX_GHOSTS:
+                            print(f"Insertion d'une Transaction Fantôme de {gap} CHF.")
+                            ghost = Transaction(
+                                date=t.date,
+                                description=f"ÉCART DE SOLDE DÉTECTÉ ({gap} CHF)",
+                                amount=gap,
+                                runningBalance=round(current_balance + gap, 2),
+                                fullRawText=f"Rupture automatique. Prévu: {current_balance + expected_diff}, Réel: {t.runningBalance}"
+                            )
+                            verified_txns_internal.append(ghost)
+                            current_balance = ghost.runningBalance
+                            last_description = ghost.description
+                            ghost_count += 1
                         else:
-                            if ghost_count < MAX_GHOSTS:
-                                print(f"Insertion d'une Transaction Fantôme de {gap} CHF.")
-                                ghost = Transaction(
-                                    date=t.date,
-                                    description=f"ÉCART DE SOLDE DÉTECTÉ ({gap} CHF)",
-                                    amount=gap,
-                                    runningBalance=round(prev.runningBalance + gap, 2),
-                                    fullRawText=f"Rupture de chaîne automatique. Prévu: {prev.runningBalance + expected_diff}, Réel: {t.runningBalance}"
-                                )
-                                final_verified_txns.append(ghost)
-                                ghost_count += 1
-                                # Now update prev for the current transaction
-                                prev = ghost
-                            else:
-                                print("Trop de ruptures de chaîne. Arrêt des corrections fantômes.")
-                                break
+                            print("Trop de ruptures. Arrêt.")
+                            break
+        
+        verified_txns_internal.append(t)
+        current_balance = t.runningBalance
+        last_description = t.description
 
-        final_verified_txns.append(t)
+    final_verified_txns = verified_txns_internal
 
     # Si la chaîne est rompue, on retourne immédiatement avec l'alerte
     if chain_broken_msg:
