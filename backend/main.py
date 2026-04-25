@@ -197,6 +197,7 @@ class AgentState(BaseModel):
     page_count: int = 0
     global_context: str = ""
     logs: Annotated[List[str], operator.add] = []
+    recovery_attempts: int = 0
 
 def vision_node(state: AgentState):
     """Vision Extraction: Image/PDF -> Raw Text"""
@@ -290,12 +291,12 @@ def worker_a_node(state: AgentState):
     RELEVÉ BRUT :
     {state.raw_text}
     
-    RÈGLES STRICTES :
+        RÈGLES STRICTES :
     1. Repère les colonnes DÉBIT (-), CRÉDIT (+), et SOLDE (runningBalance).
     2. Pour chaque ligne : Date (YYYY-MM-DD), Libellé (court), Montant, et SOLDE après opération.
     3. Reconstitue les blocs coupés entre deux pages : si tu vois le mot "REPORT" en haut d'une page, c'est la suite de la transaction précédente.
     4. fullRawText : Copie tout le texte brut lié à la transaction (obligatoire).
-    5. IGNORER les lignes de résumé comme "SOLDE REPORTER", "NOUVEAU SOLDE", ou "TOTAL DES MOUVEMENTS". Ce ne sont PAS des transactions.
+    5. ANCRE INITIALE : Tu DOIS absolument extraire la ligne "SOLDE REPORTE" ou "SOLDE INITIAL" au tout début, avec un montant de 0 et son SOLDE (runningBalance). Elle est vitale pour la chaîne mathématique.
     """
     try:
         flash_llm = get_llm()
@@ -316,7 +317,7 @@ def worker_b_node(state: AgentState):
     
     RÈGLES identiques à A (Date, Montant, Débit/Crédit, SOLDE/runningBalance), mais sois EXTRÊMEMENT attentif aux petits caractères et aux dates répétées.
     Note : Si le mot "REPORT" apparaît en majuscules en haut d'une page, il indique que l'information suivante appartient à la transaction de la page précédente. 
-    IGNORER les lignes "SOLDE REPORTER", "NOUVEAU SOLDE".
+    ANCRE INITIALE : Tu DOIS extraire la ligne "SOLDE REPORTE" ou "SOLDE INITIAL" au tout début (Montant 0, mais avec son runningBalance).
     """
     try:
         flash_llm = get_llm()
@@ -358,7 +359,7 @@ def itinerant_worker_node(state: AgentState):
         2. Date (YYYY-MM-DD), Montant, Libellé, et SOLDE (runningBalance).
         3. fullRawText : Copie tout le texte brut lié (vital).
         4. GESTION DU "REPORT" : Si "REPORT" est en haut du texte, lie les données à la transaction parente si possible.
-        5. FILTRAGE : Ignore les lignes de type "SOLDE REPORTER" ou "SOLDE AU ...".
+        5. ANCRE INITIALE : Tu DOIS extraire les lignes "SOLDE REPORTE" ou "SOLDE INITIAL" (Montant 0, avec son runningBalance).
         """
         try:
             result = structured_llm.invoke(prompt)
@@ -369,8 +370,9 @@ def itinerant_worker_node(state: AgentState):
     # Deduplicate within itinerant worker itself (as there is overlap)
     unique_txns = {}
     for t in all_itinerant_txns:
-        # Use runningBalance as anchor if available
-        key = f"{t.runningBalance}" if t.runningBalance else f"{t.date}_{t.amount}_{t.description[:15]}"
+        desc_start = (t.description or "")[:15]
+        bal = t.runningBalance if t.runningBalance is not None else "None"
+        key = f"{t.date}_{t.amount}_{bal}_{desc_start}"
         if key not in unique_txns:
             unique_txns[key] = t
             
@@ -434,7 +436,7 @@ def visual_itinerant_node(state: AgentState):
         RÈGLES :
         1. Date (YYYY-MM-DD), Montant (AVEC LE BON SIGNE), Libellé court, et SOLDE (runningBalance) si visible.
         2. fullRawText : Copie le texte lié tel que tu le vois.
-        3. REPORT : Lie les informations coupées entre pages si nécessaire. Ignore les lignes "SOLDE REPORTER".
+        3. REPORT : Lie les informations coupées entre pages si nécessaire. EXTRAIS AUSSI la ligne "SOLDE REPORTE" (montant 0, avec son runningBalance).
         """
         
         message_content = [{"type": "text", "text": prompt}] + images_content
@@ -450,7 +452,9 @@ def visual_itinerant_node(state: AgentState):
     
     unique_txns = {}
     for t in all_visual_txns:
-        key = f"{t.runningBalance}" if t.runningBalance else f"{t.date}_{t.amount}_{t.description[:15]}"
+        desc_start = (t.description or "")[:15]
+        bal = t.runningBalance if t.runningBalance is not None else "None"
+        key = f"{t.date}_{t.amount}_{bal}_{desc_start}"
         if key not in unique_txns:
             unique_txns[key] = t
             
@@ -555,7 +559,7 @@ def foreman_consensus_node(state: AgentState):
 
     all_versions = a_txns + b_txns + i_txns + v_txns + extra_txns
     
-    # Stratégie de fusion par solde
+    # Stratégie de fusion avec clé robuste
     merged_map = {}
     for t in all_versions:
         # Correction de signe par le Visuel (Juge de paix) avant fusion
@@ -564,32 +568,64 @@ def foreman_consensus_node(state: AgentState):
         if v_key in visual_sign_lookup:
             t.amount = abs(t.amount) * visual_sign_lookup[v_key]
 
-        if t.runningBalance is not None:
-            key = f"{t.runningBalance}"
-            if key not in merged_map or len(t.fullRawText or "") > len(merged_map[key].fullRawText or ""):
-                merged_map[key] = t
-        else:
-            key = f"{t.date}_{t.amount}_{t.description[:10]}"
-            if key not in merged_map:
-                merged_map[key] = t
+        desc_start = (t.description or "")[:15]
+        bal = t.runningBalance if t.runningBalance is not None else "None"
+        key = f"{t.date}_{t.amount}_{bal}_{desc_start}"
+        
+        if key not in merged_map or len(t.fullRawText or "") > len(merged_map[key].fullRawText or ""):
+            merged_map[key] = t
                 
     merged_list = sorted(merged_map.values(), key=lambda x: str(x.date or "9999-12-31"))
     
     final_verified_txns = []
+    chain_broken_msg = None
+    SOLDE_KEYWORDS = ["SOLDE REPORTE", "SOLDE REPORTER", "SOLDE AU", "NOUVEAU SOLDE", "TOTAL DES MOUVEMENTS", "REPORT DE SOLDE", "SOLDE INITIAL"]
+    
     for i in range(len(merged_list)):
         t = merged_list[i]
+        
+        # Ignorer la vérification mathématique si c'est explicitement une ligne d'ancrage sans montant utile
+        is_anchor = any(kw in (t.description or "").upper() for kw in SOLDE_KEYWORDS)
+        
         if i > 0:
             prev = merged_list[i-1]
-            if prev.runningBalance is not None and t.runningBalance is not None:
+            if prev.runningBalance is not None and t.runningBalance is not None and not is_anchor:
                 actual_diff = round(t.runningBalance - prev.runningBalance, 2)
+                
                 if abs(actual_diff - t.amount) > 0.01:
-                    print(f"Correction de signe mathématique ou montant pour {t.description}: {t.amount} -> {actual_diff}")
-                    t.amount = actual_diff
+                    # Correction de signe (+ au lieu de -)
+                    if abs(actual_diff + t.amount) < 0.01:
+                        print(f"Correction de signe détectée pour {t.description}: {t.amount} -> {actual_diff}")
+                        t.amount = actual_diff
+                    else:
+                        gap = round(actual_diff - t.amount, 2)
+                        print(f"RUPTURE DE CHAÎNE détectée avant {t.description}. Prévu: {prev.runningBalance + t.amount}, Réel: {t.runningBalance}, Différence (trou): {gap}")
+                        
+                        if state.recovery_attempts < 3:
+                            chain_broken_msg = f"RUPTURE CHAINE: Il manque exactement {gap} CHF entre la ligne '{prev.description}' (Solde: {prev.runningBalance}) et la ligne '{t.description}' (Solde: {t.runningBalance}). Trouve la ou les transactions manquantes totalisant {gap} CHF."
+                            break # On arrête le traitement pour déclencher la boucle
+                        else:
+                            print(f"Limite d'essais atteinte. Insertion d'une Transaction Fantôme de {gap} CHF.")
+                            ghost = Transaction(
+                                date=t.date,
+                                description="ERREUR IA: TRANSACTION MANQUANTE",
+                                amount=gap,
+                                runningBalance=round(prev.runningBalance + gap, 2),
+                                fullRawText="Généré automatiquement suite à une rupture de chaîne non résolue après 3 essais."
+                            )
+                            final_verified_txns.append(ghost)
+
         final_verified_txns.append(t)
 
-    # --- FILTRAGE SOLDE REPORTE ---
-    # Ces lignes ne sont PAS des transactions réelles, ce sont des soldes reportés.
-    SOLDE_KEYWORDS = ["SOLDE REPORTE", "SOLDE REPORTER", "SOLDE AU", "NOUVEAU SOLDE", "TOTAL DES MOUVEMENTS", "REPORT DE SOLDE"]
+    # Si la chaîne est rompue, on retourne immédiatement avec l'alerte
+    if chain_broken_msg:
+        return {
+            "integrity_report": chain_broken_msg,
+            "logs": [f"Foreman : {chain_broken_msg}"]
+        }
+
+    # --- FILTRAGE SOLDE REPORTE À LA FIN ---
+    # Maintenant que la chaîne est vérifiée de bout en bout, on peut jeter les lignes d'ancrage
     before_filter = len(final_verified_txns)
     final_verified_txns = [
         t for t in final_verified_txns 
@@ -597,7 +633,7 @@ def foreman_consensus_node(state: AgentState):
     ]
     filtered_count = before_filter - len(final_verified_txns)
     if filtered_count > 0:
-        print(f"--- [Agent: FOREMAN] Filtré {filtered_count} lignes SOLDE REPORTE ---")
+        print(f"--- [Agent: FOREMAN] Filtré {filtered_count} lignes SOLDE REPORTE (Ancres) ---")
 
     log_msgs = [f"Foreman : {len(final_verified_txns)} transactions validées après consensus."]
     if filtered_count > 0:
@@ -613,6 +649,41 @@ def foreman_consensus_node(state: AgentState):
         "extracted_transactions": final_verified_txns,
         "logs": log_msgs
     }
+
+def recovery_worker_node(state: AgentState):
+    """Recovery Worker: Tries to fix broken chains found by foreman"""
+    print("--- [Agent: RECOVERY_WORKER][INPUT_START] ---")
+    prompt = f"""
+    Tu es l'Agent de Récupération. Une erreur critique a été détectée dans la chaîne mathématique du relevé bancaire.
+    ERREUR À RÉSOUDRE :
+    {state.integrity_report}
+    
+    TEXTE BRUT DU RELEVÉ :
+    {state.raw_text}
+    
+    Trouve LA ou LES transactions manquantes qui correspondent exactement à ce trou mathématique.
+    Extrais les avec : Date, Montant exact, Libellé, runningBalance.
+    """
+    try:
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(TransactionList)
+        result = structured_llm.invoke(prompt)
+        print(f"Recovery found {len(result.transactions)} transactions.")
+        return {
+            "worker_a_txns": result.transactions, # On injecte dans le pool existant pour que le foreman refusionne
+            "recovery_attempts": state.recovery_attempts + 1,
+            "logs": [f"Agent Récupération : Tentative {state.recovery_attempts + 1}, {len(result.transactions)} txns trouvées."]
+        }
+    except Exception as e:
+        print(f"Recovery error: {e}")
+        return {
+            "recovery_attempts": state.recovery_attempts + 1,
+            "logs": [f"Erreur Agent Récupération : {str(e)}"]
+        }
+
+def start_classification_node(state: AgentState):
+    """Dummy node to fan out to classifiers after foreman loop"""
+    return {}
 
 def classifier_a_node(state: AgentState):
     """Classifier A: Accurate categorization based on rules and history."""
@@ -817,6 +888,8 @@ workflow.add_node("itinerant", itinerant_worker_node)
 workflow.add_node("visual_itinerant", visual_itinerant_node)
 workflow.add_node("integrity_auditor", integrity_auditor_node)
 workflow.add_node("foreman", foreman_consensus_node)
+workflow.add_node("recovery_worker", recovery_worker_node)
+workflow.add_node("start_classification", start_classification_node)
 workflow.add_node("classifier_a", classifier_a_node)
 workflow.add_node("classifier_b", classifier_b_node)
 workflow.add_node("judge", classification_consensus_node)
@@ -834,8 +907,19 @@ workflow.add_edge("visual_itinerant", "integrity_auditor")
 
 workflow.add_edge("integrity_auditor", "foreman")
 
-workflow.add_edge("foreman", "classifier_a")
-workflow.add_edge("foreman", "classifier_b")
+def check_chain(state: AgentState):
+    if state.integrity_report and state.integrity_report.startswith("RUPTURE"):
+        return "broken"
+    return "ok"
+
+workflow.add_conditional_edges("foreman", check_chain, {
+    "broken": "recovery_worker",
+    "ok": "start_classification"
+})
+workflow.add_edge("recovery_worker", "foreman")
+
+workflow.add_edge("start_classification", "classifier_a")
+workflow.add_edge("start_classification", "classifier_b")
 workflow.add_edge("classifier_a", "judge")
 workflow.add_edge("classifier_b", "judge")
 workflow.add_edge("judge", END)
