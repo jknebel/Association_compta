@@ -1,7 +1,7 @@
 import React from 'react';
 import { Account, Transaction, AccountType, TransactionStatus } from '../../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { Edit2 } from 'lucide-react';
+import { Edit2, ChevronRight, ChevronDown, Layers, List } from 'lucide-react';
 
 interface DashboardProps {
   transactions: Transaction[];
@@ -25,25 +25,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
   const pendingDebit = Math.abs(nonApprovedTxns.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0));
   const pendingCredit = nonApprovedTxns.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0);
 
-  // 3. Chart Data (Main accounts only)
-  const getBranchTotal = (accId: string) => {
-    const getAllChildIds = (parentId: string): string[] => {
-        const children = accounts.filter(a => a.parentId === parentId);
-        return [...children.map(c => c.id), ...children.flatMap(c => getAllChildIds(c.id))];
-    };
-    const childIds = getAllChildIds(accId);
-    const branchTxns = approvedTxns.filter(t => t.accountId === accId || (t.accountId && childIds.includes(t.accountId)));
-    return branchTxns.reduce((sum, t) => sum + t.amount, 0);
-  };
-
   const incomeChartData = accounts
-    .filter(a => !a.parentId && a.type === AccountType.INCOME)
-    .map(acc => ({ name: acc.label, value: getBranchTotal(acc.id) }))
+    .filter(a => !a.parentId && (a.type === AccountType.INCOME || a.type === AccountType.MIXED || a.type === AccountType.ASSET || a.type === AccountType.LIABILITY))
+    .map(acc => {
+      const childIds = (parentId: string): string[] => {
+        const children = accounts.filter(a => a.parentId === parentId);
+        return [...children.map(c => c.id), ...children.flatMap(c => childIds(c.id))];
+      };
+      const ids = [acc.id, ...childIds(acc.id)];
+      const val = approvedTxns.filter(t => t.accountId && ids.includes(t.accountId) && t.amount > 0).reduce((sum, t) => sum + t.amount, 0);
+      return { name: acc.label, value: val };
+    })
     .filter(d => d.value > 0);
 
   const expenseChartData = accounts
-    .filter(a => !a.parentId && a.type === AccountType.EXPENSE)
-    .map(acc => ({ name: acc.label, value: Math.abs(getBranchTotal(acc.id)) }))
+    .filter(a => !a.parentId && (a.type === AccountType.EXPENSE || a.type === AccountType.MIXED || a.type === AccountType.ASSET || a.type === AccountType.LIABILITY))
+    .map(acc => {
+      const childIds = (parentId: string): string[] => {
+        const children = accounts.filter(a => a.parentId === parentId);
+        return [...children.map(c => c.id), ...children.flatMap(c => childIds(c.id))];
+      };
+      const ids = [acc.id, ...childIds(acc.id)];
+      const val = Math.abs(approvedTxns.filter(t => t.accountId && ids.includes(t.accountId) && t.amount < 0).reduce((sum, t) => sum + t.amount, 0));
+      return { name: acc.label, value: val };
+    })
     .filter(d => d.value > 0);
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
@@ -51,6 +56,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
   // 4. State for Balance Editing Modal
   const [editingAccount, setEditingAccount] = React.useState<Account | null>(null);
   const [tempBalance, setTempBalance] = React.useState<number>(0);
+
+  // 5. State for Hierarchical View
+  const [isGrouped, setIsGrouped] = React.useState<boolean>(true);
+  const [expandedAccounts, setExpandedAccounts] = React.useState<Set<string>>(new Set());
+
+  const toggleExpand = (accId: string) => {
+    const next = new Set(expandedAccounts);
+    if (next.has(accId)) next.delete(accId);
+    else next.add(accId);
+    setExpandedAccounts(next);
+  };
+
+  const expandAll = () => {
+    const allParentIds = accounts.filter(a => accounts.some(child => child.parentId === a.id)).map(a => a.id);
+    setExpandedAccounts(new Set(allParentIds));
+  };
+
+  const collapseAll = () => setExpandedAccounts(new Set());
 
   // --- HELPERS ---
 
@@ -66,8 +89,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
       return [...children.map(c => c.id), ...children.flatMap(c => getAllChildIds(c.id))];
     };
     
+    const children = accounts.filter(a => a.parentId === acc.id);
+    const hasChildren = children.length > 0;
+    const isExpanded = expandedAccounts.has(acc.id);
+
+    // Calculation logic
     const childIds = getAllChildIds(acc.id);
-    const branchTxns = approvedTxns.filter(t => t.accountId === acc.id || (t.accountId && childIds.includes(t.accountId)));
+    // If grouped, parent shows SUM of branch. If flat, shows only its own txns.
+    const branchTxns = approvedTxns.filter(t => t.accountId === acc.id || (isGrouped && t.accountId && childIds.includes(t.accountId)));
     
     const initial = acc.initialBalance || 0;
     const debit = Math.abs(branchTxns.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0));
@@ -75,7 +104,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
     const balance = credit - debit;
     const total = initial + balance;
 
-    const children = accounts.filter(a => a.parentId === acc.id);
     const hasActivity = debit !== 0 || credit !== 0 || initial !== 0;
     const hasActiveChildren = children.some(c => {
       const cChildIds = getAllChildIds(c.id);
@@ -87,25 +115,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
 
     return (
       <React.Fragment key={acc.id}>
-        <tr className={`hover:bg-slate-800/50 transition-colors ${depth === 0 ? 'bg-slate-900/20' : ''}`}>
-          <td className="px-6 py-3" style={{ paddingLeft: `${1.5 + depth * 1.5}rem` }}>
+        <tr className={`hover:bg-slate-800/50 transition-colors ${depth === 0 ? 'bg-slate-900/20' : ''} ${hasChildren && isGrouped ? 'cursor-pointer' : ''}`}
+            onClick={() => hasChildren && isGrouped && toggleExpand(acc.id)}>
+          <td className="px-6 py-3" style={{ paddingLeft: `${1.5 + (isGrouped ? depth * 1.5 : 0)}rem` }}>
             <div className={`flex items-center gap-2 ${depth === 0 ? 'font-bold text-slate-100' : 'text-slate-300'}`}>
+              {isGrouped && hasChildren && (
+                <span className="text-slate-500">
+                  {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </span>
+              )}
+              {!hasChildren && isGrouped && <span className="w-[14px]"></span>}
               <span className="text-[10px] font-mono text-slate-500 opacity-50">{acc.code}</span>
               {acc.label}
             </div>
           </td>
           <td className="px-6 py-3 text-right text-slate-500 font-mono text-xs italic">
-            {(acc.type === AccountType.ASSET || acc.type === AccountType.LIABILITY) && depth === 0 ? (
-               <input 
-                 type="number" 
-                 step="0.01" 
-                 defaultValue={initial} 
-                 onBlur={(e) => {
-                   const val = parseFloat(e.target.value);
-                   if (!isNaN(val) && val !== initial) onUpdateAccount({ ...acc, initialBalance: val });
-                 }}
-                 className="bg-transparent border-b border-slate-800 hover:border-slate-600 focus:border-blue-500 text-right w-24 focus:outline-none transition-colors"
-               />
+            {(acc.type === AccountType.ASSET || acc.type === AccountType.LIABILITY) && (depth === 0 || !isGrouped) ? (
+               <div onClick={(e) => e.stopPropagation()}>
+                 <input 
+                   type="number" 
+                   step="0.01" 
+                   defaultValue={initial} 
+                   onBlur={(e) => {
+                     const val = parseFloat(e.target.value);
+                     if (!isNaN(val) && val !== initial) onUpdateAccount({ ...acc, initialBalance: val });
+                   }}
+                   className="bg-transparent border-b border-slate-800 hover:border-slate-600 focus:border-blue-500 text-right w-24 focus:outline-none transition-colors"
+                 />
+               </div>
             ) : ''}
           </td>
           <td className="px-6 py-3 text-right text-rose-400 font-mono">
@@ -121,7 +158,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
             {formatAmount(total)}
           </td>
         </tr>
-        {children.sort((a, b) => a.code.localeCompare(b.code)).map(child => renderAccountRow(child, depth + 1))}
+        {isGrouped && isExpanded && children.sort((a, b) => a.code.localeCompare(b.code)).map(child => renderAccountRow(child, depth + 1))}
       </React.Fragment>
     );
   };
@@ -216,7 +253,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
       {/* Main Hierarchical Table */}
       <div className="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 overflow-hidden">
         <div className="px-6 py-4 bg-slate-950/50 border-b border-slate-800 flex justify-between items-center">
-          <h3 className="font-bold text-slate-100">Détail des Comptes</h3>
+          <div className="flex items-center gap-4">
+            <h3 className="font-bold text-slate-100">Détail des Comptes</h3>
+            <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
+              <button 
+                onClick={() => setIsGrouped(true)}
+                className={`flex items-center gap-2 px-3 py-1 rounded-md text-xs font-bold transition-all ${isGrouped ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <Layers size={14} /> Hiérarchique
+              </button>
+              <button 
+                onClick={() => setIsGrouped(false)}
+                className={`flex items-center gap-2 px-3 py-1 rounded-md text-xs font-bold transition-all ${!isGrouped ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <List size={14} /> Liste plate
+              </button>
+            </div>
+            {isGrouped && (
+              <div className="flex gap-2">
+                <button onClick={expandAll} className="text-[10px] text-blue-400 hover:text-blue-300 font-bold uppercase">Tout déployer</button>
+                <span className="text-slate-700">|</span>
+                <button onClick={collapseAll} className="text-[10px] text-slate-500 hover:text-slate-400 font-bold uppercase">Tout réduire</button>
+              </div>
+            )}
+          </div>
           <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[10px] text-emerald-500 font-bold uppercase tracking-tighter">
             Données Approuvées
           </div>
@@ -236,15 +296,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
             </thead>
             <tbody className="divide-y divide-slate-800/50">
               <tr className="bg-slate-950/30"><td colSpan={6} className="px-6 py-2 text-[10px] font-black text-emerald-500/50 uppercase tracking-tighter">Produits</td></tr>
-              {accounts.filter(a => !a.parentId && a.type === AccountType.INCOME).sort((a, b) => a.code.localeCompare(b.code)).map(acc => renderAccountRow(acc))}
+              {accounts.filter(a => (!isGrouped || !a.parentId) && a.type === AccountType.INCOME).sort((a, b) => a.code.localeCompare(b.code)).map(acc => renderAccountRow(acc))}
 
               <tr className="bg-slate-950/30 border-t border-slate-800"><td colSpan={6} className="px-6 py-2 text-[10px] font-black text-rose-500/50 uppercase tracking-tighter">Charges</td></tr>
-              {accounts.filter(a => !a.parentId && a.type === AccountType.EXPENSE).sort((a, b) => a.code.localeCompare(b.code)).map(acc => renderAccountRow(acc))}
+              {accounts.filter(a => (!isGrouped || !a.parentId) && a.type === AccountType.EXPENSE).sort((a, b) => a.code.localeCompare(b.code)).map(acc => renderAccountRow(acc))}
 
-              {accounts.some(a => !a.parentId && a.type !== AccountType.INCOME && a.type !== AccountType.EXPENSE) && (
+              {accounts.some(a => a.type !== AccountType.INCOME && a.type !== AccountType.EXPENSE) && (
                  <>
                    <tr className="bg-slate-950/30 border-t border-slate-800"><td colSpan={6} className="px-6 py-2 text-[10px] font-black text-blue-500/50 uppercase tracking-tighter">Bilan</td></tr>
-                   {accounts.filter(a => !a.parentId && a.type !== AccountType.INCOME && a.type !== AccountType.EXPENSE).sort((a, b) => a.code.localeCompare(b.code)).map(acc => renderAccountRow(acc))}
+                   {accounts.filter(a => (!isGrouped || !a.parentId) && a.type !== AccountType.INCOME && a.type !== AccountType.EXPENSE).sort((a, b) => a.code.localeCompare(b.code)).map(acc => renderAccountRow(acc))}
                  </>
               )}
 
@@ -266,54 +326,64 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl h-[400px]">
-          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Dépenses par Catégorie</h3>
+        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl h-[450px]">
+          <h3 className="text-sm font-bold text-rose-400 uppercase tracking-widest mb-6 border-b border-rose-900/30 pb-2">Charges par Catégorie (Niveau 1)</h3>
           {expenseChartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={expenseChartData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={5}
-                  dataKey="value"
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                >
-                  {expenseChartData.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
+              <BarChart data={expenseChartData} margin={{ top: 20, right: 30, left: 40, bottom: 60 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis 
+                  dataKey="name" 
+                  stroke="#64748b" 
+                  fontSize={10} 
+                  angle={-45} 
+                  textAnchor="end" 
+                  interval={0}
+                  height={60}
+                />
+                <YAxis 
+                  stroke="#64748b" 
+                  fontSize={10} 
+                  label={{ value: 'CHF', angle: -90, position: 'insideLeft', offset: -10, fill: '#64748b', fontSize: 12, fontWeight: 'bold' }} 
+                />
                 <Tooltip 
                   contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}
                   itemStyle={{ color: '#f1f5f9' }}
                 />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : <div className="h-full flex items-center justify-center text-slate-600 italic">Aucune donnée</div>}
-        </div>
-
-        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl h-[400px]">
-          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Sources de Revenus</h3>
-          {incomeChartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={incomeChartData}
-                layout="vertical"
-                margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
-                <XAxis type="number" stroke="#64748b" fontSize={10} />
-                <YAxis dataKey="name" type="category" stroke="#64748b" fontSize={10} width={100} />
-                <Tooltip 
-                   contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}
-                   itemStyle={{ color: '#f1f5f9' }}
-                />
-                <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="value" fill="#ef4444" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          ) : <div className="h-full flex items-center justify-center text-slate-600 italic">Aucune donnée</div>}
+          ) : <div className="h-full flex items-center justify-center text-slate-600 italic">Aucune dépense enregistrée</div>}
+        </div>
+
+        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl h-[450px]">
+          <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-widest mb-6 border-b border-emerald-900/30 pb-2">Produits par Catégorie (Niveau 1)</h3>
+          {incomeChartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={incomeChartData} margin={{ top: 20, right: 30, left: 40, bottom: 60 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis 
+                  dataKey="name" 
+                  stroke="#64748b" 
+                  fontSize={10} 
+                  angle={-45} 
+                  textAnchor="end" 
+                  interval={0}
+                  height={60}
+                />
+                <YAxis 
+                  stroke="#64748b" 
+                  fontSize={10} 
+                  label={{ value: 'CHF', angle: -90, position: 'insideLeft', offset: -10, fill: '#64748b', fontSize: 12, fontWeight: 'bold' }} 
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}
+                  itemStyle={{ color: '#f1f5f9' }}
+                />
+                <Bar dataKey="value" fill="#10b981" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <div className="h-full flex items-center justify-center text-slate-600 italic">Aucun revenu enregistré</div>}
         </div>
       </div>
 
