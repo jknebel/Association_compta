@@ -88,6 +88,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       : (filter === 'UNCATEGORIZED' ? !t.accountId : t.status === filter);
 
     const matchesSearch = t.description.toLowerCase().includes(search.toLowerCase()) ||
+      (t.simplifiedDescription && t.simplifiedDescription.toLowerCase().includes(search.toLowerCase())) ||
       t.amount.toString().includes(search) ||
       (t.detectedMemberName && t.detectedMemberName.toLowerCase().includes(search.toLowerCase()));
 
@@ -592,17 +593,27 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                         />
                       </div>
                     ) : (
-                      <div className="flex flex-col" title={t.fullRawText || t.description}>
-                        <span>{t.description}</span>
+                      <div 
+                        className="flex flex-col cursor-help group" 
+                        title={`VERSION COMPLÈTE :\n${t.description}${t.fullRawText && t.fullRawText !== t.description ? '\n\nTEXTE BRUT :\n' + t.fullRawText : ''}`}
+                      >
+                        <span className="group-hover:text-blue-400 transition-colors">
+                          {t.simplifiedDescription || t.description}
+                        </span>
                         {t.notes && (
                           <span className="text-xs text-blue-300/80 mt-1 italic border-l-2 border-blue-500/30 pl-2 whitespace-pre-wrap">
                             {t.notes}
                           </span>
                         )}
-                        {t.fullRawText && t.fullRawText !== t.description && (
-                          <span className="text-[10px] text-slate-500 font-normal italic line-clamp-1 opacity-70 mt-1" title={t.fullRawText}>
+                        {!t.simplifiedDescription && t.fullRawText && t.fullRawText !== t.description && (
+                          <span className="text-[10px] text-slate-500 font-normal italic line-clamp-1 opacity-70 mt-1">
                             {t.fullRawText}
                           </span>
+                        )}
+                        {t.simplifiedDescription && (
+                           <span className="text-[9px] text-slate-600 font-bold uppercase tracking-tighter mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                             Survoler pour l'original
+                           </span>
                         )}
                       </div>
                     )}
