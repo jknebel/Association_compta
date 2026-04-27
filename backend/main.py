@@ -175,7 +175,7 @@ def get_llm():
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         print("⚠️ GOOGLE_API_KEY missing. LLM calls will fail.")
-    return ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0)
+    return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
 
 # --- UTILITY FUNCTIONS ---
 
@@ -259,7 +259,7 @@ class AgentState(BaseModel):
     integrity_report: Optional[str] = None
 
 def balance_scout_node(state: AgentState):
-    """Initial node to find starting and ending balances using Vision"""
+    """Initial node to find starting and ending balances matching test_pipeline.py logic"""
     print("--- [Agent: BALANCE_SCOUT][START] ---")
     import fitz
     import base64
@@ -268,32 +268,35 @@ def balance_scout_node(state: AgentState):
         pdf_bytes = base64.b64decode(state.pdf_base64)
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         
-        # Render first and last page + OCR
+        # Get text from first and last page (as in test_pipeline.py)
+        text_scout = doc[0].get_text() + "\n" + doc[-1].get_text()
+        
+        # We also keep the images for better accuracy in Vision (as in test_balance_scout.py)
         p1 = doc[0]
         pix1 = p1.get_pixmap(matrix=fitz.Matrix(2, 2))
         img1_b64 = base64.b64encode(pix1.tobytes("png")).decode('utf-8')
-        txt1 = p1.get_text()
         
         pLast = doc[-1]
         pixLast = pLast.get_pixmap(matrix=fitz.Matrix(2, 2))
         imgLast_b64 = base64.b64encode(pixLast.tobytes("png")).decode('utf-8')
-        txtLast = pLast.get_text()
         doc.close()
         
         prompt = f"""
+        Tu es un expert en relevés bancaires suisses (BCV, Raiffeisen, PostFinance).
         Analyse l'image et le texte OCR pour trouver les soldes exacts.
         
-        OCR PAGE 1 :
-        {txt1}
+        DONNÉES OCR (Utilise-les pour confirmer les chiffres lus sur l'image) :
+        {text_scout}
         
-        OCR DERNIÈRE PAGE :
-        {txtLast}
+        OBJECTIF :
+        1. SOLDE INITIAL : Le montant EXACT avant toute transaction. 
+        2. SOLDE FINAL : Le montant EXACT après la dernière transaction.
         
-        Trouve le SOLDE INITIAL (reporté) et le SOLDE FINAL (nouveau solde).
         Réponds en JSON uniquement selon BalanceResult.
         """
         
         flash_llm = get_llm()
+        # Ensure we use the right schema (BalanceResult is already defined in main.py)
         structured_llm = flash_llm.with_structured_output(BalanceResult)
         
         message = HumanMessage(content=[
@@ -309,6 +312,7 @@ def balance_scout_node(state: AgentState):
             "logs": [f"BalanceScout : In={res.initial_balance}, Out={res.final_balance}"]
         }
     except Exception as e:
+        print(f"Error in BalanceScout: {e}")
         return {"logs": [f"Erreur BalanceScout: {str(e)}"]}
 
 def vision_node(state: AgentState):
@@ -465,7 +469,6 @@ def universal_parser_node(state: AgentState, pipeline_id: str = "a"):
             pass
 
         return {f"pipeline_{pipeline_id}": pipeline, "logs": [f"Parser {pipeline_id} : {len(all_txns)} txns extraites."]}
-} txns extraites."]}
     except Exception as e:
         return {"logs": [f"Erreur Parser {pipeline_id}: {str(e)}"]}
 
@@ -572,9 +575,7 @@ def scout_visual_node(state: AgentState):
         
         return {"pipeline_b": PipelineResult(layout=layout), "logs": ["Scout Visuel : Layout identifié par Vision."]}
     except Exception as e:
-        if not images_content:
-            break
-            
+        return {"logs": [f"Erreur Scout Visuel: {str(e)}"]}
         print(f"Visual Itinerant Worker: Processing chunk starting at page {i+1}")
         
         prompt = """
@@ -1061,42 +1062,6 @@ def classification_consensus_node(state: AgentState):
             "logs": [f"Erreur du Juge LLM : {str(e)}"]
         }
 
-def verification_node(state: AgentState, pipeline_id: str = "a"):
-    """Validates the mathematical integrity of a pipeline"""
-    print(f"--- [Agent: VERIFY][PIPELINE_{pipeline_id.upper()}][START] ---")
-    pipeline = getattr(state, f"pipeline_{pipeline_id}")
-    if not pipeline or not pipeline.transactions:
-        return {f"pipeline_{pipeline_id}": pipeline, "logs": [f"Verify {pipeline_id}: Pas de données."]}
-    
-    txns = pipeline.transactions
-    starting_bal = pipeline.layout.starting_balance
-    is_ok = True
-    log = []
-    error_page = None
-
-    # 1. Vérification du delta global (Invariant In/Out)
-    expected_delta = round(state.expected_final_balance - state.expected_initial_balance, 2)
-    actual_delta = round(sum(t.amount or 0 for t in txns), 2)
-    
-    if abs(actual_delta - expected_delta) > 0.05:
-        is_ok = False
-        log.append(f"Erreur Globale: La somme des transactions ({actual_delta}) ne correspond pas au delta attendu ({expected_delta})")
-    
-    # 2. Vérification ligne par ligne (Soldes glissants)
-    current_bal = state.expected_initial_balance
-    for i, t in enumerate(txns):
-        current_bal = round(current_bal + (t.amount or 0), 2)
-        if t.runningBalance is not None:
-            if abs(current_bal - t.runningBalance) > 0.05:
-                is_ok = False
-                if error_page is None: error_page = 1 
-                log.append(f"Erreur ligne {i+1}: Attendu {t.runningBalance}, Calculé {current_bal}")
-    
-    pipeline.is_mathematically_correct = is_ok
-    pipeline.verification_log = "\n".join(log) if log else "Succès mathématique total (Global & Lignes)."
-    pipeline.error_page = error_page
-    
-    return {f"pipeline_{pipeline_id}": pipeline, "logs": [f"Verify {pipeline_id}: {'OK' if is_ok else 'ERREUR'}"]}
 
 # --- NEW ROBUST PIPELINE NODE ---
 
@@ -1109,6 +1074,7 @@ def robust_parsing_node(state: AgentState):
     import re
     import fitz
     import unicodedata
+    import json
 
     def normalize(s):
         return "".join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn').upper()
@@ -1116,19 +1082,20 @@ def robust_parsing_node(state: AgentState):
     def parse_amount(val):
         if not val: return 0.0
         text = " ".join(val) if isinstance(val, list) else str(val)
+        # On ne supprime l'espace/apostrophe QUE s'il est entre deux chiffres (ex: 1 500 -> 1500)
         clean_val = re.sub(r"(\d)[ ' ](\d)", r"\1\2", text)
         clean_val = clean_val.replace(",", ".")
         numbers = re.findall(r"-?\d+\.\d+|-?\d+", clean_val)
         if not numbers: return 0.0
         for n in reversed(numbers):
-            if "." in n: return int(float(n) * 100 + 0.0001) / 100.0
+            if "." in n: return int(float(n) * 100) / 100.0
         return float(numbers[-1])
 
     try:
         pdf_bytes = base64.b64decode(state.pdf_base64)
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         
-        # 1. Ancrage IA (Header discovery)
+        # 1. Ancrage IA (Header discovery) - Copied from test_pipeline.py
         words_p0 = [{"text": w[4], "x_min": w[0], "x_max": w[2], "y_mid": (w[1]+w[3])/2, "x_mid": (w[0]+w[2])/2} for w in doc[0].get_text("words")]
         headers = [w for w in words_p0 if w["y_mid"] < 600]
         
@@ -1141,34 +1108,56 @@ def robust_parsing_node(state: AgentState):
             reasoning: str = Field(description="Pourquoi ces choix ?")
 
         prompt_header = f"""
-        Identifie la ligne d'en-tête du relevé.
-        MOTS : {[{"t": w['text'], "x": round(w['x_min'])} for w in headers]}
+        Tu es un expert en analyse de relevés bancaires.
+        Voici les mots du haut de page : {[{"t": w['text'], "x": round(w['x_min']), "y": round(w['y_mid'])} for w in headers]}
+        
+        MISSION :
+        1. Identifie la langue (FR, DE, EN).
+        2. Trouve la ligne d'en-tête (Date, Texte, Débit, Crédit, Solde).
+        3. Choisis le mot EXACT tel qu'écrit dans la liste :
+           - Date : Choisis IMPÉRATIVEMENT 'VALEUR' ou 'VALUTA' si présents (priorité sur 'DATE').
+           - Description : Préfère 'OPERATIONS' ou 'TEXTE' à 'DETAIL'.
+        
         Réponds en JSON HeaderLabels.
         """
         flash_llm = get_llm()
         labels = flash_llm.with_structured_output(HeaderLabels).invoke([HumanMessage(content=prompt_header)])
-        
+        print(f"    [ANCRAGE IA] {labels.reasoning}")
+
         anchors = {}
         target_y = -1
+        # Priority to VALEUR/VALUTA
         for w in headers:
             txt = normalize(w["text"])
-            if txt in ["VALEUR", "VALUTA", "VAL", "DATE"]:
+            if txt in ["VALEUR", "VALUTA", "VAL"]:
                 target_y = w["y_mid"]
                 break
+        
+        if target_y == -1:
+            for w in headers:
+                if normalize(w["text"]) == "DATE":
+                    target_y = w["y_mid"]
+                    break
         
         if target_y == -1: target_y = headers[0]["y_mid"] # Fallback
 
         for w in headers:
             if abs(w["y_mid"] - target_y) > 15: continue
-            w_norm = normalize(w["text"])
-            if w_norm in normalize(labels.date) and "date" not in anchors: anchors["date"] = w
-            if w_norm in normalize(labels.description) and "description" not in anchors: anchors["description"] = w
-            if w_norm in normalize(labels.debit) and "debit" not in anchors: anchors["debit"] = w
-            if w_norm in normalize(labels.credit) and "credit" not in anchors: anchors["credit"] = w
-            if w_norm in normalize(labels.solde) and "solde" not in anchors: anchors["solde"] = w
+            
+            def is_match(word_text, target_label):
+                w_norm = normalize(word_text)
+                t_norm = normalize(target_label)
+                if len(w_norm) < 3: return False
+                return w_norm in t_norm or t_norm in w_norm
 
-        # 2. Scout des lignes (Y-Anchors)
-        date_anchor = anchors.get("date", {"x_mid": 40})
+            if is_match(w["text"], labels.date) and "date" not in anchors: anchors["date"] = w
+            if is_match(w["text"], labels.description) and "description" not in anchors: anchors["description"] = w
+            if is_match(w["text"], labels.debit) and "debit" not in anchors: anchors["debit"] = w
+            if is_match(w["text"], labels.credit) and "credit" not in anchors: anchors["credit"] = w
+            if is_match(w["text"], labels.solde) and "solde" not in anchors: anchors["solde"] = w
+
+        # 2. Scout des lignes (Y-Anchors) - get_y_anchors logic
+        date_anchor = anchors.get("date", {"x_min": 40, "x_max": 80})
         x_start = date_anchor.get("x_min", 20)
         x_range = (x_start - 10, x_start + 45)
         
@@ -1180,18 +1169,17 @@ def robust_parsing_node(state: AgentState):
             y_list = []
             limit_y = target_y + 10 if i == 0 else 50
             
-            # Détection footer rapide
             footer_y = doc[i].rect.height
             for w in page_words:
                 txt = w[4].upper()
-                if any(k in txt for k in ["TOTAL", "REPORT", "PAGE", "SOLDE", "MORGES", "AFFAIRES"]) and w[1] > doc[i].rect.height * 0.7:
+                if any(k in txt for k in ["TOTAL", "SOLDE", "PAGE", "REPORT"]) and w[1] > doc[i].rect.height * 0.75:
                     footer_y = w[1]
                     break
 
             for w in page_words:
                 center_x = (w[0] + w[2]) / 2
                 if limit_y < w[1] < footer_y and x_range[0] <= center_x <= x_range[1]:
-                    if date_pattern.match(w[4]):
+                    if date_pattern.match(w[4]) and not any(c.isalpha() for c in w[4]):
                         y_list.append(round(w[1], 2))
             
             unique_ys = []
@@ -1202,8 +1190,8 @@ def robust_parsing_node(state: AgentState):
                     if y - unique_ys[-1] > 5: unique_ys.append(y)
             y_anchors[i] = unique_ys
 
-        # 3. Extraction
-        widths = ColumnWidths() # On pourrait faire un audit IA ici aussi, mais on commence direct
+        # 3. Extraction - extract_raw_transactions logic
+        widths = ColumnWidths()
         all_raw_txns = []
         
         for p_idx, ys in y_anchors.items():
@@ -1211,10 +1199,9 @@ def robust_parsing_node(state: AgentState):
             page_words = page.get_text("words")
             page_words.sort(key=lambda w: (w[1], w[0]))
             
-            # Détection footer pour cette page
             p_footer_y = page.rect.height
             for w in page_words:
-                if any(k in w[4].upper() for k in ["TOTAL", "REPORT", "PAGE", "SOLDE", "MORGES", "AFFAIRES"]) and w[1] > page.rect.height * 0.7:
+                if any(k in w[4].upper() for k in ["TOTAL", "SOLDE", "PAGE", "REPORT"]) and w[1] > page.rect.height * 0.75:
                     p_footer_y = w[1] - 5
                     break
 
@@ -1231,18 +1218,24 @@ def robust_parsing_node(state: AgentState):
                     is_num = len(re.findall(r"\d", txt)) > 0 and len(re.findall(r"\d", txt)) >= len(re.findall(r"[a-zA-Z]", txt))
                     is_near_top = (y1 - y_start) < 10
                     
-                    # Mapping colonnes simplifié (on utilise les anchors et les widths par défaut)
                     def get_col_range(role, cfg):
-                        anchor_x = anchors.get(role, {"x_mid": 0})["x_mid"]
-                        if anchor_x == 0: anchor_x = {"date": 40, "description": 200, "debit": 440, "credit": 510, "solde": 650}.get(role, 0)
+                        anchor_info = anchors.get(role)
+                        anchor_x = anchor_info["x_mid"] if anchor_info else 0
+                        if anchor_x == 0: 
+                            anchor_x = {"date": 40, "description": 200, "debit": 440, "credit": 510, "solde": 650}.get(role, 0)
                         x_min = anchor_x + cfg.offset - (cfg.width / 2)
                         return x_min, x_min + cfg.width
 
-                    if get_col_range("date", widths.date)[0] <= x_mid <= get_col_range("date", widths.date)[1]: tx_data["date"].append(txt)
-                    elif is_num and is_near_top and get_col_range("debit", widths.debit)[0] <= x1 <= get_col_range("debit", widths.debit)[1]: tx_data["debit"].append(txt)
-                    elif is_num and is_near_top and get_col_range("credit", widths.credit)[0] <= x1 <= get_col_range("credit", widths.credit)[1]: tx_data["credit"].append(txt)
-                    elif is_num and is_near_top and get_col_range("solde", widths.solde)[0] <= x1 <= get_col_range("solde", widths.solde)[1]: tx_data["solde"].append(txt)
-                    else: tx_data["desc"].append(txt)
+                    if get_col_range("date", widths.date)[0] <= x_mid <= get_col_range("date", widths.date)[1]: 
+                        tx_data["date"].append(txt)
+                    elif is_num and is_near_top and get_col_range("debit", widths.debit)[0] <= x1 <= get_col_range("debit", widths.debit)[1]: 
+                        tx_data["debit"].append(txt)
+                    elif is_num and is_near_top and get_col_range("credit", widths.credit)[0] <= x1 <= get_col_range("credit", widths.credit)[1]: 
+                        tx_data["credit"].append(txt)
+                    elif is_num and is_near_top and get_col_range("solde", widths.solde)[0] <= x1 <= get_col_range("solde", widths.solde)[1]: 
+                        tx_data["solde"].append(txt)
+                    else: 
+                        tx_data["desc"].append(txt)
                 
                 all_raw_txns.append(tx_data)
 
@@ -1251,9 +1244,9 @@ def robust_parsing_node(state: AgentState):
         date_clean_pattern = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}")
         
         for t in all_raw_txns:
-            all_text = " ".join(t["date"] + t["desc"])
-            found_date = date_clean_pattern.search(all_text)
-            date_str = found_date.group(0) if found_date else (state.extracted_transactions[-1].date if final_txns else "")
+            all_text_for_date = " ".join(t["date"] + t["desc"])
+            found_date = date_clean_pattern.search(all_text_for_date)
+            date_str = found_date.group(0) if found_date else ""
             
             d_val = parse_amount(t["debit"])
             c_val = parse_amount(t["credit"])
@@ -1261,17 +1254,29 @@ def robust_parsing_node(state: AgentState):
             
             final_txns.append(Transaction(
                 date=date_str,
-                description=" ".join(t["desc"]).strip(),
+                description=" ".join(t["desc"]).replace("\n", " ").strip(),
                 amount=c_val if c_val != 0 else -d_val,
                 runningBalance=s_val if s_val != 0 else None,
                 fullRawText=json.dumps(t)
             ))
         
         doc.close()
+        
+        # 5. Math validation (Verification logic from test_pipeline.py)
+        expected_delta = round(state.expected_final_balance - state.expected_initial_balance, 2)
+        total_c = sum(t.amount for t in final_txns if t.amount > 0)
+        total_d = sum(abs(t.amount) for t in final_txns if t.amount < 0)
+        calc_delta = round(total_c - total_d, 2)
+        
+        is_ok = abs(calc_delta - expected_delta) < 0.05
+        
         return {
             "extracted_transactions": final_txns,
             "success_parsing": True,
-            "logs": [f"Robust Parsing : {len(final_txns)} transactions extraites."]
+            "logs": [
+                f"Robust Parsing : {len(final_txns)} transactions extraites.",
+                f"Audit mathématique : {'OK' if is_ok else 'ÉCHEC'} (Delta calculé: {calc_delta} vs Attendu: {expected_delta})"
+            ]
         }
 
     except Exception as e:
@@ -1700,7 +1705,7 @@ async def chat_agent(request: ChatRequest):
         messages.append(HumanMessage(content=request.newMessage))
         
         # Use Pro model if available, or Flash
-        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
         response = llm.invoke(messages)
         
         return ChatResponse(response=response.content)
