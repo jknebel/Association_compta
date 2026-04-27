@@ -26,30 +26,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
   const pendingCredit = nonApprovedTxns.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0);
 
   const incomeChartData = accounts
-    .filter(a => !a.parentId && (a.type === AccountType.INCOME || a.type === AccountType.MIXED || a.type === AccountType.ASSET || a.type === AccountType.LIABILITY))
+    .filter(a => !a.parentId) // Tous les parents
     .map(acc => {
       const childIds = (parentId: string): string[] => {
         const children = accounts.filter(a => a.parentId === parentId);
         return [...children.map(c => c.id), ...children.flatMap(c => childIds(c.id))];
       };
       const ids = [acc.id, ...childIds(acc.id)];
+      // Somme des transactions POSITIVES (Produits) pour ce parent et ses enfants
       const val = approvedTxns.filter(t => t.accountId && ids.includes(t.accountId) && t.amount > 0).reduce((sum, t) => sum + t.amount, 0);
       return { name: acc.label, value: val };
     })
-    .filter(d => d.value > 0);
+    .filter(d => d.value > 0)
+    .sort((a, b) => b.value - a.value);
 
   const expenseChartData = accounts
-    .filter(a => !a.parentId && (a.type === AccountType.EXPENSE || a.type === AccountType.MIXED || a.type === AccountType.ASSET || a.type === AccountType.LIABILITY))
+    .filter(a => !a.parentId) // Tous les parents
     .map(acc => {
       const childIds = (parentId: string): string[] => {
         const children = accounts.filter(a => a.parentId === parentId);
         return [...children.map(c => c.id), ...children.flatMap(c => childIds(c.id))];
       };
       const ids = [acc.id, ...childIds(acc.id)];
+      // Somme des transactions NÉGATIVES (Charges) pour ce parent et ses enfants
       const val = Math.abs(approvedTxns.filter(t => t.accountId && ids.includes(t.accountId) && t.amount < 0).reduce((sum, t) => sum + t.amount, 0));
       return { name: acc.label, value: val };
     })
-    .filter(d => d.value > 0);
+    .filter(d => d.value > 0)
+    .sort((a, b) => b.value - a.value);
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
   
@@ -167,7 +171,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
     <div className="p-8 max-w-7xl mx-auto space-y-8 text-slate-200">
       <header className="flex justify-between items-end mb-8">
         <div>
-          <h2 className="text-3xl font-bold text-white">Vue d'ensemble financière</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-3xl font-bold text-white">Vue d'ensemble financière</h2>
+            <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-[10px] font-bold rounded border border-blue-500/30">v2.1</span>
+          </div>
           <p className="text-slate-400">Analyse en temps réel de la santé de votre association.</p>
         </div>
         <div className="text-right">
