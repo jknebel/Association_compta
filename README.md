@@ -79,6 +79,26 @@ graph TD
 | **Comptable B** | Classification par contexte | Se concentre sur les descriptions de comptes, les comptes de cotisation (isMembership), et la détection de noms de membres dans les libellés. |
 | **Juge IA** | Arbitrage final | Reçoit les propositions + raisonnements de A et B, puis tranche pour chaque transaction. Privilégie B pour les cotisations, A pour les récurrences historiques. |
 
+---
+
+## 📄 Association des Pièces Comptables (Reçus & Factures)
+
+Le système inclut un moteur d'intelligence visuelle capable de lier automatiquement un document justificatif (image ou PDF) à une transaction bancaire existante.
+
+### 1. Extraction Visuelle (Vision Node)
+Le document est analysé par **Gemini Vision** pour extraire :
+- Le montant total TTC.
+- La date d'émission.
+- Le nom du marchand ou prestataire.
+- Le type de document (Facture standard vs Avoir/Remboursement).
+
+### 2. Algorithme de Matching Multi-Critères
+Une fois les données extraites, le backend scanne les transactions non liées pour trouver la meilleure correspondance via un système de score :
+
+- **Montant (Critère bloquant)** : Le montant doit correspondre exactement (marge de 0.05 CHF). Le système inverse automatiquement le signe selon s'il s'agit d'un achat (Débit) ou d'un remboursement (Crédit).
+- **Date (Score +++)** : Bonus de score important si la date du reçu correspond exactement à la date de l'opération bancaire.
+- **Contenu (Score ++)** : Recherche textuelle du nom du marchand (extrait du reçu) dans le libellé brut de la transaction bancaire (`fullRawText`).
+- **Départage** : En cas d'égalité, le système sélectionne la transaction la plus proche chronologiquement.
 
 ---
 
