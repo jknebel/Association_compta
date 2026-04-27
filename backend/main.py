@@ -72,16 +72,13 @@ class Account(BaseModel):
     closingBalance: Optional[float] = None
 
 class Transaction(BaseModel):
-    id: Optional[str] = None
+    id: str
     date: str
     description: str
+    simplifiedDescription: Optional[str] = None
     amount: float
-    runningBalance: Optional[float] = None
-    accountId: Optional[str] = None
-    detectedMemberName: Optional[str] = None
-    status: str = "PENDING"
-    notes: Optional[str] = None
     fullRawText: Optional[str] = None
+    runningBalance: Optional[float] = None
     receiptUrl: Optional[str] = None
     receiptFileName: Optional[str] = None
 
@@ -410,13 +407,24 @@ async def classification_consensus_node(state: AgentState):
     # Structured outputs for each step
     struct_list = flash_llm.with_structured_output(ClassifiedTransactionList)
     
-    semaphore = asyncio.Semaphore(5) # Max 5 batches in parallel to respect quotas
+    semaphore = asyncio.Semaphore(5) 
 
     async def process_consensus_batch(batch, batch_idx):
         async with semaphore:
+            # Prepare transactions for prompt (including simplified version)
+            batch_data = []
+            for t in batch:
+                batch_data.append({
+                    "id": t.id,
+                    "date": t.date,
+                    "amount": t.amount,
+                    "description_complete": t.description,
+                    "description_simplifiee": t.simplifiedDescription
+                })
+
             # 1. Agent A (History) & Agent B (Members) in parallel
-            prompt_a = f"Tu es le Comptable A (Historique). Batch {batch_idx}.\nHISTORIQUE: {history_context}\nPLAN: {accounts_info}\nTRANSACTIONS: {json.dumps([t.model_dump() for t in batch])}"
-            prompt_b = f"Tu es le Comptable B (Membres). Batch {batch_idx}.\nPLAN: {accounts_info}\nRÈGLES: Extraire detectedMemberName pour comptes Suivi: OUI.\nTRANSACTIONS: {json.dumps([t.model_dump() for t in batch])}"
+            prompt_a = f"Tu es le Comptable A (Historique). Batch {batch_idx}.\nUtilise 'description_complete' et 'description_simplifiee' pour vérifier tes choix.\nHISTORIQUE: {history_context}\nPLAN: {accounts_info}\nTRANSACTIONS: {json.dumps(batch_data)}"
+            prompt_b = f"Tu es le Comptable B (Membres). Batch {batch_idx}.\nUtilise 'description_simplifiee' pour identifier les noms.\nPLAN: {accounts_info}\nRÈGLES: Extraire detectedMemberName pour comptes Suivi: OUI.\nTRANSACTIONS: {json.dumps(batch_data)}"
             
             try:
                 task_a = struct_list.ainvoke(prompt_a)
@@ -449,6 +457,57 @@ async def classification_consensus_node(state: AgentState):
     return {
         "extracted_transactions": final_txns,
         "logs": [f"Classification Consensus : {len(final_txns)} transactions traitées par lots de 10."]
+    }
+
+async def description_simplifier_node(state: AgentState):
+    """
+    New Agent: Simplifies transaction descriptions by removing noise (accounts, addresses, etc.)
+    while keeping names and communication info.
+    """
+    print("--- [Agent: SIMPLIFIER][START] ---")
+    all_txns = state.extracted_transactions
+    if not all_txns: return {"logs": ["Simplification : Aucune transaction."]}
+
+    batch_size = 20
+    batches = [all_txns[i : i + batch_size] for i in range(0, len(all_txns), batch_size)]
+    
+    flash_llm = get_llm()
+    
+    class SimplifiedTxn(BaseModel):
+        id: str
+        simplifiedDescription: str
+
+    class SimplifiedList(BaseModel):
+        results: List[SimplifiedTxn]
+
+    struct_llm = flash_llm.with_structured_output(SimplifiedList)
+    semaphore = asyncio.Semaphore(5)
+
+    async def process_batch(batch, idx):
+        async with semaphore:
+            prompt = f"""Tu es l'Expert en Simplification Bancaire.
+RÈGLES :
+1. Enlever : numéros de compte, IBAN, adresses, dates techniques, montants, mots-clés comme 'COMMUNICATION'.
+2. Garder : Nom du destinataire/émetteur, motif du virement, noms de personnes dans la communication.
+3. Rendre la description humaine et lisible.
+TRANSACTIONS : {json.dumps([{{'id': t.id, 'description': t.description}} for t in batch])}"""
+            try:
+                res = await struct_llm.ainvoke(prompt)
+                return res.results
+            except Exception as e:
+                print(f"Error Simplifier Batch {idx}: {e}")
+                return [SimplifiedTxn(id=t.id, simplifiedDescription=t.description) for t in batch]
+
+    tasks = [process_batch(b, i) for i, b in enumerate(batches)]
+    results = await asyncio.gather(*tasks)
+    flat_results = {r.id: r.simplifiedDescription for batch in results for r in batch}
+
+    for t in all_txns:
+        t.simplifiedDescription = flat_results.get(t.id, t.description)
+
+    return {
+        "extracted_transactions": all_txns,
+        "logs": [f"Simplification : {len(all_txns)} descriptions traitées."]
     }
 
 
@@ -680,6 +739,9 @@ workflow.add_node("vision", vision_node)
 workflow.add_node("balance_scout", balance_scout_node)
 workflow.add_node("robust_parsing", robust_parsing_node)
 
+# Simplification Phase
+workflow.add_node("simplifier", description_simplifier_node)
+
 # Classification Phase
 workflow.add_node("classifier", classification_consensus_node)
 
@@ -687,7 +749,8 @@ workflow.add_node("classifier", classification_consensus_node)
 workflow.set_entry_point("vision")
 workflow.add_edge("vision", "balance_scout")
 workflow.add_edge("balance_scout", "robust_parsing")
-workflow.add_edge("robust_parsing", "classifier")
+workflow.add_edge("robust_parsing", "simplifier")
+workflow.add_edge("simplifier", "classifier")
 workflow.add_edge("classifier", END)
 
 compiled_app = workflow.compile()
