@@ -257,6 +257,12 @@ class AgentState(BaseModel):
     global_context: str = ""
     logs: Annotated[List[str], operator.add] = []
     integrity_report: Optional[str] = None
+    
+    # Classification results
+    classification_a_txns: List[ClassifiedTransaction] = []
+    classification_b_txns: List[ClassifiedTransaction] = []
+    classification_a_thinking: str = ""
+    classification_b_thinking: str = ""
 
 def balance_scout_node(state: AgentState):
     """Initial node to find starting and ending balances matching test_pipeline.py logic"""
