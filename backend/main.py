@@ -4,6 +4,8 @@ import json
 import io
 import asyncio
 import math
+import hashlib
+import re
 import fitz # PyMuPDF
 import operator
 from typing import List, Optional, Dict, Any, Annotated
@@ -700,10 +702,17 @@ def robust_parsing_node(state: AgentState):
             c_val = parse_amount(t["credit"])
             s_val = parse_amount(t["solde"])
             
+            amount = c_val if c_val != 0 else -d_val
+            description = " ".join(t["desc"]).replace("\n", " ").strip()
+            
+            # Stable unique ID based on content
+            txn_id = hashlib.md5(f"{date_str}|{description}|{amount}".encode()).hexdigest()
+            
             final_txns.append(Transaction(
+                id=f"tx_{txn_id}",
                 date=date_str,
-                description=" ".join(t["desc"]).replace("\n", " ").strip(),
-                amount=c_val if c_val != 0 else -d_val,
+                description=description,
+                amount=amount,
                 runningBalance=s_val if s_val != 0 else None,
                 fullRawText=json.dumps(t)
             ))
