@@ -240,21 +240,17 @@ class AgentState(BaseModel):
     
     # Loop Management
     retry_count: int = 0
+    recovery_attempts: int = 0
     parsing_feedback: str = ""
     success_parsing: bool = False
     
-    # Final Output
+    # Final Output / State
     extracted_transactions: List[Transaction] = []
-    logs: List[str] = []
-    
-    # Legacy/Global Storage
     raw_text: str = ""
     raw_pages: List[str] = []
-    extracted_transactions: List[Transaction] = []
-    
-    # Metadata
     page_count: int = 0
-    global_context: str = ""
+    
+    # Metadata and Accumulators
     logs: Annotated[List[str], operator.add] = []
     integrity_report: Optional[str] = None
     
