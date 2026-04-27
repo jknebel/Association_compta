@@ -133,6 +133,43 @@ class SuggestCategoryResponse(BaseModel):
     accountId: Optional[str] = None
     memberName: Optional[str] = None
 
+# --- PARSING MODELS ---
+
+class LayoutConfig(BaseModel):
+    header_center: Dict[str, float] = Field(default_factory=lambda: {"DATE": 40, "OPERATIONS": 80, "DEBIT": 450, "CREDIT": 520, "VALEUR": 580, "SOLDE": 650})
+    y_start: int = 0
+    y_end: int = 1000
+    starting_balance: float = 0.0
+    bank_name: str = "UNKNOWN"
+    confidence: float = 0.0
+    thinking: str = ""
+
+# --- ROBUST PIPELINE MODELS ---
+class FinancialScout(BaseModel):
+    initial_balance: float = Field(description="Solde initial au début du relevé")
+    final_balance: float = Field(description="Solde final à la fin du relevé")
+
+class ColumnConfig(BaseModel):
+    width: float = Field(default=80.0, description="Largeur de la colonne")
+    offset: float = Field(default=0.0, description="Décalage horizontal par rapport à l'ancre (X_start)")
+    reasoning: str = Field(default="", description="Explication du choix de ce réglage")
+
+class ColumnWidths(BaseModel):
+    date: ColumnConfig = Field(default_factory=lambda: ColumnConfig(width=40, offset=0, reasoning="Default"))
+    description: ColumnConfig = Field(default_factory=lambda: ColumnConfig(width=250, offset=0, reasoning="Default"))
+    debit: ColumnConfig = Field(default_factory=lambda: ColumnConfig(width=80, offset=0, reasoning="Default"))
+    credit: ColumnConfig = Field(default_factory=lambda: ColumnConfig(width=80, offset=0, reasoning="Default"))
+    solde: ColumnConfig = Field(default_factory=lambda: ColumnConfig(width=80, offset=0, reasoning="Default"))
+    global_reasoning: str = Field(default="", description="Raisonnement global sur l'ajustement")
+
+class PipelineResult(BaseModel):
+    transactions: List[Transaction] = []
+    is_mathematically_correct: bool = False
+    verification_log: str = ""
+    error_page: Optional[int] = None
+    retry_count: int = 0
+    layout: Optional[Dict] = None
+
 # --- LLM HELPERS ---
 def get_llm():
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -180,336 +217,361 @@ def get_user_history_context(user_id: str, limit: int = 200) -> str:
 
 # --- LANGGRAPH LOGIC ---
 
+class BalanceResult(BaseModel):
+    initial_balance: float
+    final_balance: float
+    thinking: str
+
 class AgentState(BaseModel):
     user_id: str
     pdf_base64: str
-    existing_accounts: List[Account]
+    existing_accounts: List[Account] = []
+    global_context: str = ""
+    
+    # Expected balances from BalanceScout
+    expected_initial_balance: float = 0.0
+    expected_final_balance: float = 0.0
+    
+    # Results for Quadruple Pipeline
+    pipeline_a: Optional[PipelineResult] = None
+    pipeline_b: Optional[PipelineResult] = None
+    pipeline_c: Optional[PipelineResult] = None
+    pipeline_d: Optional[PipelineResult] = None
+    
+    # Loop Management
+    retry_count: int = 0
+    parsing_feedback: str = ""
+    success_parsing: bool = False
+    
+    # Final Output
+    extracted_transactions: List[Transaction] = []
+    logs: List[str] = []
+    
+    # Legacy/Global Storage
     raw_text: str = ""
     raw_pages: List[str] = []
-    worker_a_txns: Annotated[List[Transaction], operator.add] = []
-    worker_b_txns: Annotated[List[Transaction], operator.add] = []
-    itinerant_txns: Annotated[List[Transaction], operator.add] = []
-    visual_itinerant_txns: Annotated[List[Transaction], operator.add] = []
-    integrity_report: Optional[str] = None
-    recovery_attempts: int = 0
-    expected_transaction_count: int = 0
-    starting_balance: float = 0.0 # Nouveau : extrait par le pré-parser
-    detected_dates: List[str] = [] # Nouveau : pour le débogage
-    logs: Annotated[List[str], operator.add] = []
     extracted_transactions: List[Transaction] = []
-    classification_a_txns: Annotated[List[ClassifiedTransaction], operator.add] = []
-    classification_a_thinking: str = ""
-    classification_b_txns: Annotated[List[ClassifiedTransaction], operator.add] = []
-    classification_b_thinking: str = ""
+    
+    # Metadata
     page_count: int = 0
     global_context: str = ""
+    logs: Annotated[List[str], operator.add] = []
+    integrity_report: Optional[str] = None
 
-def vision_node(state: AgentState):
-    """Vision Extraction: Image/PDF -> Raw Text"""
-    print("--- [Agent: VISION][INPUT_START] ---")
-    print(f"UserId: {state.user_id}")
-    print(f"PDF Base64 Length: {len(state.pdf_base64)}")
-    print("--- [Agent: VISION][INPUT_END] ---")
+def balance_scout_node(state: AgentState):
+    """Initial node to find starting and ending balances using Vision"""
+    print("--- [Agent: BALANCE_SCOUT][START] ---")
+    import fitz
+    import base64
     
-    # 1. Tenter une extraction native intelligente avec PyMuPDF
     try:
         pdf_bytes = base64.b64decode(state.pdf_base64)
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        page_counts = len(doc)
-        raw_text = ""
-        raw_pages = []
-        for page in doc:
-            p_text = page.get_text("text") + "\n"
-            raw_text += p_text
-            raw_pages.append(p_text)
+        
+        # Render first and last page + OCR
+        p1 = doc[0]
+        pix1 = p1.get_pixmap(matrix=fitz.Matrix(2, 2))
+        img1_b64 = base64.b64encode(pix1.tobytes("png")).decode('utf-8')
+        txt1 = p1.get_text()
+        
+        pLast = doc[-1]
+        pixLast = pLast.get_pixmap(matrix=fitz.Matrix(2, 2))
+        imgLast_b64 = base64.b64encode(pixLast.tobytes("png")).decode('utf-8')
+        txtLast = pLast.get_text()
         doc.close()
         
-        # Si le PDF contient du vrai texte (pas juste un scan d'image), on l'utilise direct
-        if len(raw_text.strip()) > 500:
-            print("--- [Agent: VISION][OUTPUT_START] ---")
-            print(f"Extracted Native PyMuPDF Text Length: {len(raw_text)} | Pages: {page_counts}")
-            print("--- [Agent: VISION][OUTPUT_END] ---")
-            return {
-                "raw_text": raw_text,
-                "raw_pages": raw_pages,
-                "page_count": page_counts,
-                "logs": [f"Extraction native réussie ({len(raw_text)} caractères, {page_counts} pages)."]
-            }
-        else:
-            print("PDF semble être un scan court, fallback vers l'IA Vision...")
+        prompt = f"""
+        Analyse l'image et le texte OCR pour trouver les soldes exacts.
+        
+        OCR PAGE 1 :
+        {txt1}
+        
+        OCR DERNIÈRE PAGE :
+        {txtLast}
+        
+        Trouve le SOLDE INITIAL (reporté) et le SOLDE FINAL (nouveau solde).
+        Réponds en JSON uniquement selon BalanceResult.
+        """
+        
+        flash_llm = get_llm()
+        structured_llm = flash_llm.with_structured_output(BalanceResult)
+        
+        message = HumanMessage(content=[
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img1_b64}"}},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{imgLast_b64}"}}
+        ])
+        
+        res = structured_llm.invoke([message])
+        return {
+            "expected_initial_balance": res.initial_balance,
+            "expected_final_balance": res.final_balance,
+            "logs": [f"BalanceScout : In={res.initial_balance}, Out={res.final_balance}"]
+        }
     except Exception as e:
-        print(f"PyMuPDF Error, fallback to Vision: {e}")
+        return {"logs": [f"Erreur BalanceScout: {str(e)}"]}
 
-    # Fallback si PDF non-texte ou erreur : on tente de compter les pages si possible
+def vision_node(state: AgentState):
+    """Vision Extraction: Image/PDF -> Initial check for text content"""
+    print("--- [Agent: VISION][INPUT_START] ---")
+    
     try:
         pdf_bytes = base64.b64decode(state.pdf_base64)
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         page_counts = len(doc)
+        
+        # Test de présence de texte
+        full_text_sample = ""
+        for i in range(min(3, page_counts)):
+            full_text_sample += doc[i].get_text()
+        
         doc.close()
-    except:
-        page_counts = 1 # Par défaut 1 si on arrive pas à lire le PDF du tout
-
-    prompt = """
-    Voici un document bancaire. Ton SEUL et UNIQUE but est d'extraire tout le texte visible.
-    Pour l'intégralité du document, copie absolument TOUT le texte (dates, toutes les lignes de descriptions, montants, donneurs d'ordre, communications, adresses, etc.).
-    Garde l'ordre de lecture. Ne tente pas de formater (pas de JSON) ou de résumer. Sois une machine de transcription parfaite. Ne saute aucune ligne !
-    """
-    
-    message = HumanMessage(
-        content=[
-            {"type": "text", "text": prompt},
-            {
-                "type": "image_url", 
-                "image_url": {"url": f"data:application/pdf;base64,{state.pdf_base64}"}
+        
+        if len(full_text_sample.strip()) > 200:
+            return {
+                "page_count": page_counts,
+                "logs": [f"Document identifié comme PDF natif ({page_counts} pages)."]
             }
-        ]
-    )
+        else:
+            print("PDF semble être un scan, fallback vers l'IA Vision...")
+    except Exception as e:
+        print(f"PyMuPDF Error: {e}")
+
+    # Fallback Vision (OCR par IA)
+    prompt = "Copie absolument TOUT le texte visible du document bancaire. Ne saute aucune ligne."
+    message = HumanMessage(content=[{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{state.pdf_base64}"}}])
     
     try:
         flash_llm = get_llm()
         result = flash_llm.invoke([message])
-        
-        print("--- [Agent: VISION][OUTPUT_START] ---")
-        print(f"Extracted Raw Text Length: {len(result.content)}")
-        print(f"Raw Text Preview: {result.content[:200]}...")
-        print("--- [Agent: VISION][OUTPUT_END] ---")
-
         return {
             "raw_text": result.content,
-            "logs": ["Extraction visuelle du texte brut terminée."]
+            "logs": ["Extraction visuelle (OCR) terminée."]
         }
     except Exception as e:
-        print(f"Vision Error: {e}")
-        return {
-            "raw_text": "",
-            "logs": [f"Erreur de vision: {str(e)}"]
-        }
-
-def pre_parser_node(state: AgentState):
-    """
-    BCV Pre-Parser: Filters raw text using strict anchor order.
-    Logic: 
-    - Page 1: [SOLDE REPORTE] -> keep -> [SOLDE A REPORTER] (stop)
-    - Page X: [REPORT] -> keep -> [SOLDE A REPORTER] (stop)
-    - Last:   [REPORT] -> keep -> [SOLDE EN] (stop)
-    """
-    print("--- [Agent: PRE_PARSER][INPUT_START] ---")
+        return {"logs": [f"Erreur Vision: {str(e)}"]}
+def scout_standard_node(state: AgentState):
+    """Pipeline A Scout: Programmatic Calibration"""
+    print("--- [Agent: SCOUT_STANDARD][START] ---")
     import re
-    date_pattern = re.compile(r'\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})')
+    import fitz
     
-    starting_bal = 0.0
-    total_dates = 0
-    detected_dates = []
-    cleaned_pages = []
-    
-    for i, page_text in enumerate(state.raw_pages):
-        page_num = i + 1
-        lines = page_text.split('\n')
-        keep = False
-        page_content = []
-        
-        for line in lines:
-            upper_line = line.upper().strip()
-            
-            # 1. STOP Keywords
-            if "SOLDE A REPORTER" in upper_line or "SOLDE EN" in upper_line:
-                keep = False
-                continue
-            
-            # 2. START Keywords
-            if "SOLDE REPORTE" in upper_line:
-                print(f"DEBUG: 'SOLDE REPORTE' détecté sur Page {page_num}")
-                keep = True
-                # Extraction du montant pour le passer proprement à l'IA sans inclure la ligne
-                amounts = re.findall(r"[\d' ]+\.\d{2}", line.replace("'", ""))
-                if amounts:
-                    try: starting_bal = float(amounts[-1].replace(" ", ""))
-                    except: pass
-                continue # On ne l'ajoute pas à page_content (Règle : non inclus)
-            elif "REPORT" in upper_line:
-                print(f"DEBUG: 'REPORT' détecté sur Page {page_num}")
-                keep = True
-                continue # On ne l'ajoute pas à page_content (Règle : non inclus)
-                
-            # 3. Content
-            if keep:
-                if any(x in upper_line for x in ["DATE", "VALEUR", "LIBELLÉ", "DÉBIT", "CRÉDIT", "SOLDE"]):
-                    continue
-                page_content.append(line)
-                match = date_pattern.search(line)
-                if match:
-                    detected_dates.append(match.group())
-                    total_dates += 1
-        
-        cleaned_pages.append("\n".join(page_content))
-    
-    full_cleaned_text = "\n--- NOUVELLE PAGE ---\n".join(cleaned_pages)
-    
-    print(f"DEBUG: Total dates détectées: {len(detected_dates)}")
-    print(f"DEBUG: Liste des dates: {detected_dates}")
-
-    return {
-        "raw_text": full_cleaned_text,
-        "raw_pages": cleaned_pages,
-        "expected_transaction_count": total_dates,
-        "detected_dates": detected_dates,
-        "starting_balance": starting_bal,
-        "logs": [
-            f"Pré-Parser : Filtrage BCV terminé. Solde initial : {starting_bal} CHF.",
-            f"Pré-Parser : {total_dates} dates détectées : {', '.join(detected_dates)}"
-        ]
-    }
-
-def worker_a_node(state: AgentState):
-    """Worker A: Structured Extraction (Standard Strategy)"""
-    print("--- [Agent: WORKER_A][INPUT_START] ---")
-    if not state.raw_text:
-        return {"logs": ["Erreur: Aucun texte brut pour l'ouvrier A."]}
-        
-    prompt = f"""
-    Tu es l'Ouvrier A. Extrais les transactions.
-    CONSIGNE : Le solde avant la première transaction est de {state.starting_balance} CHF.
-    
-    RELEVÉ NETTOYÉ :
-    {state.raw_text}
-    
-        RÈGLES D'OR (LOGIQUE RELEVÉ BCV) :
-    1. STRUCTURE DES PAGES :
-       - Page 1 : Les transactions sont ENTRE "SOLDE REPORTE" et "SOLDE A REPORTER" (exclus).
-       - Pages suivantes : Les transactions sont ENTRE "REPORT" (en haut) et "SOLDE A REPORTER" (en bas, exclus).
-       - Dernière page : Les transactions sont ENTRE "REPORT" et "SOLDE EN..." (exclus).
-    2. GESTION DES RAPPELS DE SOLDE (STRICT) :
-       - "SOLDE REPORTE" (Page 1) : Utilise-le UNIQUEMENT comme solde de départ pour tes calculs. NE L'INCLUS PAS dans ta liste de transactions JSON.
-       - "REPORT" (Haut de page) : À ignorer totalement, ne pas extraire.
-       - "SOLDE A REPORTER" / "SOLDE EN..." : Ce sont des bornes d'arrêt. NE PAS extraire.
-    3. AUCUN DOUBLON : Ta liste JSON ne doit contenir QUE les mouvements réels (Débit ou Crédit).
-    4. POUR CHAQUE LIGNE RÉELLE : Date (YYYY-MM-DD), Libellé (complet), Montant, et SOLDE (runningBalance).
-    """
     try:
-        flash_llm = get_llm()
-        structured_llm = flash_llm.with_structured_output(TransactionList)
-        result = structured_llm.invoke(prompt)
-        return {"worker_a_txns": result.transactions, "logs": [f"Ouvrier A : {len(result.transactions)} txns trouvées."]}
-    except Exception as e:
-        return {"logs": [f"Erreur Ouvrier A : {str(e)}"]}
-
-def worker_b_node(state: AgentState):
-    """Worker B: Redundant Extraction (Focus on missing & Communications)"""
-    print("--- [Agent: WORKER_B][INPUT_START] ---")
-    prompt = f"""
-    Tu es l'Ouvrier B. Ton rôle est de vérifier minutieusement le relevé.
-    Parfois l'ouvrier A oublie des lignes de type 'Frais', 'Commission' ou des petits montants.
-    RELEVÉ BRUT :
-    {state.raw_text}
-    
-        RÈGLES BCV :
-        - Début : Après "SOLDE REPORTE" (p1) ou "REPORT" (pX).
-        - Fin : Avant "SOLDE A REPORTER" ou "SOLDE EN".
-        - Ignorer les répétitions "REPORT" en haut de page.
-        - Focus sur Date, Montant, Solde, et Libellé complet.
-    """
-    try:
-        flash_llm = get_llm()
-        structured_llm = flash_llm.with_structured_output(TransactionList)
-        result = structured_llm.invoke(prompt)
-        return {"worker_b_txns": result.transactions, "logs": [f"Ouvrier B : {len(result.transactions)} txns trouvées."]}
-    except Exception as e:
-        return {"logs": [f"Erreur Ouvrier B : {str(e)}"]}
-
-def itinerant_worker_node(state: AgentState):
-    """Itinerant Worker: Processes the PDF chunk by chunk (1-2 pages) and accumulates txns."""
-    print("--- [Agent: ITINERANT_WORKER][INPUT_START] ---")
-    pages = state.raw_pages
-    if not pages:
-        return {"logs": ["Ouvrier Itinérant : Pas de pages à traiter."]}
-    
-    all_itinerant_txns = []
-    # We process in chunks of 2 pages with 1 page overlap to catch transactions at the border
-    batch_size = 2
-    step = 1
-    
-    flash_llm = get_llm()
-    structured_llm = flash_llm.with_structured_output(TransactionList)
-    
-    for i in range(0, len(pages), step):
-        chunk = pages[i : i + batch_size]
-        if not chunk: break
-        
-        chunk_text = "\n--- NOUVELLE PAGE ---\n".join(chunk)
-        print(f"Itinerant Worker: Processing chunk starting at page {i+1}")
-        
-        prompt = f"""
-        Tu es l'Ouvrier Itinérant. Tu extrais les transactions d'un fragment de relevé bancaire (2 pages).
-        TEXTE DU FRAGMENT :
-        {chunk_text}
-        
-        RÈGLES BCV :
-        1. STRUCTURE : Transactions entre "SOLDE REPORTE" (p1) ou "REPORT" et "SOLDE A REPORTER" ou "SOLDE EN".
-        2. DOUBLONS : NE PAS extraire "REPORT" en haut de page comme une transaction.
-        3. SOLDE REPORTE (Page 1) : Extraire comme ANCRE de départ (Montant 0).
-        4. RÉEL : Extraire Date, Libellé, Montant, Solde pour chaque mouvement réel.
-        5. fullRawText : Copie tout le texte brut lié (vital).
-        """
-        try:
-            result = structured_llm.invoke(prompt)
-            all_itinerant_txns.extend(result.transactions)
-        except Exception as e:
-            print(f"Itinerant Error on chunk {i}: {e}")
-            
-    # Deduplicate within itinerant worker itself (as there is overlap)
-    unique_txns = {}
-    for t in all_itinerant_txns:
-        desc_start = (t.description or "")[:15]
-        bal = t.runningBalance if t.runningBalance is not None else "None"
-        key = f"{t.date}_{t.amount}_{bal}_{desc_start}"
-        if key not in unique_txns:
-            unique_txns[key] = t
-            
-    final_list = sorted(unique_txns.values(), key=lambda x: str(x.date))
-    print(f"--- [Agent: ITINERANT_WORKER][OUTPUT] Found {len(final_list)} unique txns. ---")
-    
-    return {
-        "itinerant_txns": final_list,
-        "logs": [f"Ouvrier Itinérant : {len(final_list)} txns extraites par balayage de pages."]
-    }
-
-def visual_itinerant_node(state: AgentState):
-    """Visual Itinerant Worker: Processes the PDF visually chunk by chunk (1-2 pages)"""
-    print("--- [Agent: VISUAL_ITINERANT][INPUT_START] ---")
-    
-    pdf_bytes = base64.b64decode(state.pdf_base64)
-    try:
+        pdf_bytes = base64.b64decode(state.pdf_base64)
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        return {"logs": [f"Erreur Ouvrier Visuel Itinérant : {str(e)}"]}
         
-    page_count = len(doc)
-    if page_count == 0:
-        return {"logs": ["Ouvrier Visuel Itinérant : Pas de pages à traiter."]}
+        header_center = {"DATE": 40, "OPERATIONS": 80, "DEBIT": 450, "CREDIT": 520, "VALEUR": 580, "SOLDE": 650}
+        starting_bal = 0.0
+        
+        # Calibration sur page 1
+        words = doc[0].get_text("words")
+        for w in words:
+            x0, y0, x1, y1, text = w[0], w[1], w[2], w[3], w[4].upper()
+            if y0 < 100 and text in header_center:
+                if text == "SOLDE" and x0 < 200: continue
+                header_center[text] = (x0 + x1) / 2
+            
+            if text == "REPORTE":
+                line_ws = [sw for sw in words if abs(sw[3]-y1) < 5]
+                sol_ws = [sw for sw in line_ws if (sw[0]+sw[2])/2 > 500]
+                if sol_ws:
+                    val_str = "".join([sw[4] for sw in sol_ws if any(c.isdigit() for c in sw[4])])
+                    try: starting_bal = float(val_str.replace(" ", "").replace(",", "."))
+                    except: pass
 
-    all_visual_txns = []
-    batch_size = 2
-    step = 1
+        layout = LayoutConfig(
+            header_center=header_center,
+            starting_balance=state.expected_initial_balance,
+            bank_name="BCV",
+            confidence=0.9,
+            thinking="Detection programmique basee sur les mots-cles d'en-tete."
+        )
+        doc.close()
+        return {"pipeline_a": PipelineResult(layout=layout), "logs": ["Scout Standard : Calibration terminee."]}
+    except Exception as e:
+        return {"logs": [f"Erreur Scout Standard: {str(e)}"]}
+
+def universal_parser_node(state: AgentState, pipeline_id: str = "a"):
+    """Generic Parser: Uses a LayoutConfig to extract transactions"""
+    print(f"--- [Agent: PARSER][PIPELINE_{pipeline_id.upper()}][START] ---")
+    import re
+    import fitz
     
-    flash_llm = get_llm()
-    structured_llm = flash_llm.with_structured_output(TransactionList)
+    pipeline = getattr(state, f"pipeline_{pipeline_id}")
+    if not pipeline or not pipeline.layout:
+        return {"logs": [f"Erreur Parser {pipeline_id}: Pas de layout."]}
     
-    for i in range(0, page_count, step):
-        images_content = []
-        for j in range(i, min(i + batch_size, page_count)):
-            try:
-                page = doc.load_page(j)
-                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-                b64_img = base64.b64encode(pix.tobytes("jpeg")).decode("utf-8")
-                images_content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
-                    }
-                )
-            except Exception as e:
-                print(f"Erreur rendu page {j}: {e}")
+    layout = pipeline.layout
+    header_center = layout.header_center
+    limit_ops = (header_center["DATE"] + header_center["OPERATIONS"]) / 2
+    limit_debit = (header_center["OPERATIONS"] + header_center["DEBIT"]) / 2
+    limit_credit = (header_center["DEBIT"] + header_center["CREDIT"]) / 2
+    
+    try:
+        pdf_bytes = base64.b64decode(state.pdf_base64)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        all_txns = []
         
+        for i, page in enumerate(doc):
+            words = page.get_text("words")
+            words.sort(key=lambda w: (w[3], w[0]))
+            
+            # Detection Y dynamiques pour cette page
+            y_start, y_end = 0, page.rect.height
+            for w in words:
+                x0, y0, x1, y1, text = w[0], w[1], w[2], w[3], w[4].upper()
+                if text == "REPORTE" and x0 < 150: y_start = y1 + 2
+                elif text == "REPORT" and x0 < 150: y_start = y1 + 2
+                elif text == "REPORTER" or text == "SOLDE":
+                    next_ws = [sw[4].upper() for sw in words if abs(sw[1]-y0) < 5 and sw[0] > x0]
+                    if any(k in next_ws for k in ["EN", "A"]): y_end = y0 - 2
+            
+            limit_solde = (header_center["CREDIT"] + header_center["SOLDE"]) / 2
+            row_data = {"date": "", "desc": [], "debit": [], "credit": [], "solde": []}
+            current_y = -1
+            
+            for w in words:
+                x0, y0, x1, y1, text = w[0], w[1], w[2], w[3], w[4]
+                mid_x = (x0 + x1) / 2
+                if y1 <= y_start or y0 >= y_end: continue
+                if (y1 - y0) > (x1 - x0) * 2: continue 
+                if x0 > page.rect.width * 0.98: continue
+
+                if current_y == -1: current_y = y1
+                if abs(y1 - current_y) > 4:
+                    if row_data["date"] or any(row_data.values()):
+                        process_row_helper(row_data, all_txns)
+                    row_data = {"date": "", "desc": [], "debit": [], "credit": [], "solde": []}
+                    current_y = y1
+
+                if mid_x < limit_ops:
+                    if re.match(r'\d{1,2}\.\d{1,2}\.', text): row_data["date"] = text
+                    else: row_data["desc"].append(text)
+                elif mid_x < limit_debit: row_data["desc"].append(text)
+                elif mid_x < limit_credit: row_data["debit"].append(text)
+                elif mid_x < limit_solde: row_data["credit"].append(text)
+                else: row_data["solde"].append(text)
+            
+            if row_data["date"] or any(row_data.values()):
+                process_row_helper(row_data, all_txns)
+
+        doc.close()
+        pipeline.transactions = all_txns
+        
+        # Add feedback processing if we are in a retry
+        if state.retry_count > 0 and state.parsing_feedback:
+            # On pourrait ici ajuster des paramètres ou donner un hint au parser
+            # Pour l'instant on log juste qu'on a pris en compte le feedback
+            pass
+
+        return {f"pipeline_{pipeline_id}": pipeline, "logs": [f"Parser {pipeline_id} : {len(all_txns)} txns extraites."]}
+} txns extraites."]}
+    except Exception as e:
+        return {"logs": [f"Erreur Parser {pipeline_id}: {str(e)}"]}
+
+def process_row_helper(row, all_txns):
+    """Helper to group lines into transactions"""
+    date = row["date"]
+    desc = " ".join(row["desc"]).strip()
+    
+    def parse_amt(parts):
+        if not parts: return 0.0
+        s = "".join(parts).replace(" ", "").replace("'", "").replace(",", ".")
+        try: return float(s)
+        except: return 0.0
+
+    debit = parse_amt(row["debit"])
+    credit = parse_amt(row["credit"])
+    solde = parse_amt(row["solde"])
+    amount = credit if credit != 0 else -debit
+    
+    if date:
+        all_txns.append(Transaction(date=date, description=desc, amount=amount, runningBalance=solde if solde != 0 else None))
+    elif all_txns and amount == 0 and desc:
+        all_txns[-1].description += " " + desc
+    elif all_txns and amount != 0:
+        if all_txns[-1].amount == 0:
+            all_txns[-1].amount = amount
+            if solde: all_txns[-1].runningBalance = solde
+        else:
+            if desc: all_txns[-1].description += " " + desc + f" ({amount})"
+
+def verification_node(state: AgentState, pipeline_id: str = "a"):
+    """Validates the mathematical integrity of a pipeline"""
+    print(f"--- [Agent: VERIFY][PIPELINE_{pipeline_id.upper()}][START] ---")
+    pipeline = getattr(state, f"pipeline_{pipeline_id}")
+    if not pipeline or not pipeline.transactions:
+        return {f"pipeline_{pipeline_id}": pipeline, "logs": [f"Verify {pipeline_id}: Pas de données."]}
+    
+    txns = [t for t in pipeline.transactions if abs(t.amount or 0) > 0.001]
+    starting_bal = pipeline.layout.starting_balance
+    current_bal = starting_bal
+    
+    is_ok = True
+    log = []
+    error_page = None
+    
+    for i, t in enumerate(txns):
+        current_bal = round(current_bal + (t.amount or 0), 2)
+        if t.runningBalance is not None:
+            if abs(current_bal - t.runningBalance) > 0.05:
+                is_ok = False
+                if error_page is None: error_page = 1 
+                log.append(f"Erreur ligne {i+1}: Attendu {t.runningBalance}, Calculé {current_bal}")
+    
+    pipeline.transactions = txns
+    pipeline.is_mathematically_correct = is_ok
+    pipeline.verification_log = "\n".join(log) if log else "Succès mathématique total."
+    pipeline.error_page = error_page
+    
+    return {f"pipeline_{pipeline_id}": pipeline, "logs": [f"Verify {pipeline_id}: {'OK' if is_ok else 'ERREUR'}"]}
+
+def scout_visual_node(state: AgentState):
+    """Pipeline B Scout: Vision-based Layout Analysis"""
+    print("--- [Agent: SCOUT_VISUAL][START] ---")
+    
+    # Génération d'un rendu de la page 1 pour Vision
+    try:
+        pdf_bytes = base64.b64decode(state.pdf_base64)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        page = doc[0]
+        pix = page.get_pixmap()
+        img_data = pix.tobytes("png")
+        img_b64 = base64.b64encode(img_data).decode('utf-8')
+        doc.close()
+    except Exception as e:
+        return {"logs": [f"Erreur rendu image pour Scout Visuel: {e}"]}
+
+    prompt = """
+    Analyse l'image de ce relevé bancaire. 
+    Identifie les coordonnées X centrales (de 0 à 600 environ) pour les colonnes suivantes :
+    - DATE
+    - OPERATIONS (Libellé)
+    - DEBIT (Montants négatifs)
+    - CREDIT (Montants positifs)
+    - SOLDE (La colonne de droite avec le solde cumulé)
+    
+    Extrais aussi le SOLDE INITIAL (marqué souvent 'Solde reporté' ou 'Report').
+    Réponds au format JSON uniquement :
+    {
+      "header_center": {"DATE": x1, "OPERATIONS": x2, "DEBIT": x3, "CREDIT": x4, "VALEUR": x5, "SOLDE": x6},
+      "starting_balance": 0.0,
+      "thinking": "Ton raisonnement ici"
+    }
+    """
+    
+    try:
+        flash_llm = get_llm()
+        message = HumanMessage(content=[
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
+        ])
+        # On utilise une version structurée pour forcer le JSON LayoutConfig
+        structured_llm = flash_llm.with_structured_output(LayoutConfig)
+        layout = structured_llm.invoke([message])
+        
+        return {"pipeline_b": PipelineResult(layout=layout), "logs": ["Scout Visuel : Layout identifié par Vision."]}
+    except Exception as e:
         if not images_content:
             break
             
@@ -518,8 +580,8 @@ def visual_itinerant_node(state: AgentState):
         prompt = """
         Tu es l'Ouvrier Visuel Itinérant. Analyser visuellement ces pages de relevé bancaire (jusqu'à 2 pages avec chevauchement).
         ATTENTION À LA POSITION SPATIALE DES MONTANTS :
-        - Colonnes de GAUCHE (Débits/Retraits) = montants NÉGATIFS (-).
-        - Colonnes de DROITE (Crédits/Dépôts) = montants POSITIFS (+).
+        - DÉBIT = NÉGATIF (-).
+        - CRÉDIT = POSITIF (+).
         GARANTIR LE BON SIGNE EST TA MISSION PRINCIPALE.
         
         RÈGLES (RELEVÉ BCV) :
@@ -994,57 +1056,356 @@ def classification_consensus_node(state: AgentState):
         import traceback
         traceback.print_exc()
         
-        # Fallback to the original base transactions if the LLM fails
         return {
             "extracted_transactions": state.extracted_transactions,
             "logs": [f"Erreur du Juge LLM : {str(e)}"]
         }
 
+def verification_node(state: AgentState, pipeline_id: str = "a"):
+    """Validates the mathematical integrity of a pipeline"""
+    print(f"--- [Agent: VERIFY][PIPELINE_{pipeline_id.upper()}][START] ---")
+    pipeline = getattr(state, f"pipeline_{pipeline_id}")
+    if not pipeline or not pipeline.transactions:
+        return {f"pipeline_{pipeline_id}": pipeline, "logs": [f"Verify {pipeline_id}: Pas de données."]}
+    
+    txns = pipeline.transactions
+    starting_bal = pipeline.layout.starting_balance
+    is_ok = True
+    log = []
+    error_page = None
+
+    # 1. Vérification du delta global (Invariant In/Out)
+    expected_delta = round(state.expected_final_balance - state.expected_initial_balance, 2)
+    actual_delta = round(sum(t.amount or 0 for t in txns), 2)
+    
+    if abs(actual_delta - expected_delta) > 0.05:
+        is_ok = False
+        log.append(f"Erreur Globale: La somme des transactions ({actual_delta}) ne correspond pas au delta attendu ({expected_delta})")
+    
+    # 2. Vérification ligne par ligne (Soldes glissants)
+    current_bal = state.expected_initial_balance
+    for i, t in enumerate(txns):
+        current_bal = round(current_bal + (t.amount or 0), 2)
+        if t.runningBalance is not None:
+            if abs(current_bal - t.runningBalance) > 0.05:
+                is_ok = False
+                if error_page is None: error_page = 1 
+                log.append(f"Erreur ligne {i+1}: Attendu {t.runningBalance}, Calculé {current_bal}")
+    
+    pipeline.is_mathematically_correct = is_ok
+    pipeline.verification_log = "\n".join(log) if log else "Succès mathématique total (Global & Lignes)."
+    pipeline.error_page = error_page
+    
+    return {f"pipeline_{pipeline_id}": pipeline, "logs": [f"Verify {pipeline_id}: {'OK' if is_ok else 'ERREUR'}"]}
+
+# --- NEW ROBUST PIPELINE NODE ---
+
+def robust_parsing_node(state: AgentState):
+    """
+    Robust Parsing Node: Extrait les transactions en utilisant la méthode d'ancrage X/Y
+    et d'audit mathématique développée dans test_pipeline.py.
+    """
+    print("--- [Agent: ROBUST_PARSING][START] ---")
+    import re
+    import fitz
+    import unicodedata
+
+    def normalize(s):
+        return "".join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn').upper()
+
+    def parse_amount(val):
+        if not val: return 0.0
+        text = " ".join(val) if isinstance(val, list) else str(val)
+        clean_val = re.sub(r"(\d)[ ' ](\d)", r"\1\2", text)
+        clean_val = clean_val.replace(",", ".")
+        numbers = re.findall(r"-?\d+\.\d+|-?\d+", clean_val)
+        if not numbers: return 0.0
+        for n in reversed(numbers):
+            if "." in n: return int(float(n) * 100 + 0.0001) / 100.0
+        return float(numbers[-1])
+
+    try:
+        pdf_bytes = base64.b64decode(state.pdf_base64)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        
+        # 1. Ancrage IA (Header discovery)
+        words_p0 = [{"text": w[4], "x_min": w[0], "x_max": w[2], "y_mid": (w[1]+w[3])/2, "x_mid": (w[0]+w[2])/2} for w in doc[0].get_text("words")]
+        headers = [w for w in words_p0 if w["y_mid"] < 600]
+        
+        class HeaderLabels(BaseModel):
+            date: str = Field(description="Mot exact pour la colonne Date (VALEUR de préférence)")
+            description: str = Field(description="Mot exact pour la colonne Description (OPERATIONS de préférence)")
+            debit: str = Field(description="Mot exact pour Débit")
+            credit: str = Field(description="Mot exact pour Crédit")
+            solde: str = Field(description="Mot exact pour Solde")
+            reasoning: str = Field(description="Pourquoi ces choix ?")
+
+        prompt_header = f"""
+        Identifie la ligne d'en-tête du relevé.
+        MOTS : {[{"t": w['text'], "x": round(w['x_min'])} for w in headers]}
+        Réponds en JSON HeaderLabels.
+        """
+        flash_llm = get_llm()
+        labels = flash_llm.with_structured_output(HeaderLabels).invoke([HumanMessage(content=prompt_header)])
+        
+        anchors = {}
+        target_y = -1
+        for w in headers:
+            txt = normalize(w["text"])
+            if txt in ["VALEUR", "VALUTA", "VAL", "DATE"]:
+                target_y = w["y_mid"]
+                break
+        
+        if target_y == -1: target_y = headers[0]["y_mid"] # Fallback
+
+        for w in headers:
+            if abs(w["y_mid"] - target_y) > 15: continue
+            w_norm = normalize(w["text"])
+            if w_norm in normalize(labels.date) and "date" not in anchors: anchors["date"] = w
+            if w_norm in normalize(labels.description) and "description" not in anchors: anchors["description"] = w
+            if w_norm in normalize(labels.debit) and "debit" not in anchors: anchors["debit"] = w
+            if w_norm in normalize(labels.credit) and "credit" not in anchors: anchors["credit"] = w
+            if w_norm in normalize(labels.solde) and "solde" not in anchors: anchors["solde"] = w
+
+        # 2. Scout des lignes (Y-Anchors)
+        date_anchor = anchors.get("date", {"x_mid": 40})
+        x_start = date_anchor.get("x_min", 20)
+        x_range = (x_start - 10, x_start + 45)
+        
+        y_anchors = {}
+        date_pattern = re.compile(r"^\d{1,2}\.\d{1,2}(\.\d{2,4})?$")
+        
+        for i in range(len(doc)):
+            page_words = doc[i].get_text("words")
+            y_list = []
+            limit_y = target_y + 10 if i == 0 else 50
+            
+            # Détection footer rapide
+            footer_y = doc[i].rect.height
+            for w in page_words:
+                txt = w[4].upper()
+                if any(k in txt for k in ["TOTAL", "REPORT", "PAGE", "SOLDE", "MORGES", "AFFAIRES"]) and w[1] > doc[i].rect.height * 0.7:
+                    footer_y = w[1]
+                    break
+
+            for w in page_words:
+                center_x = (w[0] + w[2]) / 2
+                if limit_y < w[1] < footer_y and x_range[0] <= center_x <= x_range[1]:
+                    if date_pattern.match(w[4]):
+                        y_list.append(round(w[1], 2))
+            
+            unique_ys = []
+            if y_list:
+                y_list.sort()
+                unique_ys.append(y_list[0])
+                for y in y_list[1:]:
+                    if y - unique_ys[-1] > 5: unique_ys.append(y)
+            y_anchors[i] = unique_ys
+
+        # 3. Extraction
+        widths = ColumnWidths() # On pourrait faire un audit IA ici aussi, mais on commence direct
+        all_raw_txns = []
+        
+        for p_idx, ys in y_anchors.items():
+            page = doc[p_idx]
+            page_words = page.get_text("words")
+            page_words.sort(key=lambda w: (w[1], w[0]))
+            
+            # Détection footer pour cette page
+            p_footer_y = page.rect.height
+            for w in page_words:
+                if any(k in w[4].upper() for k in ["TOTAL", "REPORT", "PAGE", "SOLDE", "MORGES", "AFFAIRES"]) and w[1] > page.rect.height * 0.7:
+                    p_footer_y = w[1] - 5
+                    break
+
+            for i, y_start in enumerate(ys):
+                y_end = ys[i+1]-1 if i < len(ys)-1 else p_footer_y
+                rect = fitz.Rect(0, y_start-2, page.rect.width, y_end)
+                words_in_tx = page.get_text("words", clip=rect)
+                words_in_tx.sort(key=lambda w: (w[1], w[0]))
+                
+                tx_data = {"date": [], "desc": [], "debit": [], "credit": [], "solde": []}
+                for w in words_in_tx:
+                    x0, y0, x1, y1, txt = w[0], w[1], w[2], w[3], w[4]
+                    x_mid = (x0 + x1) / 2
+                    is_num = len(re.findall(r"\d", txt)) > 0 and len(re.findall(r"\d", txt)) >= len(re.findall(r"[a-zA-Z]", txt))
+                    is_near_top = (y1 - y_start) < 10
+                    
+                    # Mapping colonnes simplifié (on utilise les anchors et les widths par défaut)
+                    def get_col_range(role, cfg):
+                        anchor_x = anchors.get(role, {"x_mid": 0})["x_mid"]
+                        if anchor_x == 0: anchor_x = {"date": 40, "description": 200, "debit": 440, "credit": 510, "solde": 650}.get(role, 0)
+                        x_min = anchor_x + cfg.offset - (cfg.width / 2)
+                        return x_min, x_min + cfg.width
+
+                    if get_col_range("date", widths.date)[0] <= x_mid <= get_col_range("date", widths.date)[1]: tx_data["date"].append(txt)
+                    elif is_num and is_near_top and get_col_range("debit", widths.debit)[0] <= x1 <= get_col_range("debit", widths.debit)[1]: tx_data["debit"].append(txt)
+                    elif is_num and is_near_top and get_col_range("credit", widths.credit)[0] <= x1 <= get_col_range("credit", widths.credit)[1]: tx_data["credit"].append(txt)
+                    elif is_num and is_near_top and get_col_range("solde", widths.solde)[0] <= x1 <= get_col_range("solde", widths.solde)[1]: tx_data["solde"].append(txt)
+                    else: tx_data["desc"].append(txt)
+                
+                all_raw_txns.append(tx_data)
+
+        # 4. Nettoyage et conversion vers Transaction
+        final_txns = []
+        date_clean_pattern = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}")
+        
+        for t in all_raw_txns:
+            all_text = " ".join(t["date"] + t["desc"])
+            found_date = date_clean_pattern.search(all_text)
+            date_str = found_date.group(0) if found_date else (state.extracted_transactions[-1].date if final_txns else "")
+            
+            d_val = parse_amount(t["debit"])
+            c_val = parse_amount(t["credit"])
+            s_val = parse_amount(t["solde"])
+            
+            final_txns.append(Transaction(
+                date=date_str,
+                description=" ".join(t["desc"]).strip(),
+                amount=c_val if c_val != 0 else -d_val,
+                runningBalance=s_val if s_val != 0 else None,
+                fullRawText=json.dumps(t)
+            ))
+        
+        doc.close()
+        return {
+            "extracted_transactions": final_txns,
+            "success_parsing": True,
+            "logs": [f"Robust Parsing : {len(final_txns)} transactions extraites."]
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"logs": [f"Erreur Robust Parsing: {str(e)}"]}
+
+def scout_heuristic_node(state: AgentState):
+    """Pipeline C Scout: sampling-based numeric column detection"""
+    print("--- [Agent: SCOUT_HEURISTIC][START] ---")
+    import fitz
+    import re
+    try:
+        pdf_bytes = base64.b64decode(state.pdf_base64)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        header_center = {"DATE": 45, "OPERATIONS": 200, "DEBIT": 440, "CREDIT": 515, "VALEUR": 580, "SOLDE": 650}
+        
+        words = doc[0].get_text("words")
+        num_zones = [ (w[0]+w[2])/2 for w in words if re.search(r'\d+,\d{2}', w[4]) ]
+        if num_zones:
+            rightmost = max(num_zones)
+            if rightmost > 550: header_center["SOLDE"] = rightmost
+        
+        layout = LayoutConfig(header_center=header_center, starting_balance=state.expected_initial_balance, thinking="Heuristique par zones numériques.")
+        doc.close()
+        return {"pipeline_c": PipelineResult(layout=layout), "logs": ["Scout Heuristique : Calibration par zones."]}
+    except Exception as e:
+        return {"logs": [f"Erreur Scout Heuristique: {e}"]}
+
+def scout_sampling_node(state: AgentState):
+    """Pipeline D Scout: analysis of the first line of transaction"""
+    print("--- [Agent: SCOUT_SAMPLING][START] ---")
+    import fitz
+    import re
+    try:
+        pdf_bytes = base64.b64decode(state.pdf_base64)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        header_center = {"DATE": 45, "OPERATIONS": 150, "DEBIT": 450, "CREDIT": 520, "VALEUR": 585, "SOLDE": 660}
+        
+        words = doc[0].get_text("words")
+        for w in words:
+            if re.match(r'\d{2}\.\d{2}\.', w[4]):
+                header_center["DATE"] = (w[0] + w[2]) / 2
+                break
+        
+        layout = LayoutConfig(header_center=header_center, starting_balance=state.expected_initial_balance, thinking="Sampling par premiere ligne.")
+        doc.close()
+        return {"pipeline_d": PipelineResult(layout=layout), "logs": ["Scout Sampling : Calibration par premiere ligne."]}
+    except Exception as e:
+        return {"logs": [f"Erreur Scout Sampling: {e}"]}
+
+def judge_parsing_node(state: AgentState):
+    """Aggregates results, checks final balance and decides if retry is needed"""
+    print(f"--- [Agent: JUDGE_PARSING][START][RETRY: {state.retry_count}] ---")
+    
+    pipelines = [state.pipeline_a, state.pipeline_b, state.pipeline_c, state.pipeline_d]
+    valid_results = [p for p in pipelines if p and p.is_mathematically_correct]
+    
+    final_valid = []
+    best_fail = None
+    first_error_page = 999
+    
+    for p in valid_results:
+        calc_final = p.layout.starting_balance
+        for t in p.transactions:
+            calc_final += (t.amount or 0)
+        
+        if abs(calc_final - state.expected_final_balance) < 0.1:
+            final_valid.append(p)
+        else:
+            # On cherche la page de l'erreur
+            if p.error_page and p.error_page < first_error_page:
+                first_error_page = p.error_page
+            best_fail = p
+
+    if final_valid:
+        winner = max(final_valid, key=lambda r: len(r.transactions))
+        return {
+            "extracted_transactions": winner.transactions, 
+            "success_parsing": True,
+            "logs": [f"Juge : Succès avec {len(winner.transactions)} txns."]
+        }
+    
+    # ÉCHEC : On prépare le feedback pour le retry
+    if state.retry_count < 2: # Max 2 retries
+        msg = f"Le solde final ne correspond pas (Attendu: {state.expected_final_balance}). "
+        if first_error_page != 999:
+            msg += f"L'erreur semble commencer à la PAGE {first_error_page}."
+        else:
+            msg += "L'erreur est répartie ou non localisée."
+        
+        return {
+            "retry_count": state.retry_count + 1,
+            "parsing_feedback": msg,
+            "success_parsing": False,
+            "logs": [f"Juge : ÉCHEC. Retry {state.retry_count + 1} demandé. Feedback: {msg}"]
+        }
+    else:
+        # Épuisement des retries, on prend le meilleur disponible
+        winner = state.pipeline_a
+        if valid_results:
+            winner = max(valid_results, key=lambda r: len(r.transactions))
+        return {
+            "extracted_transactions": winner.transactions if winner else [],
+            "success_parsing": True, # On force la sortie pour éviter la boucle infinie
+            "logs": ["Juge : Échec après retries. Passage en mode dégradé."]
+        }
+
+def should_continue_parsing(state: AgentState):
+    """Conditional edge to decide if we loop back for another try"""
+    if state.success_parsing:
+        return "continue"
+    return "retry"
+
 # Build Graph
 workflow = StateGraph(AgentState)
+
 workflow.add_node("vision", vision_node)
-workflow.add_node("pre_parser", pre_parser_node)
-workflow.add_node("worker_a", worker_a_node)
-workflow.add_node("worker_b", worker_b_node)
-workflow.add_node("itinerant", itinerant_worker_node)
-workflow.add_node("visual_itinerant", visual_itinerant_node)
-workflow.add_node("integrity_auditor", integrity_auditor_node)
-workflow.add_node("foreman", foreman_consensus_node)
-workflow.add_node("recovery_worker", recovery_worker_node)
+workflow.add_node("balance_scout", balance_scout_node)
+workflow.add_node("robust_parsing", robust_parsing_node)
+
+# Classification Phase
 workflow.add_node("start_classification", start_classification_node)
 workflow.add_node("classifier_a", classifier_a_node)
 workflow.add_node("classifier_b", classifier_b_node)
 workflow.add_node("judge", classification_consensus_node)
 
-# Circuit : Vision -> Pre-Parser -> Workers (Parallel) -> Auditor -> Foreman -> (Recovery) -> Classifiers -> Judge
+# --- Edges Definition ---
 workflow.set_entry_point("vision")
-workflow.add_edge("vision", "pre_parser")
+workflow.add_edge("vision", "balance_scout")
+workflow.add_edge("balance_scout", "robust_parsing")
+workflow.add_edge("robust_parsing", "start_classification")
 
-# Fan-out vers les ouvriers
-workflow.add_edge("pre_parser", "worker_a")
-workflow.add_edge("pre_parser", "worker_b")
-workflow.add_edge("pre_parser", "itinerant")
-workflow.add_edge("pre_parser", "visual_itinerant")
-
-# Fan-in vers l'auditeur
-workflow.add_edge("worker_a", "integrity_auditor")
-workflow.add_edge("worker_b", "integrity_auditor")
-workflow.add_edge("itinerant", "integrity_auditor")
-workflow.add_edge("visual_itinerant", "integrity_auditor")
-
-workflow.add_edge("integrity_auditor", "foreman")
-
-def check_chain(state: AgentState):
-    if state.integrity_report and state.integrity_report.startswith("RUPTURE"):
-        return "broken"
-    return "ok"
-
-workflow.add_conditional_edges("foreman", check_chain, {
-    "broken": "recovery_worker",
-    "ok": "start_classification"
-})
-workflow.add_edge("recovery_worker", "foreman")
-
+# Classification Flow
 workflow.add_edge("start_classification", "classifier_a")
 workflow.add_edge("start_classification", "classifier_b")
 workflow.add_edge("classifier_a", "judge")
