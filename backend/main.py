@@ -255,10 +255,7 @@ class AgentState(BaseModel):
     integrity_report: Optional[str] = None
     
     # Classification results
-    classification_a_txns: List[ClassifiedTransaction] = []
-    classification_b_txns: List[ClassifiedTransaction] = []
-    classification_a_thinking: str = ""
-    classification_b_thinking: str = ""
+    classification_thinking: str = ""
 
 def balance_scout_node(state: AgentState):
     """Initial node to find starting and ending balances matching test_pipeline.py logic"""
@@ -868,26 +865,26 @@ def recovery_worker_node(state: AgentState):
             "logs": [f"Erreur Agent Récupération : {str(e)}"]
         }
 
-def start_classification_node(state: AgentState):
-    """Dummy node to fan out to classifiers after foreman loop"""
-    return {}
-
-def classifier_a_node(state: AgentState):
-    """Classifier A: Accurate categorization based on rules and history."""
-    print("--- [Agent: CLASSIFIER_A][INPUT_START] ---")
+def classification_node(state: AgentState):
+    """
+    Unified Classifier: Accurate categorization based on rules, history, and member detection in one pass.
+    This replaces the previous A/B/Judge pattern to avoid timeouts.
+    """
+    print("--- [Agent: CLASSIFIER][START] ---")
     history_context = get_user_history_context(state.user_id)
     accounts = state.existing_accounts
+    
+    # Pre-format account info for the prompt
     accounts_info = "\n".join([
-        f"ID: {a.id} | Code: {a.code} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'} | Contexte IA: {a.iaContext or 'N/A'}" 
+        f"ID: {a.id} | Code: {a.code} | Nom: {a.label} | Description: {a.description or 'N/A'} | SuiviMembre: {'OUI' if a.isMembership else 'NON'} | ContexteIA: {a.iaContext or 'N/A'}" 
         for a in accounts
     ])
     
-    # --- BATCHED CLASSIFICATION ---
     all_txns = state.extracted_transactions
     if not all_txns:
-        return {"classification_a_txns": [], "logs": ["Comptable A : Aucune transaction à classer."]}
+        return {"logs": ["Comptable : Aucune transaction à classer."]}
 
-    batch_size = 50
+    batch_size = 50 # Keep batching to avoid context window issues on very large statements
     all_classified = []
     global_thinking = ""
     
@@ -896,19 +893,27 @@ def classifier_a_node(state: AgentState):
 
     for i in range(0, len(all_txns), batch_size):
         batch = all_txns[i : i + batch_size]
-        print(f"Classifier A: Processing batch {i//batch_size + 1} ({len(batch)} txns)")
+        print(f"Classifier: Processing batch {i//batch_size + 1} ({len(batch)} txns)")
         
         prompt = f"""
-        Tu es le Comptable A (Historique). Batch {i//batch_size + 1}.
+        Tu es l'Expert Comptable de l'association. Ta mission est de classifier ces transactions bancaires.
         
-        CONTEXTE :
+        CONTEXTE GLOBAL DE L'ASSO :
         {state.global_context or "N/A"}
-        MODÈLES :
+        
+        HISTORIQUE (Modèles de classification passés) :
         {history_context}
-        PLAN :
+        
+        PLAN COMPTABLE :
         {accounts_info}
         
-        TRANSACTIONS (JSON) :
+        RÈGLES CRITIQUES :
+        1. Pour chaque transaction, choisis l'accountId le plus probable.
+        2. Si un compte a 'SuiviMembre: OUI', cherche activement le nom du membre dans le libellé et remplis 'detectedMemberName'.
+        3. Utilise le 'ContexteIA' des comptes pour affiner ton choix.
+        4. Sois précis sur le raisonnement (accountChoiceReasoning).
+        
+        TRANSACTIONS À CLASSER (JSON) :
         {json.dumps([t.model_dump() for t in batch])}
         """
         try:
@@ -916,153 +921,30 @@ def classifier_a_node(state: AgentState):
             all_classified.extend(result.transactions)
             if not global_thinking: global_thinking = result.thinking
         except Exception as e:
-            print(f"Batch Classifier A Error: {e}")
+            print(f"Batch Classifier Error: {e}")
             for t in batch:
                 all_classified.append(ClassifiedTransaction(**t.model_dump(), accountChoiceReasoning="Erreur lors de la classification IA"))
 
+    # Post-process: Validate IDs and format dates
+    valid_ids = {a.id for a in accounts}
+    for t in all_classified:
+        if t.accountId and t.accountId not in valid_ids:
+            t.accountId = None
+        # Standardize date format to dd.mm.yy for the frontend display if needed
+        if t.date and "-" in t.date:
+            try:
+                dt = datetime.strptime(t.date, "%Y-%m-%d")
+                t.date = dt.strftime("%d.%m.%y")
+            except: pass
+
+    all_classified.sort(key=lambda x: str(x.date or "1900-01-01"))
     classified_count = sum(1 for t in all_classified if t.accountId)
+    
     return {
-        "classification_a_txns": all_classified,
-        "classification_a_thinking": global_thinking or "Classification terminée.",
-        "logs": [f"Comptable A : {classified_count}/{len(all_classified)} classées."]
+        "extracted_transactions": all_classified,
+        "classification_thinking": global_thinking or "Classification terminée.",
+        "logs": [f"Comptable : {classified_count}/{len(all_classified)} transactions classées."]
     }
-
-def classifier_b_node(state: AgentState):
-    """Classifier B: Contextual extraction (members, specific keywords)."""
-    print("--- [Agent: CLASSIFIER_B][INPUT_START] ---")
-    accounts = state.existing_accounts
-    accounts_info = "\n".join([
-        f"ID: {a.id} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'} | Contexte IA: {a.iaContext or 'N/A'}" 
-        for a in accounts
-    ])
-    
-    # --- BATCHED CLASSIFICATION ---
-    all_txns = state.extracted_transactions
-    if not all_txns:
-        return {"classification_b_txns": [], "logs": ["Comptable B : Aucune transaction à classer."]}
-
-    batch_size = 50
-    all_classified = []
-    global_thinking = ""
-    
-    flash_llm = get_llm()
-    structured_llm = flash_llm.with_structured_output(ClassifiedTransactionList)
-
-    for i in range(0, len(all_txns), batch_size):
-        batch = all_txns[i : i + batch_size]
-        print(f"Classifier B: Processing batch {i//batch_size + 1} ({len(batch)} txns)")
-        
-        prompt = f"""
-        Tu es le Comptable B (Détails/Membres). Batch {i//batch_size + 1}.
-        
-        CONTEXTE :
-        {state.global_context or "N/A"}
-        PLAN :
-        {accounts_info}
-        
-        RÈGLES :
-        - Extraire 'detectedMemberName' pour les comptes de membres (Suivi: OUI).
-        
-        TRANSACTIONS (JSON) :
-        {json.dumps([t.model_dump() for t in batch])}
-        """
-        try:
-            result = structured_llm.invoke(prompt)
-            all_classified.extend(result.transactions)
-            if not global_thinking: global_thinking = result.thinking
-        except Exception as e:
-            print(f"Batch Classifier B Error: {e}")
-            for t in batch:
-                all_classified.append(ClassifiedTransaction(**t.model_dump(), accountChoiceReasoning="Erreur lors de la classification IA"))
-
-    classified_count = sum(1 for t in all_classified if t.accountId)
-    return {
-        "classification_b_txns": all_classified,
-        "classification_b_thinking": global_thinking or "Classification terminée.",
-        "logs": [f"Comptable B : {classified_count}/{len(all_classified)} classées."]
-    }
-
-def classification_consensus_node(state: AgentState):
-    """The Judge: Uses an LLM to harmonize mapping based on Classifier A and B's reasoning."""
-    print("--- [Agent: JUDGE][INPUT_START] ---")
-    
-    accounts = state.existing_accounts
-    accounts_info = "\n".join([
-        f"ID: {a.id} | Nom: {a.label} | Suivi: {'OUI' if a.isMembership else 'NON'}" 
-        for a in accounts
-    ])
-    
-    prompt = f"""
-    Tu es le Juge Comptable Suprême. Tu dois consolider le travail de deux comptables (A et B) pour classifier une liste de transactions.
-    
-    PLAN COMPTABLE :
-    {accounts_info}
-    
-    PENSÉE DU COMPTABLE A (Axé sur l'historique) :
-    {state.classification_a_thinking}
-    
-    PENSÉE DU COMPTABLE B (Axé sur le contexte et les membres) :
-    {state.classification_b_thinking}
-    
-    PROPOSITIONS A (JSON) :
-    {json.dumps([t.model_dump() for t in state.classification_a_txns])}
-    
-    PROPOSITIONS B (JSON) :
-    {json.dumps([t.model_dump() for t in state.classification_b_txns])}
-    
-    RÈGLES DU JUGE :
-    1. Pour chaque transaction de base, analyse les propositions de A et B.
-    2. Si B a détecté un membre et un compte de suivi (Suivi: OUI), privilégie souvent B pour les cotisations.
-    3. Si A a un match historique solide, et B n'a rien de spécial, privilégie A.
-    4. Assure-toi que les `accountId` finaux existent dans le plan comptable.
-    5. Fournis TA PENSÉE (thinking) justifiant tes choix clés avant de retourner la liste finale.
-    6. Respecte le format de date YYYY-MM-DD.
-    
-    TRANSACTIONS DE BASE À CLASSER (JSON) :
-    {json.dumps([t.model_dump() for t in state.extracted_transactions])}
-    """
-    
-    try:
-        flash_llm = get_llm()
-        structured_llm = flash_llm.with_structured_output(ClassifiedTransactionList)
-        result = structured_llm.invoke(prompt)
-        
-        final_txns = result.transactions
-        valid_ids = {a.id for a in state.existing_accounts}
-        
-        # Format date and validate IDs
-        for t in final_txns:
-            if t.accountId and t.accountId not in valid_ids:
-                t.accountId = None
-            if t.date and "-" in t.date:
-                try:
-                    from datetime import datetime
-                    dt = datetime.strptime(t.date, "%Y-%m-%d")
-                    t.date = dt.strftime("%d.%m.%y")
-                except:
-                    pass
-                    
-        final_txns.sort(key=lambda x: str(x.date or "1900-01-01"))
-        
-        classified_count = sum(1 for t in final_txns if t.accountId)
-        print(f"--- [Agent: JUDGE][OUTPUT] {classified_count}/{len(final_txns)} transactions avec compte ---")
-        print(f"  THINKING: {result.thinking[:200]}...")
-        for t in final_txns[:5]:
-            print(f"  JUDGE: '{t.description[:40]}' -> accountId={t.accountId} | reasoning={t.accountChoiceReasoning[:50]}...")
-        
-        return {
-            "extracted_transactions": final_txns,
-            "logs": [f"Le Juge : {classified_count}/{len(final_txns)} classées après réflexion."]
-        }
-    except Exception as e:
-        print(f"Judge LLM Error: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        return {
-            "extracted_transactions": state.extracted_transactions,
-            "logs": [f"Erreur du Juge LLM : {str(e)}"]
-        }
 
 
 # --- NEW ROBUST PIPELINE NODE ---
@@ -1401,23 +1283,14 @@ workflow.add_node("balance_scout", balance_scout_node)
 workflow.add_node("robust_parsing", robust_parsing_node)
 
 # Classification Phase
-workflow.add_node("start_classification", start_classification_node)
-workflow.add_node("classifier_a", classifier_a_node)
-workflow.add_node("classifier_b", classifier_b_node)
-workflow.add_node("judge", classification_consensus_node)
+workflow.add_node("classifier", classification_node)
 
 # --- Edges Definition ---
 workflow.set_entry_point("vision")
 workflow.add_edge("vision", "balance_scout")
 workflow.add_edge("balance_scout", "robust_parsing")
-workflow.add_edge("robust_parsing", "start_classification")
-
-# Classification Flow
-workflow.add_edge("start_classification", "classifier_a")
-workflow.add_edge("start_classification", "classifier_b")
-workflow.add_edge("classifier_a", "judge")
-workflow.add_edge("classifier_b", "judge")
-workflow.add_edge("judge", END)
+workflow.add_edge("robust_parsing", "classifier")
+workflow.add_edge("classifier", END)
 
 compiled_app = workflow.compile()
 
