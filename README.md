@@ -20,6 +20,7 @@
 - **📐 Calibration IA des Colonnes** : Gemini identifie automatiquement les en-têtes (Date, Débit, Crédit, Solde) puis le parser programmatique extrait les valeurs avec précision sub-pixel.
 - **⚡ Unified Parallel Batch Consensus** : Classification ultra-rapide par lots de 10 transactions traitées en parallèle, garantissant la fiabilité sans risque de timeout.
 - **📚 Apprentissage par l'Historique (RAG)** : Système de classification qui apprend de vos validations passées (Firestore) pour catégoriser les écritures récurrentes.
+- **🪄 Contexte IA par Compte** : Chaque compte peut recevoir une instruction spécifique (ex: "Utiliser pour les factures Swisscom") qui guide les agents lors de la classification.
 - **🧠 Triple Consensus par Lot** : Pour chaque groupe de 10 transactions, deux agents (Historique vs Membres) proposent un choix, et un Juge IA arbitre le consensus.
 - **🎯 Contexte Métier Dynamique** : Injection de règles spécifiques (cotisations, gestion des membres) via un contexte global configurable.
 - **📄 Vision Intelligence** : Analyse visuelle des reçus et factures avec matching automatique aux transactions bancaires.
@@ -64,9 +65,9 @@ graph TD
 | Agent | Rôle | Spécialité |
 |:---|:---|:---|
 | **Consensus Batch** | Traitement Parallèle | Divise les transactions en lots de 10 pour éviter les timeouts. Chaque lot est traité de manière autonome et concurrente. |
-| **Comptable A** | Historique RAG | Utilise les 200 dernières écritures validées pour assurer la cohérence temporelle. |
-| **Comptable B** | Contexte Membres | Détecte les noms des membres et applique les règles métier (cotisations, dons). |
-| **Juge Batch** | Arbitrage Final | Compare A et B pour chaque transaction du lot. Tranche en faveur de l'historique ou du métier selon la pertinence des justifications. |
+| **Comptable A** | Historique RAG | Utilise les 200 dernières écritures validées et le **Contexte IA** des comptes pour assurer la cohérence. |
+| **Comptable B** | Contexte Membres | Se base sur le **Contexte IA** spécifique aux comptes de membres et détecte les noms dans les libellés. |
+| **Juge Batch** | Arbitrage Final | Compare A et B en utilisant le **Contexte IA** global comme référence ultime pour trancher. |
 
 ---
 
