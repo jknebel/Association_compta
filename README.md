@@ -7,21 +7,22 @@
 [![Statut](https://img.shields.io/badge/Statut-En%20D%C3%A9veloppement-orange.svg?style=for-the-badge)](https://github.com/jknebel/Association_compta)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/Frontend-React%2018-61DAFB.svg?style=for-the-badge&logo=react&logoColor=black)](https://reactjs.org/)
-[![Gemini](https://img.shields.io/badge/AI-Google%20Gemini%202.5-4285F4.svg?style=for-the-badge&logo=google-gemini&logoColor=white)](https://ai.google.dev/)
+[![Gemini](https://img.shields.io/badge/AI-Google%20Gemini%202.5%20Flash-4285F4.svg?style=for-the-badge&logo=google-gemini&logoColor=white)](https://ai.google.dev/)
 [![Licence](https://img.shields.io/badge/Licence-CC%20BY--NC%204.0-lightgrey.svg?style=for-the-badge)](http://creativecommons.org/licenses/by-nc/4.0/)
 
-**AssoCompta AI** est une solution intelligente de gestion comptable automatisée pour les associations. En utilisant des systèmes multi-agents (LangGraph) et la puissance des LLM (Gemini), le projet vise à éliminer la saisie manuelle fastidieuse en transformant des relevés bancaires PDF en écritures comptables structurées et classifiées.
+**AssoCompta AI** est une solution intelligente de gestion comptable automatisée pour les associations. En utilisant des systèmes multi-agents (LangGraph) et la puissance de **Gemini 2.5 Flash**, le projet transforme des relevés bancaires PDF complexes en écritures comptables structurées en quelques secondes.
 
 ---
 
 ## ✨ Fonctionnalités Clés
 
-- **🤖 Pipeline d'Extraction Robuste** : Extraction déterministe des relevés bancaires par ancrage spatial (coordonnées X/Y) directement sur le PDF natif, sans dépendance à l'OCR IA pour les données chiffrées.
-- **📐 Calibration IA des Colonnes** : Gemini identifie automatiquement les en-têtes de colonnes (Date, Débit, Crédit, Solde) puis le parser programmatique extrait les valeurs avec précision sub-pixel.
-- **📚 Apprentissage par l'Historique (RAG)** : Système de classification intelligent qui apprend de vos validations passées pour catégoriser automatiquement les écritures récurrentes.
-- **🧠 Raisonnement IA Avancé (Chain of Thought)** : Deux agents classifieurs indépendants justifient chaque choix de compte, et un Juge IA tranche les divergences.
-- **🎯 Contexte Métier Dynamique** : Injection de règles spécifiques (cotisations, gestion des membres) directement dans l'invite des agents via un contexte global configurable dans l'UI.
-- **📄 Vision Intelligence** : Analyse visuelle des reçus et factures pour extraire montants, dates et libellés, avec matching automatique aux transactions.
+- **🤖 Pipeline d'Extraction Robuste** : Extraction déterministe des relevés bancaires par ancrage spatial (coordonnées X/Y) directement sur le PDF natif.
+- **📐 Calibration IA des Colonnes** : Gemini identifie automatiquement les en-têtes (Date, Débit, Crédit, Solde) puis le parser programmatique extrait les valeurs avec précision sub-pixel.
+- **⚡ Unified Parallel Batch Consensus** : Classification ultra-rapide par lots de 10 transactions traitées en parallèle, garantissant la fiabilité sans risque de timeout.
+- **📚 Apprentissage par l'Historique (RAG)** : Système de classification qui apprend de vos validations passées (Firestore) pour catégoriser les écritures récurrentes.
+- **🧠 Triple Consensus par Lot** : Pour chaque groupe de 10 transactions, deux agents (Historique vs Membres) proposent un choix, et un Juge IA arbitre le consensus.
+- **🎯 Contexte Métier Dynamique** : Injection de règles spécifiques (cotisations, gestion des membres) via un contexte global configurable.
+- **📄 Vision Intelligence** : Analyse visuelle des reçus et factures avec matching automatique aux transactions bancaires.
 - **💬 Chat Expert** : Posez des questions sur votre comptabilité en langage naturel et obtenez des réponses basées sur vos données réelles.
 - **📊 Ledger Dynamique** : Visualisation en temps réel de la balance, filtrage intelligent et export Excel.
 - **🔒 Sécurisé & Cloud** : Authentification et stockage temps réel via Firebase.
@@ -29,8 +30,6 @@
 ---
 
 ## 🏗️ Architecture du Pipeline AI
-
-Le pipeline de traitement des relevés bancaires se décompose en **deux phases séquentielles** : une extraction déterministe puis une classification par consensus IA.
 
 ### Phase 1 — Extraction (Déterministe + IA légère)
 
@@ -41,43 +40,33 @@ graph TD
     C --> D["📐 Robust Parsing Node"]
     
     subgraph D["📐 Robust Parsing Node"]
-        D1["1. Header Discovery<br/><i>Gemini identifie les mots-clés<br/>DATE, DÉBIT, CRÉDIT, SOLDE</i>"]
-        D2["2. Ancrage X<br/><i>Coordonnées X des colonnes<br/>via PyMuPDF (programmatique)</i>"]
-        D3["3. Ancrage Y (Scout)<br/><i>Détection des lignes de transactions<br/>par regex sur les dates</i>"]
-        D4["4. Extraction par clip rect<br/><i>Lecture mot par mot dans chaque<br/>zone [y_start → y_end] × [col_x]</i>"]
-        D5["5. Nettoyage<br/><i>Tronquage 2 décimales, fusion texte,<br/>filtrage footer/header</i>"]
-        D1 --> D2 --> D3 --> D4 --> D5
+        D1["1. Header Discovery<br/><i>Gemini identifie les colonnes</i>"]
+        D2["2. Ancrage X/Y<br/><i>Calcul programmatique des zones</i>"]
+        D3["3. Precise Extraction<br/><i>Lecture mot par mot via clip rect</i>"]
+        D4["4. Math Audit<br/><i>Validation du Delta vs Balances</i>"]
+        D1 --> D2 --> D3 --> D4
     end
 ```
 
-**Détails des étapes :**
-
-| Étape | Agent | Méthode | Description |
-|:---:|:---|:---|:---|
-| 1 | **Vision Node** | PyMuPDF | Vérifie si le PDF contient du texte natif (> 200 chars). Si oui, traitement direct. Sinon, fallback OCR via Gemini Vision. |
-| 2 | **Balance Scout** | Gemini Vision | Envoie l'image de la première et dernière page pour extraire les soldes initial et final (ancres de validation). |
-| 3 | **Header Discovery** | Gemini Flash (structured output) | Reçoit la liste de tous les mots de la page 1 avec leurs coordonnées X. Identifie les labels de colonnes (ex: "Valeur", "Débits", "Crédits", "Solde"). |
-| 4 | **Ancrage X** | Programmatique (PyMuPDF) | Utilise les mots identifiés par l'IA pour calculer les bornes X exactes de chaque colonne (x_min, x_max basé sur le centre + largeur configurable). |
-| 5 | **Ancrage Y** | Programmatique (Regex) | Parcourt chaque page et détecte les positions Y de chaque date (format `dd.mm.yy`) dans la zone X de la colonne Date. Chaque Y = début d'une transaction. |
-| 6 | **Extraction** | PyMuPDF `clip rect` | Pour chaque transaction : découpe un rectangle `[y_start, y_next]` × `[0, page_width]`, lit les mots, et les assigne aux colonnes selon leur position X. Les montants ne sont capturés que s'ils sont **alignés verticalement avec la date** (marge de 10px). |
-| 7 | **Nettoyage** | Python | Tronquage des montants à 2 décimales sans arrondi, fusion des mots du descriptif, extraction de la date depuis le texte, filtrage des lignes de résumé (Report, Chiffre d'affaires, Total). |
-
-### Phase 2 — Classification (IA Multi-Agents)
+### Phase 2 — Classification (Parallel Batch Consensus)
 
 ```mermaid
 graph TD
-    E["📋 Transactions extraites"] --> F{"Classification parallèle"}
-    F --> G["🧮 Comptable A<br/><i>Historique RAG + Reasoning</i>"]
-    F --> H["👥 Comptable B<br/><i>Contexte métier + Membres</i>"]
-    G & H --> I["⚖️ Juge IA<br/><i>Consensus LLM avec justifications</i>"]
+    E["📋 Transactions extraites"] --> F["📦 Split en lots de 10"]
+    subgraph F["⚡ Traitement Parallèle (Lots 1 à N)"]
+        G["🧮 Agent A<br/><i>Historique</i>"]
+        H["👥 Agent B<br/><i>Membres</i>"]
+        G & H --> I["⚖️ Juge Batch<br/><i>Arbitrage</i>"]
+    end
     I --> J["🚀 Transactions classifiées"]
 ```
 
 | Agent | Rôle | Spécialité |
 |:---|:---|:---|
-| **Comptable A** | Classification par historique | Récupère les 200 dernières transactions validées par l'utilisateur (RAG Firestore) et les utilise comme exemples pour le LLM. |
-| **Comptable B** | Classification par contexte | Se concentre sur les descriptions de comptes, les comptes de cotisation (isMembership), et la détection de noms de membres dans les libellés. |
-| **Juge IA** | Arbitrage final | Reçoit les propositions + raisonnements de A et B, puis tranche pour chaque transaction. Privilégie B pour les cotisations, A pour les récurrences historiques. |
+| **Consensus Batch** | Traitement Parallèle | Divise les transactions en lots de 10 pour éviter les timeouts. Chaque lot est traité de manière autonome et concurrente. |
+| **Comptable A** | Historique RAG | Utilise les 200 dernières écritures validées pour assurer la cohérence temporelle. |
+| **Comptable B** | Contexte Membres | Détecte les noms des membres et applique les règles métier (cotisations, dons). |
+| **Juge Batch** | Arbitrage Final | Compare A et B pour chaque transaction du lot. Tranche en faveur de l'historique ou du métier selon la pertinence des justifications. |
 
 ---
 
