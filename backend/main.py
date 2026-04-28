@@ -392,100 +392,102 @@ def scout_standard_node(state: AgentState):
 
 async def classification_consensus_node(state: AgentState):
     """
-    Per-transaction Consensus Classifier:
-    For each transaction, Agent A (History) and Agent B (Members) run in parallel.
-    Python consensus logic picks the best result. 10 transactions processed concurrently.
+    Batch Consensus Classifier: Agent A + Agent B per batch of 10 (in parallel),
+    then Judge per batch. All batches run concurrently (semaphore=5).
     """
     print("--- [Agent: CONSENSUS_CLASSIFIER][START] ---")
     all_txns = state.extracted_transactions
     if not all_txns:
         return {"logs": ["Classification : Aucune transaction."]}
 
+    # Log simplified descriptions before classification
+    simplified_count = sum(1 for t in all_txns if t.simplifiedDescription)
+    print(f"[CLASSIFIER] Input: {len(all_txns)} txns, {simplified_count} with simplifiedDescription")
+    for t in all_txns[:3]:
+        print(f"  [SAMPLE] id={t.id}, simplified='{t.simplifiedDescription}', desc='{t.description[:60]}...'")
+
     # Build shared context once
     accounts_info = "\n".join([
         f"ID: {a.id} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'} | Contexte IA: {a.iaContext or 'N/A'}" 
         for a in state.existing_accounts
     ])
-    membership_account_ids = {a.id for a in state.existing_accounts if a.isMembership}
     history_context = get_user_history_context(state.user_id)
     global_ctx = state.global_context or ""
     
-    flash_llm = get_llm()
-    struct_single = flash_llm.with_structured_output(ClassifiedTransactionList)
+    batch_size = 10
+    batches = [all_txns[i : i + batch_size] for i in range(0, len(all_txns), batch_size)]
+    print(f"[CLASSIFIER] {len(batches)} batches of {batch_size}")
     
-    semaphore = asyncio.Semaphore(10)  # 10 transactions in parallel
+    flash_llm = get_llm()
+    struct_list = flash_llm.with_structured_output(ClassifiedTransactionList)
+    
+    semaphore = asyncio.Semaphore(5)
 
-    async def process_single_txn(txn):
+    async def process_consensus_batch(batch, batch_idx):
         async with semaphore:
-            txn_data = json.dumps({
-                "id": txn.id,
-                "date": txn.date,
-                "amount": txn.amount,
-                "description_complete": txn.description,
-                "description_simplifiee": txn.simplifiedDescription
-            }, ensure_ascii=False)
+            batch_data = []
+            for t in batch:
+                batch_data.append({
+                    "id": t.id,
+                    "date": t.date,
+                    "amount": t.amount,
+                    "description_complete": t.description,
+                    "description_simplifiee": t.simplifiedDescription
+                })
 
-            # Agent A: History Expert
-            prompt_a = f"""Tu es le Comptable A (Expert Historique). Classe cette transaction.
-Utilise 'description_complete' et 'description_simplifiee' pour vérifier ton choix.
+            # Agent A (History) & Agent B (Members) in parallel
+            prompt_a = f"""Tu es le Comptable A (Expert Historique). Classe chaque transaction.
+Utilise 'description_complete' et 'description_simplifiee' pour vérifier tes choix.
 {f"CONTEXTE GLOBAL : {global_ctx}" if global_ctx else ""}
 HISTORIQUE: {history_context}
-PLAN COMPTABLE: {accounts_info}
-TRANSACTION: {txn_data}"""
+PLAN COMPTABLE:
+{accounts_info}
+TRANSACTIONS: {json.dumps(batch_data, ensure_ascii=False)}"""
 
-            # Agent B: Member Expert
-            prompt_b = f"""Tu es le Comptable B (Expert Membres). Classe cette transaction.
+            prompt_b = f"""Tu es le Comptable B (Expert Membres). Classe chaque transaction.
 Utilise 'description_simplifiee' pour identifier les noms de personnes.
 {f"CONTEXTE GLOBAL : {global_ctx}" if global_ctx else ""}
-PLAN COMPTABLE: {accounts_info}
-RÈGLES: Si tu détectes un nom de personne dans la communication/description, extrais-le dans detectedMemberName et assigne au compte Suivi: OUI correspondant.
+PLAN COMPTABLE:
+{accounts_info}
+RÈGLES: Si tu détectes un nom de personne, extrais-le dans detectedMemberName et assigne au compte Suivi: OUI.
 Utilise le 'Contexte IA' de chaque compte pour affiner ton choix.
-TRANSACTION: {txn_data}"""
+TRANSACTIONS: {json.dumps(batch_data, ensure_ascii=False)}"""
             
             try:
-                task_a = struct_single.ainvoke(prompt_a)
-                task_b = struct_single.ainvoke(prompt_b)
+                task_a = struct_list.ainvoke(prompt_a)
+                task_b = struct_list.ainvoke(prompt_b)
                 res_a, res_b = await asyncio.gather(task_a, task_b)
                 
-                txn_a = res_a.transactions[0] if res_a.transactions else None
-                txn_b = res_b.transactions[0] if res_b.transactions else None
-                
-                if not txn_a and not txn_b:
-                    return ClassifiedTransaction(**txn.model_dump(), accountChoiceReasoning="Aucun agent n'a répondu")
-                if not txn_a:
-                    return txn_b
-                if not txn_b:
-                    return txn_a
-                
-                # Judge LLM: Consensus between A and B
-                prompt_j = f"""Tu es le Juge. Deux comptables ont classé cette transaction. Choisis la meilleure proposition.
-PLAN COMPTABLE: {accounts_info}
-TRANSACTION ORIGINALE: {txn_data}
-PROPOSITION A (Historique): accountId={getattr(txn_a, 'accountId', None)}, memberName={getattr(txn_a, 'detectedMemberName', None)}, raison: {txn_a.accountChoiceReasoning}
-PROPOSITION B (Membres): accountId={getattr(txn_b, 'accountId', None)}, memberName={getattr(txn_b, 'detectedMemberName', None)}, raison: {txn_b.accountChoiceReasoning}
-RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Priorité à A sinon. Explique ton choix."""
+                # Judge (Consensus)
+                prompt_j = f"""Tu es le Juge. Consolide les résultats des Comptables A et B.
+PLAN COMPTABLE:
+{accounts_info}
+PROPOSITION A: {json.dumps([t.model_dump() for t in res_a.transactions], ensure_ascii=False)}
+PROPOSITION B: {json.dumps([t.model_dump() for t in res_b.transactions], ensure_ascii=False)}
+RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Priorité à A sinon. Explique ton choix pour chaque transaction."""
 
-                res_j = await struct_single.ainvoke(prompt_j)
-                winner = res_j.transactions[0] if res_j.transactions else txn_a
+                res_j = await struct_list.ainvoke(prompt_j)
+                results = res_j.transactions
                 
-                # Ensure the original transaction fields are preserved
-                winner.id = txn.id
-                winner.date = txn.date
-                winner.amount = txn.amount
-                winner.description = txn.description
-                winner.simplifiedDescription = txn.simplifiedDescription
-                winner.fullRawText = txn.fullRawText
+                # CRITICAL: Preserve simplifiedDescription from original transactions
+                batch_map = {t.id: t for t in batch}
+                for r in results:
+                    orig = batch_map.get(r.id)
+                    if orig:
+                        r.simplifiedDescription = orig.simplifiedDescription
+                        r.fullRawText = orig.fullRawText
+                        r.description = orig.description
                 
-                return winner
-                
+                print(f"  [BATCH {batch_idx}] OK: {len(results)} classified")
+                return results
             except Exception as e:
-                print(f"Error classifying txn {txn.id}: {e}")
-                return ClassifiedTransaction(**txn.model_dump(), accountChoiceReasoning=f"Erreur consensus: {str(e)}")
+                print(f"  [BATCH {batch_idx}] ERROR: {e}")
+                return [ClassifiedTransaction(**t.model_dump(), accountChoiceReasoning=f"Erreur consensus: {str(e)}") for t in batch]
 
-    # Process all transactions, 10 at a time via semaphore
-    tasks = [process_single_txn(t) for t in all_txns]
-    final_txns = await asyncio.gather(*tasks)
-    final_txns = list(final_txns)
+    tasks = [process_consensus_batch(b, i) for i, b in enumerate(batches)]
+    batch_results = await asyncio.gather(*tasks)
+    
+    final_txns = [t for batch in batch_results for t in batch]
     
     # Final cleanup
     for t in final_txns:
@@ -496,10 +498,14 @@ RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Prio
             except: pass
             
     final_txns.sort(key=lambda x: str(x.date or "1900-01-01"))
+
+    # Log output to confirm simplifiedDescription survived
+    final_simplified = sum(1 for t in final_txns if t.simplifiedDescription)
+    print(f"[CLASSIFIER] Output: {len(final_txns)} txns, {final_simplified} with simplifiedDescription")
     
     return {
         "extracted_transactions": final_txns,
-        "logs": [f"Classification Consensus : {len(final_txns)} transactions (A+B par transaction, 10 en parallèle)."]
+        "logs": [f"Classification Consensus : {len(final_txns)} transactions (A+B+Judge par batch de {batch_size})."]
     }
 
 
