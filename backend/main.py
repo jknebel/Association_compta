@@ -81,6 +81,10 @@ class Transaction(BaseModel):
     amount: float
     fullRawText: Optional[str] = None
     runningBalance: Optional[float] = None
+    notes: Optional[str] = None
+    accountId: Optional[str] = None
+    status: Optional[str] = "PENDING"
+    detectedMemberName: Optional[str] = None
     receiptUrl: Optional[str] = None
     receiptFileName: Optional[str] = None
 
@@ -127,6 +131,7 @@ class SuggestCategoryRequest(BaseModel):
     description: str
     accounts: List[Account]
     fullRawText: Optional[str] = None
+    amount: Optional[float] = None
     receiptFileName: Optional[str] = None
 
 class SuggestCategoryResponse(BaseModel):
@@ -492,7 +497,7 @@ RÈGLES :
 1. Enlever : numéros de compte, IBAN, adresses, dates techniques, montants, mots-clés comme 'COMMUNICATION'.
 2. Garder : Nom du destinataire/émetteur, motif du virement, noms de personnes dans la communication.
 3. Rendre la description humaine et lisible.
-TRANSACTIONS : {json.dumps([{{'id': t.id, 'description': t.description}} for t in batch])}"""
+TRANSACTIONS : {json.dumps([{'id': t.id, 'description': t.description} for t in batch])}"""
             try:
                 res = await struct_llm.ainvoke(prompt)
                 return res.results
@@ -931,7 +936,6 @@ async def process_receipt(
                     date_diff = 9999
                     if extraction.date and t.date:
                         try:
-                            from datetime import datetime
                             d1 = datetime.strptime(extraction.date, "%Y-%m-%d")
                             d2 = datetime.strptime(t.date, "%Y-%m-%d")
                             date_diff = abs((d1 - d2).days)
@@ -1103,7 +1107,7 @@ async def suggest_category(request: SuggestCategoryRequest):
         prompt = f"""
         Analyze the transaction:
         - Description (short): "{request.description}"
-        - Amount: {request.amount}
+        - Amount: {request.amount or 'N/A'}
         - Full Raw Text: "{request.fullRawText or 'N/A'}"
         - Receipt File Name: "{request.receiptFileName or 'N/A'}"
         
@@ -1118,7 +1122,7 @@ async def suggest_category(request: SuggestCategoryRequest):
         
         Task 2: Extract 'memberName' if available in 'fullRawText' or 'description'.
         
-        Accounts: {json.dumps([{"id": a.id, "label": a.label, "code": a.code, "description": a.description, "iaContext": a.iaContext} for a in accounts])}
+        Accounts: {json.dumps([{"id": a.id, "label": a.label, "code": a.code, "description": a.description, "iaContext": a.iaContext} for a in request.accounts])}
         
         Return a strict JSON object: {{ "accountId": "ID_OR_NULL", "memberName": "EXTRACTED_NAME_OR_NULL" }}
         """
