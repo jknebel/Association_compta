@@ -92,10 +92,17 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       t.amount.toString().includes(search) ||
       (t.detectedMemberName && t.detectedMemberName.toLowerCase().includes(search.toLowerCase()));
 
-    // Date Range
+    // Date Range (convert to timestamps for proper comparison)
     let matchesDate = true;
-    if (startDate && t.date < startDate) matchesDate = false;
-    if (endDate && t.date > endDate) matchesDate = false;
+    const txTimestamp = dateToTimestamp(t.date);
+    if (startDate) {
+      const startTimestamp = dateToTimestamp(startDate);
+      if (txTimestamp < startTimestamp) matchesDate = false;
+    }
+    if (endDate) {
+      const endTimestamp = dateToTimestamp(endDate) + 86400000; // Include the end date fully (add 24h)
+      if (txTimestamp >= endTimestamp) matchesDate = false;
+    }
 
     // Amount Range
     let matchesAmount = true;
