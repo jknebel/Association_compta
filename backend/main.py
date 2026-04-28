@@ -529,12 +529,28 @@ async def description_simplifier_node(state: AgentState):
 
     async def process_batch(batch, idx):
         async with semaphore:
-            prompt = f"""Tu es l'Expert en Simplification Bancaire.
-RÈGLES :
-1. Enlever : numéros de compte, IBAN, adresses, dates techniques, montants, mots-clés comme 'COMMUNICATION'.
-2. Garder : Nom du destinataire/émetteur, motif du virement, noms de personnes dans la communication.
-3. Rendre la description humaine et lisible.
-TRANSACTIONS : {json.dumps([{'id': t.id, 'description': t.description} for t in batch])}"""
+            prompt = f"""Tu es un expert en simplification de relevés bancaires suisses.
+
+MISSION : Pour chaque transaction, extrais UNIQUEMENT ces 2 informations :
+1. **NOM** : Le nom de la personne ou entreprise qui fait le virement (DONNEUR D'ORDRE) ou le destinataire du paiement (BÉNÉFICIAIRE). Juste le nom, rien d'autre.
+2. **COMMUNICATION** : Le texte libre après "COMMUNICATIONS:" ou "MOTIF:" s'il existe. C'est souvent un message personnel (ex: "cotisation 2025", "Robin Jenny, cotisation TDGL").
+
+FORMAT DE SORTIE : "Nom - Communication" (ou juste "Nom" si pas de communication).
+
+SUPPRIMER OBLIGATOIREMENT :
+- Numéros de compte, IBAN, références (REF, NOTRE REF, BVR)
+- Adresses postales (rues, codes postaux, villes)
+- Codes techniques (VIRT, CPTE, BANC, TVA, CHE-)
+- Dates techniques et montants
+- Mots-clés bancaires (DONNEUR D'ORDRE, BÉNÉFICIAIRE, COMMUNICATIONS, etc.)
+
+EXEMPLES :
+- "VIRT BANC Cedric Widmer et Evely NOTRE REF.: 692... DONNEUR D'ORDRE: CHE-116... Cedric Widmer et Evelyne Faivre Wid Bleu Avenue..." → "Cedric Widmer et Evelyne Faivre"
+- "VIRT CPTE DROUET E. & JENNY C. NOTRE REF.: 260... DONNEUR D'ORDRE: DROUET EMMANUEL ET JENNY... COMMUNICATIONS: Robin Jenny, cotisation TDGL..." → "Drouet Emmanuel et Jenny - Robin Jenny, cotisation TDGL"
+- "PAIEMENT COOP PRONTO 1234 MORGES" → "Coop Pronto Morges"
+
+TRANSACTIONS : {json.dumps([{'id': t.id, 'description': t.description} for t in batch], ensure_ascii=False)}"""
+
             try:
                 res = await struct_llm.ainvoke(prompt)
                 return res.results
