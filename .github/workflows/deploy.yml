@@ -103,7 +103,7 @@ jobs:
           service: '${{ env.BACKEND_SERVICE_NAME }}'
           image: 'europe-west1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.BACKEND_SERVICE_NAME }}:${{ github.sha }}'
           region: '${{ env.REGION }}'
-          flags: '--allow-unauthenticated'
+          flags: '--allow-unauthenticated --timeout=600 --memory=1Gi'
           env_vars: |
             GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
 
