@@ -290,50 +290,50 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         }
         if (user) {
             try {
-                let docsToDelete = [];
+                console.log(`[deleteTransactions] Starting deletion. ids=${ids ? ids.length : 'ALL'}`);
+                
+                let idsToDelete: string[] = [];
                 if (!ids) {
+                    // DELETE ALL: fetch all transaction IDs
                     const qTxns = query(collection(db, "users", user.uid, "transactions"));
                     const snapshotTxns = await getDocs(qTxns);
-                    docsToDelete = snapshotTxns.docs.map(d => d.ref);
+                    idsToDelete = snapshotTxns.docs.map(d => d.id);
                 } else {
-                    docsToDelete = ids.map(id => doc(db, "users", user.uid, "transactions", id));
+                    idsToDelete = ids;
                 }
 
-                if (docsToDelete.length === 0) return;
+                if (idsToDelete.length === 0) {
+                    console.log("[deleteTransactions] Nothing to delete.");
+                    return;
+                }
 
-                let batch = writeBatch(db);
-                let count = 0;
+                console.log(`[deleteTransactions] Deleting ${idsToDelete.length} transactions from Firestore...`);
                 
-                // 1. Delete Transactions
-                for (const ref of docsToDelete) {
-                    batch.delete(ref);
-                    count++;
-                    if (count >= 400) {
-                        await batch.commit();
-                        batch = writeBatch(db);
-                        count = 0;
+                // Use individual deleteDoc calls (same as the working X button)
+                const deletePromises = idsToDelete.map(id => 
+                    deleteDoc(doc(db, "users", user.uid, "transactions", id))
+                );
+                await Promise.all(deletePromises);
+                
+                console.log(`[deleteTransactions] ✅ ${idsToDelete.length} transactions deleted.`);
+
+                // Unlink any receipts linked to deleted transactions
+                const idsSet = new Set(idsToDelete);
+                const qReceipts = query(collection(db, "users", user.uid, "receipts"));
+                const snapshotReceipts = await getDocs(qReceipts);
+                const unlinkPromises: Promise<void>[] = [];
+                for (const docSnap of snapshotReceipts.docs) {
+                    const data = docSnap.data();
+                    if (data.linkedTransactionId && idsSet.has(data.linkedTransactionId)) {
+                        unlinkPromises.push(
+                            updateDoc(docSnap.ref, { linkedTransactionId: deleteField() })
+                        );
                     }
                 }
-
-                // 2. Unlink Receipts (only if full delete, otherwise too complex for now or we just let it be)
-                if (!ids) {
-                    const qReceipts = query(collection(db, "users", user.uid, "receipts"));
-                    const snapshotReceipts = await getDocs(qReceipts);
-                    for (const documentSnapshot of snapshotReceipts.docs) {
-                        const data = documentSnapshot.data();
-                        if (data.linkedTransactionId) {
-                            batch.update(documentSnapshot.ref, { linkedTransactionId: deleteField() });
-                            count++;
-                            if (count >= 400) {
-                                await batch.commit();
-                                batch = writeBatch(db);
-                                count = 0;
-                            }
-                        }
-                    }
+                if (unlinkPromises.length > 0) {
+                    await Promise.all(unlinkPromises);
+                    console.log(`[deleteTransactions] Unlinked ${unlinkPromises.length} receipts.`);
                 }
-
-                if (count > 0) await batch.commit();
             } catch (error) {
                 console.error("Error deleting transactions:", error);
                 throw error;
