@@ -754,7 +754,10 @@ def robust_parsing_node(state: AgentState):
             for w in page_words:
                 txt = w[4].upper()
                 last_y = valid_ys[-1] if valid_ys else current_header_y
-                if any(k in txt for k in ["TOTAL", "SOLDE", "PAGE", "REPORT", "AVIS", "VAUDOISE", "EXTOURNE", "AVISER"]) and w[1] > last_y:
+                # Un mot-clé n'est un pied de page QUE s'il est sous la dernière transaction 
+                # ET dans la moitié inférieure de la page (pour ne pas confondre avec le REPORT du haut)
+                if any(k in txt for k in ["TOTAL", "SOLDE", "PAGE", "REPORT", "AVIS", "VAUDOISE", "EXTOURNE", "AVISER"]) \
+                   and w[1] > last_y and w[1] > page_limit * 0.5:
                     footer_y = min(footer_y, w[1] - 2)
 
             # --- 3. ORPHAN DETECTION ---
