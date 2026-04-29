@@ -739,22 +739,32 @@ def robust_parsing_node(state: AgentState):
             page_words = page.get_text("words")
             valid_ys = sorted(ys)
             
-            # --- 1. FOOTER DETECTION ---
-            footer_y = page_limit
+            # --- 1. DYNAMIC HEADER DETECTION ---
+            current_header_y = header_y
             for w in page_words:
-                txt = w[4].upper()
-                if any(k in txt for k in ["TOTAL", "SOLDE", "PAGE", "REPORT"]) and w[1] > page_limit * 0.70:
-                    footer_y = min(footer_y, w[1] - 5)
+                if any(k in w[4].upper() for k in ["DATE", "OPERATIONS", "DETAIL", "VALEUR"]) and w[1] < 500:
+                    current_header_y = w[3]
                     break
 
-            # --- 2. ORPHAN DETECTION ---
+            # --- 2. FOOTER DETECTION ---
+            footer_y = page_limit
+            # Safety: ignore dates too high (header noise)
+            valid_ys = [y for y in valid_ys if y > current_header_y + 5]
+
+            for w in page_words:
+                txt = w[4].upper()
+                last_y = valid_ys[-1] if valid_ys else current_header_y
+                if any(k in txt for k in ["TOTAL", "SOLDE", "PAGE", "REPORT", "AVIS", "VAUDOISE", "EXTOURNE", "AVISER"]) and w[1] > last_y:
+                    footer_y = min(footer_y, w[1] - 2)
+
+            # --- 3. ORPHAN DETECTION ---
             current_ranges = []
             if p_idx > 0:
                 first_date_y = valid_ys[0] if valid_ys else footer_y
-                if first_date_y > header_y:
-                    current_ranges.append({"y_start": header_y - 5, "y_end": first_date_y - 2, "is_orphan": True})
+                if first_date_y > current_header_y + 10:
+                    current_ranges.append({"y_start": current_header_y + 2, "y_end": first_date_y - 2, "is_orphan": True})
             
-            # --- 3. TRANSACTION RANGES ---
+            # --- 4. TRANSACTION RANGES ---
             for i, y in enumerate(valid_ys):
                 y_end = valid_ys[i+1]-1 if i < len(valid_ys)-1 else footer_y
                 if y_end - y > 5:
@@ -810,12 +820,13 @@ def robust_parsing_node(state: AgentState):
             # Handle orphan merging
             if t.get("is_orphan") and final_txns:
                 extra_desc = " ".join(t["desc"]).replace("\n", " ").strip()
-                # Remove artifacts
+                # Case-insensitive removal of artifacts
+                clean_extra = extra_desc
                 for noise in ["SOLDE A REPORTER", "REPORT", "SOLDE EN VOTRE FAVEUR"]:
-                    extra_desc = extra_desc.replace(noise, "")
+                    clean_extra = re.sub(re.escape(noise), "", clean_extra, flags=re.IGNORECASE)
                 
-                if extra_desc:
-                    final_txns[-1].description += " " + extra_desc.strip()
+                if clean_extra.strip():
+                    final_txns[-1].description += " " + clean_extra.strip()
                 continue
 
             all_text_for_date = " ".join(t["date"] + t["desc"])
@@ -829,9 +840,9 @@ def robust_parsing_node(state: AgentState):
             amount = c_val if c_val != 0 else -d_val
             description = " ".join(t["desc"]).replace("\n", " ").strip()
             
-            # Remove artifacts from main description
+            # Case-insensitive removal of artifacts from main description
             for noise in ["SOLDE A REPORTER", "REPORT", "SOLDE EN VOTRE FAVEUR"]:
-                description = description.replace(noise, "")
+                description = re.sub(re.escape(noise), "", description, flags=re.IGNORECASE)
             description = description.strip()
             
             # Stable unique ID based on content
