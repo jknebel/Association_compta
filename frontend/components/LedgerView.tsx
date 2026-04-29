@@ -518,13 +518,27 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           {/* Active Filters Clear Button */}
           {
             (startDate || endDate || minAmount || maxAmount || search || filter !== 'ALL' || accountFilter) && (
-              <button
-                onClick={clearFilters}
-                className="ml-auto flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg transition-colors"
-              >
-                <XCircle size={14} />
-                Tout Effacer
-              </button>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  onClick={clearFilters}
+                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-300 font-medium px-3 py-1.5 bg-slate-800/50 hover:bg-slate-800 rounded-lg transition-colors"
+                >
+                  <XCircle size={14} />
+                  Réinitialiser Filtres
+                </button>
+                <button
+                  onClick={() => {
+                    const ids = filteredTransactions.map(t => t.id);
+                    if (confirm(`Voulez-vous vraiment supprimer uniquement les ${ids.length} transactions filtrées ?`)) {
+                        onClearAll(ids);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg border border-rose-800/50 transition-colors"
+                >
+                  <Trash2 size={14} />
+                  Effacer les {filteredTransactions.length} filtrées
+                </button>
+              </div>
             )
           }
         </div >
