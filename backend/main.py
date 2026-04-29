@@ -725,29 +725,53 @@ def robust_parsing_node(state: AgentState):
         widths = ColumnWidths()
         all_raw_txns = []
         
-        for p_idx, ys in y_anchors.items():
+        # Determine header_y from the first page (ancre Date)
+        first_page_ys = y_anchors.get(0, [])
+        header_y = first_page_ys[0] if first_page_ys else 150
+        
+        # Sort pages to process sequentially
+        sorted_pages = sorted(y_anchors.keys())
+
+        for p_idx in sorted_pages:
+            ys = y_anchors[p_idx]
             page = doc[p_idx]
+            page_limit = page.rect.height
             page_words = page.get_text("words")
-            page_words.sort(key=lambda w: (w[1], w[0]))
+            valid_ys = sorted(ys)
             
-            p_footer_y = page.rect.height
+            # --- 1. FOOTER DETECTION ---
+            footer_y = page_limit
             for w in page_words:
-                if any(k in w[4].upper() for k in ["TOTAL", "SOLDE", "PAGE", "REPORT"]) and w[1] > page.rect.height * 0.75:
-                    p_footer_y = w[1] - 5
+                txt = w[4].upper()
+                if any(k in txt for k in ["TOTAL", "SOLDE", "PAGE", "REPORT"]) and w[1] > page_limit * 0.70:
+                    footer_y = min(footer_y, w[1] - 5)
                     break
 
-            for i, y_start in enumerate(ys):
-                y_end = ys[i+1]-1 if i < len(ys)-1 else p_footer_y
-                rect = fitz.Rect(0, y_start-2, page.rect.width, y_end)
+            # --- 2. ORPHAN DETECTION ---
+            current_ranges = []
+            if p_idx > 0:
+                first_date_y = valid_ys[0] if valid_ys else footer_y
+                if first_date_y > header_y:
+                    current_ranges.append({"y_start": header_y - 5, "y_end": first_date_y - 2, "is_orphan": True})
+            
+            # --- 3. TRANSACTION RANGES ---
+            for i, y in enumerate(valid_ys):
+                y_end = valid_ys[i+1]-1 if i < len(valid_ys)-1 else footer_y
+                if y_end - y > 5:
+                    current_ranges.append({"y_start": y-2, "y_end": y_end, "is_orphan": False})
+
+            for r in current_ranges:
+                rect = fitz.Rect(0, r['y_start'], page.rect.width, r['y_end'])
                 words_in_tx = page.get_text("words", clip=rect)
                 words_in_tx.sort(key=lambda w: (w[1], w[0]))
                 
-                tx_data = {"date": [], "desc": [], "debit": [], "credit": [], "solde": []}
+                tx_data = {"date": [], "desc": [], "debit": [], "credit": [], "solde": [], "is_orphan": r["is_orphan"]}
+                
                 for w in words_in_tx:
-                    x0, y0, x1, y1, txt = w[0], w[1], w[2], w[3], w[4]
+                    x0, y0, x1, y1, txt = w[:5]
                     x_mid = (x0 + x1) / 2
-                    is_num = len(re.findall(r"\d", txt)) > 0 and len(re.findall(r"\d", txt)) >= len(re.findall(r"[a-zA-Z]", txt))
-                    is_near_top = (y1 - y_start) < 10
+                    is_num = any(c.isdigit() for c in txt) and not any(c.isalpha() for c in txt)
+                    is_near_top = (y1 - r["y_start"]) < 12
                     
                     def get_col_range(role, cfg):
                         anchor_info = anchors.get(role)
@@ -757,15 +781,22 @@ def robust_parsing_node(state: AgentState):
                         x_min = anchor_x + cfg.offset - (cfg.width / 2)
                         return x_min, x_min + cfg.width
 
-                    if get_col_range("date", widths.date)[0] <= x_mid <= get_col_range("date", widths.date)[1]: 
+                    # Restricted X-Range check for all columns
+                    date_rng = get_col_range("date", widths.date)
+                    debit_rng = get_col_range("debit", widths.debit)
+                    credit_rng = get_col_range("credit", widths.credit)
+                    solde_rng = get_col_range("solde", widths.solde)
+                    desc_rng = get_col_range("description", widths.description)
+
+                    if date_rng[0] <= x_mid <= date_rng[1]: 
                         tx_data["date"].append(txt)
-                    elif is_num and is_near_top and get_col_range("debit", widths.debit)[0] <= x1 <= get_col_range("debit", widths.debit)[1]: 
+                    elif is_num and is_near_top and debit_rng[0] <= x1 <= debit_rng[1]: 
                         tx_data["debit"].append(txt)
-                    elif is_num and is_near_top and get_col_range("credit", widths.credit)[0] <= x1 <= get_col_range("credit", widths.credit)[1]: 
+                    elif is_num and is_near_top and credit_rng[0] <= x1 <= credit_rng[1]: 
                         tx_data["credit"].append(txt)
-                    elif is_num and is_near_top and get_col_range("solde", widths.solde)[0] <= x1 <= get_col_range("solde", widths.solde)[1]: 
+                    elif is_num and is_near_top and solde_rng[0] <= x1 <= solde_rng[1]: 
                         tx_data["solde"].append(txt)
-                    else: 
+                    elif desc_rng[0] <= x_mid <= desc_rng[1]:
                         tx_data["desc"].append(txt)
                 
                 tx_data["raw_line"] = " ".join([w[4] for w in words_in_tx])
@@ -776,6 +807,17 @@ def robust_parsing_node(state: AgentState):
         date_clean_pattern = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}")
         
         for t in all_raw_txns:
+            # Handle orphan merging
+            if t.get("is_orphan") and final_txns:
+                extra_desc = " ".join(t["desc"]).replace("\n", " ").strip()
+                # Remove artifacts
+                for noise in ["SOLDE A REPORTER", "REPORT", "SOLDE EN VOTRE FAVEUR"]:
+                    extra_desc = extra_desc.replace(noise, "")
+                
+                if extra_desc:
+                    final_txns[-1].description += " " + extra_desc.strip()
+                continue
+
             all_text_for_date = " ".join(t["date"] + t["desc"])
             found_date = date_clean_pattern.search(all_text_for_date)
             date_str = found_date.group(0) if found_date else ""
@@ -786,6 +828,11 @@ def robust_parsing_node(state: AgentState):
             
             amount = c_val if c_val != 0 else -d_val
             description = " ".join(t["desc"]).replace("\n", " ").strip()
+            
+            # Remove artifacts from main description
+            for noise in ["SOLDE A REPORTER", "REPORT", "SOLDE EN VOTRE FAVEUR"]:
+                description = description.replace(noise, "")
+            description = description.strip()
             
             # Stable unique ID based on content
             txn_id = hashlib.md5(f"{date_str}|{description}|{amount}".encode()).hexdigest()
