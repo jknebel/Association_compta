@@ -384,7 +384,11 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
           <button
             className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
-            onClick={() => onClearAll(filteredTransactions.map(t => t.id))}
+            onClick={() => {
+              const ids = filteredTransactions.map(t => t.id);
+              console.log(`[LedgerView] Tout Effacer cliqué. Nombre filtré: ${ids.length}`, ids);
+              onClearAll(ids);
+            }}
             disabled={!!autoMatchProgress}
             title={transactions.length === filteredTransactions.length ? "Supprimer TOUTES les transactions" : "Supprimer uniquement les transactions FILTRÉES"}
           >
@@ -555,6 +559,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               const badge = getStatusBadge(t.status);
               const isEditing = editingId === t.id;
               const isUploading = uploadingId === t.id;
+              const currentAccount = accounts.find(a => a.id === t.accountId);
 
               // Filter valid accounts
               const validAccounts = accounts.filter(a => {
@@ -731,7 +736,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                         className="bg-slate-950 border border-blue-500 rounded px-2 py-1 w-full focus:outline-none text-sm text-white"
                       />
                     ) : (
-                      t.detectedMemberName ? (
+                      (t.detectedMemberName && currentAccount?.isMembership) ? (
                         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-900/30 text-purple-300 border border-purple-800">
                           {t.detectedMemberName}
                         </span>

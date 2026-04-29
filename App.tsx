@@ -128,16 +128,18 @@ function App() {
         saveTransaction(updated);
     };
 
-    const handleDeleteTransaction = (id: string) => {
+    const handleDeleteTransaction = async (id: string) => {
+        console.log(`[App] Suppression individuelle demandée pour: ${id}`);
         // If transaction had a linked receipt, we must unlink the receipt
         const txn = transactions.find(t => t.id === id);
         if (txn && txn.receiptUrl) {
             const linkedReceipt = receipts.find(r => r.url === txn.receiptUrl);
             if (linkedReceipt) {
-                saveReceipt({ ...linkedReceipt, linkedTransactionId: undefined });
+                console.log(`[App] Déliement du justificatif: ${linkedReceipt.fileName}`);
+                await saveReceipt({ ...linkedReceipt, linkedTransactionId: undefined });
             }
         }
-        deleteTransaction(id);
+        await deleteTransaction(id);
     };
 
     const handleUpdateAccounts = async (updatedAccounts: Account[]) => {
@@ -316,7 +318,8 @@ function App() {
     };
 
     const handleClearTransactions = async (ids?: string[]) => {
-        const count = ids ? ids.length : transactions.length;
+        const idsToDelete = ids || transactions.map(t => t.id);
+        const count = idsToDelete.length;
         if (count === 0) return;
 
         const msg = ids 
@@ -325,16 +328,17 @@ function App() {
         
         if (!confirm(msg)) return;
 
-        if (!ids && !confirm("Êtes-vous vraiment sûr ? Cela effacera toutes les transactions, ainsi que les membres détectés associés et les liens avec les justificatifs.")) {
-            return;
-        }
+        console.log(`[App] Lancement de la suppression groupée (simulation de ${count} clics sur la croix)`);
 
         try {
-            await deleteTransactions(ids);
-            alert(ids ? `${count} transactions supprimées.` : "Toutes les transactions ont été supprimées.");
+            // Suppression séquentielle pour imiter les clics individuels
+            for (const id of idsToDelete) {
+                await handleDeleteTransaction(id);
+            }
+            console.log(`[App] Suppression groupée terminée.`);
         } catch (error) {
-            console.error(error);
-            alert("Une erreur est survenue lors de la suppression. Vérifiez la console.");
+            console.error("Erreur lors de la suppression groupée:", error);
+            alert("Une erreur est survenue pendant la suppression. Vérifiez la console.");
         }
     };
 

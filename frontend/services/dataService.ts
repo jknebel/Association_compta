@@ -290,7 +290,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         }
         if (user) {
             try {
-                console.log(`[deleteTransactions] Starting deletion. ids=${ids ? ids.length : 'ALL'}`);
+                console.log(`[deleteTransactions] FIREBASE DÉBUT. User: ${user.uid}. IDs fournis: ${ids ? ids.length : 'TOUS'}`);
                 
                 let idsToDelete: string[] = [];
                 if (!ids) {
@@ -303,19 +303,20 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
                 }
 
                 if (idsToDelete.length === 0) {
-                    console.log("[deleteTransactions] Nothing to delete.");
+                    console.log("[deleteTransactions] Rien à supprimer.");
                     return;
                 }
 
-                console.log(`[deleteTransactions] Deleting ${idsToDelete.length} transactions from Firestore...`);
+                console.log(`[deleteTransactions] Suppression de ${idsToDelete.length} transactions dans Firestore...`);
                 
                 // Use individual deleteDoc calls (same as the working X button)
-                const deletePromises = idsToDelete.map(id => 
-                    deleteDoc(doc(db, "users", user.uid, "transactions", id))
-                );
+                const deletePromises = idsToDelete.map(id => {
+                    console.log(`[deleteTransactions] Suppression en cours pour id: ${id}`);
+                    return deleteDoc(doc(db, "users", user.uid, "transactions", id));
+                });
                 await Promise.all(deletePromises);
                 
-                console.log(`[deleteTransactions] ✅ ${idsToDelete.length} transactions deleted.`);
+                console.log(`[deleteTransactions] ✅ FIREBASE SUCCÈS. ${idsToDelete.length} transactions supprimées.`);
 
                 // Unlink any receipts linked to deleted transactions
                 const idsSet = new Set(idsToDelete);

@@ -490,6 +490,7 @@ RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Prio
     final_txns = [t for batch in batch_results for t in batch]
     
     # Final cleanup
+    acc_map = {a.id: a for a in state.existing_accounts}
     for t in final_txns:
         if t.date and "-" in t.date:
             try:
@@ -497,6 +498,11 @@ RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Prio
                 t.date = dt.strftime("%d.%m.%y")
             except: pass
             
+        # Clear member name if account is NOT a membership tracking account
+        acc = acc_map.get(t.accountId)
+        if acc and not acc.isMembership:
+            t.detectedMemberName = None
+
     final_txns.sort(key=lambda x: str(x.date or "1900-01-01"))
 
     # Log output to confirm simplifiedDescription survived
@@ -537,22 +543,25 @@ async def description_simplifier_node(state: AgentState):
         async with semaphore:
             prompt = f"""Tu es un expert en simplification de relevés bancaires suisses.
 
-MISSION : Pour chaque transaction, extrais UNIQUEMENT ces 2 informations :
-1. **NOM** : Le nom de la personne ou entreprise qui fait le virement (DONNEUR D'ORDRE) ou le destinataire du paiement (BÉNÉFICIAIRE). Juste le nom, rien d'autre.
-2. **COMMUNICATION** : Le texte libre après "COMMUNICATIONS:" ou "MOTIF:" s'il existe. C'est souvent un message personnel (ex: "cotisation 2025", "Robin Jenny, cotisation TDGL").
+MISSION : Pour chaque transaction, simplifie la description pour ne garder que l'essentiel.
 
-FORMAT DE SORTIE : "Nom - Communication" (ou juste "Nom" si pas de communication).
+RÈGLES DE SIMPLIFICATION :
+1. **VIRT** : Garde impérativement le mot "VIRT" au début si la transaction est un virement (présence de VIRT dans le texte original).
+2. **NOM** : Le nom de la personne ou entreprise (ex: "Cedric Widmer", "Coop", "La Tribu du Grand Lac").
+3. **COMMUNICATION** : Le message après "COMMUNICATIONS:" ou "MOTIF:" (ex: "cotisation 2025").
 
-SUPPRIMER OBLIGATOIREMENT :
+FORMAT DE SORTIE : "[VIRT] Nom - Communication" (Le bloc [VIRT] est optionnel, n'inclus que si présent).
+
+SUPPRIMER :
 - Numéros de compte, IBAN, références (REF, NOTRE REF, BVR)
 - Adresses postales (rues, codes postaux, villes)
-- Codes techniques (VIRT, CPTE, BANC, TVA, CHE-)
+- Codes techniques SAUF VIRT (CPTE, BANC, TVA, CHE-)
 - Dates techniques et montants
-- Mots-clés bancaires (DONNEUR D'ORDRE, BÉNÉFICIAIRE, COMMUNICATIONS, etc.)
+- Mots-clés (DONNEUR D'ORDRE, BÉNÉFICIAIRE, etc.)
 
 EXEMPLES :
-- "VIRT BANC Cedric Widmer et Evely NOTRE REF.: 692... DONNEUR D'ORDRE: CHE-116... Cedric Widmer et Evelyne Faivre Wid Bleu Avenue..." → "Cedric Widmer et Evelyne Faivre"
-- "VIRT CPTE DROUET E. & JENNY C. NOTRE REF.: 260... DONNEUR D'ORDRE: DROUET EMMANUEL ET JENNY... COMMUNICATIONS: Robin Jenny, cotisation TDGL..." → "Drouet Emmanuel et Jenny - Robin Jenny, cotisation TDGL"
+- "31.03.26 VIRT BANC Cedric Widmer et Evely NOTRE REF.: 692... DONNEUR D'ORDRE: CHE-116... Cedric Widmer et Evelyne Faivre Wid Bleu Avenue..." → "VIRT Cedric Widmer et Evelyne Faivre"
+- "VIRT CPTE DROUET E. & JENNY C. NOTRE REF.: 260... DONNEUR D'ORDRE: DROUET EMMANUEL ET JENNY... COMMUNICATIONS: Robin Jenny, cotisation TDGL..." → "VIRT Drouet Emmanuel et Jenny - Robin Jenny, cotisation TDGL"
 - "PAIEMENT COOP PRONTO 1234 MORGES" → "Coop Pronto Morges"
 
 TRANSACTIONS : {json.dumps([{'id': t.id, 'description': t.description} for t in batch], ensure_ascii=False)}"""
@@ -568,12 +577,20 @@ TRANSACTIONS : {json.dumps([{'id': t.id, 'description': t.description} for t in 
     results = await asyncio.gather(*tasks)
     flat_results = {r.id: r.simplifiedDescription for batch in results for r in batch}
 
+    print(f"[SIMPLIFIER] Got {len(flat_results)} simplified descriptions from LLM")
+    
     for t in all_txns:
-        t.simplifiedDescription = flat_results.get(t.id, t.description)
+        simplified = flat_results.get(t.id, t.description)
+        t.simplifiedDescription = simplified
+        t.description = simplified
+
+    # DEBUG: show sample results
+    for t in all_txns[:3]:
+        print(f"[SIMPLIFIER SAMPLE] id={t.id}, simplified='{t.simplifiedDescription}', original='{t.description[:60]}...'")
 
     return {
         "extracted_transactions": all_txns,
-        "logs": [f"Simplification : {len(all_txns)} descriptions traitées."]
+        "logs": [f"Simplification : {len(all_txns)} descriptions traitées ({len(flat_results)} simplifiées par IA)."]
     }
 
 
@@ -778,7 +795,7 @@ def robust_parsing_node(state: AgentState):
                 description=description,
                 amount=amount,
                 runningBalance=s_val if s_val != 0 else None,
-                fullRawText=json.dumps(t)
+                fullRawText=" ".join([w[4] for w in words_in_tx])
             ))
         
         doc.close()
@@ -871,8 +888,16 @@ async def process_statement(
         
         output = await compiled_app.ainvoke(initial_state)
         
+        # DEBUG: Log simplifiedDescription presence before returning
+        txns_out = output["extracted_transactions"]
+        simplified_count = sum(1 for t in txns_out if getattr(t, 'simplifiedDescription', None))
+        print(f"[ENDPOINT] Returning {len(txns_out)} transactions, {simplified_count} with simplifiedDescription")
+        if txns_out:
+            sample = txns_out[0]
+            print(f"[ENDPOINT SAMPLE] id={sample.id}, simplified='{getattr(sample, 'simplifiedDescription', 'MISSING')}', desc='{sample.description[:80]}...'")
+        
         return {
-            "transactions": output["extracted_transactions"],
+            "transactions": txns_out,
             "detected_dates": output.get("detected_dates", []),
             "parser_output": output.get("raw_text", ""),
             "logs": output["logs"]
