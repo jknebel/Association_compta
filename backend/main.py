@@ -768,6 +768,7 @@ def robust_parsing_node(state: AgentState):
                     else: 
                         tx_data["desc"].append(txt)
                 
+                tx_data["raw_line"] = " ".join([w[4] for w in words_in_tx])
                 all_raw_txns.append(tx_data)
 
         # 4. Nettoyage et conversion vers Transaction
@@ -795,7 +796,7 @@ def robust_parsing_node(state: AgentState):
                 description=description,
                 amount=amount,
                 runningBalance=s_val if s_val != 0 else None,
-                fullRawText=" ".join([w[4] for w in words_in_tx])
+                fullRawText=t.get("raw_line", "")
             ))
         
         doc.close()
