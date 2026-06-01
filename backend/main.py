@@ -180,7 +180,15 @@ def get_llm():
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         print("⚠️ GOOGLE_API_KEY missing. LLM calls will fail.")
-    return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-pro")
+    return ChatGoogleGenerativeAI(model=model_name, temperature=0)
+
+def get_pro_llm():
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        print("⚠️ GOOGLE_API_KEY missing. LLM calls will fail.")
+    model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro")
+    return ChatGoogleGenerativeAI(model=model_name, temperature=0)
 
 # --- UTILITY FUNCTIONS ---
 
@@ -418,8 +426,8 @@ async def classification_consensus_node(state: AgentState):
     batches = [all_txns[i : i + batch_size] for i in range(0, len(all_txns), batch_size)]
     print(f"[CLASSIFIER] {len(batches)} batches of {batch_size}")
     
-    flash_llm = get_llm()
-    struct_list = flash_llm.with_structured_output(ClassifiedTransactionList)
+    pro_llm = get_pro_llm()
+    struct_list = pro_llm.with_structured_output(ClassifiedTransactionList)
     
     semaphore = asyncio.Semaphore(5)
 
@@ -596,6 +604,58 @@ TRANSACTIONS : {json.dumps([{'id': t.id, 'description': t.description} for t in 
 
 # --- NEW ROBUST PIPELINE NODE ---
 
+def group_horizontal_words(words, boundaries=[]):
+    if not words:
+        return []
+    lines = {}
+    for w in words:
+        y_mid = (w[1] + w[3]) / 2.0
+        matched_y = None
+        for ly in lines:
+            if abs(ly - y_mid) < 3.0:
+                matched_y = ly
+                break
+        if matched_y is None:
+            lines[y_mid] = [w]
+        else:
+            lines[matched_y].append(w)
+            
+    grouped_words = []
+    for ly in sorted(lines.keys()):
+        line_words = sorted(lines[ly], key=lambda w: w[0])
+        i = 0
+        while i < len(line_words):
+            curr = list(line_words[i])
+            while i + 1 < len(line_words):
+                nxt = line_words[i+1]
+                gap = nxt[0] - curr[2]
+                is_curr_num = any(c.isdigit() for c in curr[4])
+                is_nxt_num = any(c.isdigit() for c in nxt[4])
+                is_separator = nxt[4] in ["'", "’", "`", ",", "."] or curr[4] in ["'", "’", "`", ",", "."]
+                
+                # Check if we cross any column boundary
+                crosses_boundary = False
+                for b in boundaries:
+                    if curr[2] < b < nxt[0]:
+                        crosses_boundary = True
+                        break
+                
+                if gap < 12.0 and not crosses_boundary and (is_curr_num or is_nxt_num) and (
+                    (is_curr_num and is_nxt_num) or is_separator or 
+                    re.match(r"^[\d'’,.]+$", curr[4]) or re.match(r"^[\d'’,.]+$", nxt[4])
+                ):
+                    connector = " "
+                    curr[2] = nxt[2]
+                    curr[4] = curr[4] + connector + nxt[4]
+                    i += 1
+                else:
+                    break
+            grouped_words.append(curr)
+            i += 1
+            
+    grouped_words.sort(key=lambda w: (w[1], w[0]))
+    return grouped_words
+
 def robust_parsing_node(state: AgentState):
     """
     Robust Parsing Node: Extrait les transactions en utilisant la méthode d'ancrage X/Y
@@ -723,6 +783,20 @@ def robust_parsing_node(state: AgentState):
 
         # 3. Extraction - extract_raw_transactions logic
         widths = ColumnWidths()
+        
+        column_centers = []
+        for role in ["date", "description", "debit", "credit", "solde"]:
+            anchor_info = anchors.get(role)
+            anchor_x = anchor_info["x_mid"] if (anchor_info and "x_mid" in anchor_info) else 0
+            if anchor_x == 0:
+                anchor_x = {"date": 40, "description": 200, "debit": 440, "credit": 510, "solde": 650}.get(role, 0)
+            cfg = getattr(widths, role, None)
+            offset = cfg.offset if cfg else 0.0
+            column_centers.append(anchor_x + offset)
+            
+        column_centers.sort()
+        boundaries = [(column_centers[i] + column_centers[i+1]) / 2.0 for i in range(len(column_centers)-1)]
+        
         all_raw_txns = []
         
         # Determine header_y from the first page (ancre Date)
@@ -776,6 +850,7 @@ def robust_parsing_node(state: AgentState):
             for r in current_ranges:
                 rect = fitz.Rect(0, r['y_start'], page.rect.width, r['y_end'])
                 words_in_tx = page.get_text("words", clip=rect)
+                words_in_tx = group_horizontal_words(words_in_tx, boundaries)
                 words_in_tx.sort(key=lambda w: (w[1], w[0]))
                 
                 tx_data = {"date": [], "desc": [], "debit": [], "credit": [], "solde": [], "is_orphan": r["is_orphan"]}
@@ -1200,7 +1275,8 @@ async def chat_agent(request: ChatRequest):
         messages.append(HumanMessage(content=request.newMessage))
         
         # Use Pro model if available, or Flash
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+        model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash")
+        llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.7)
         response = llm.invoke(messages)
         
         return ChatResponse(response=response.content)
@@ -1333,8 +1409,8 @@ async def audit_ledger_endpoint(request: AuditRequest):
         Le ton doit être formel, précis et rassurant. Fais une mise en page propre avec des titres.
         """
         
-        flash_llm = get_llm() # Using Flash for speed, or Pro for better reasoning if needed. Flash is usually fine for this volume.
-        response = flash_llm.invoke(prompt)
+        pro_llm = get_pro_llm()
+        response = pro_llm.invoke(prompt)
         
         return {"report": response.content}
     
