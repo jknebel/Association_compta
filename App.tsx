@@ -15,12 +15,18 @@ import { useDataService } from './frontend/services/dataService';
 import { useAuth } from './frontend/services/authService';
 import * as XLSX from 'xlsx';
 import { matchTransactionsWithReceipts } from './frontend/services/matchingService';
-import { suggestCategory } from './frontend/services/geminiService';
+import { suggestCategory, parseBankStatementPDF } from './frontend/services/geminiService';
 import { deleteFileFromStorage } from './frontend/services/storageService';
+import { parseExcelLedger } from './frontend/services/excelService';
 
 function App() {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [guestMode, setGuestMode] = useState(false);
+    
+    // Background upload states
+    const [isUploading, setIsUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState<{ fileName: string, mode: 'PDF' | 'EXCEL' } | null>(null);
+    const [uploadError, setUploadError] = useState<string | null>(null);
 
     // 1. Check Authentication Status
     const { user, loading: authLoading } = useAuth();
@@ -45,6 +51,86 @@ function App() {
         saveGlobalAiContext,
         closeFiscalYear
     } = useDataService(user, guestMode);
+
+    const generateTransactionSignature = (t: Transaction): string => {
+        return `${t.date}-${(t.amount || 0).toFixed(2)}-${(t.description || '').trim().toLowerCase()}`;
+    };
+
+    const handleUploadFile = async (file: File, activeMode: 'PDF' | 'EXCEL') => {
+        setIsUploading(true);
+        setUploadProgress({ fileName: file.name, mode: activeMode });
+        setUploadError(null);
+
+        try {
+            let rawTransactions: Transaction[] = [];
+
+            if (activeMode === 'PDF') {
+                if (file.type !== 'application/pdf') {
+                    throw new Error('Veuillez importer un fichier PDF.');
+                }
+
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+
+                await new Promise<void>((resolve, reject) => {
+                    reader.onload = async () => {
+                        const base64Data = (reader.result as string).split(',')[1];
+                        try {
+                            const userId = user ? user.uid : "guest";
+                            const result = await parseBankStatementPDF(base64Data, accounts, transactions, userId, globalAiContext);
+                            if (!result || !result.transactions) throw new Error("Échec de l'extraction des transactions.");
+
+                            rawTransactions = result.transactions.map((t: any, idx: number) => ({
+                                id: `txn-${Date.now()}-${idx}`,
+                                date: t.date,
+                                description: t.description,
+                                amount: typeof t.amount === 'string' ? Number(t.amount.replace(',', '.')) : Number(t.amount || 0),
+                                status: t.accountId ? TransactionStatus.REVIEW_NEEDED : TransactionStatus.PENDING,
+                                accountId: t.accountId,
+                                detectedMemberName: t.detectedMemberName,
+                                fullRawText: t.fullRawText,
+                                notes: undefined
+                            }));
+                            resolve();
+                        } catch (err: any) {
+                            reject(err);
+                        }
+                    };
+                    reader.onerror = (e) => reject(e);
+                });
+
+            } else {
+                rawTransactions = await parseExcelLedger(file);
+            }
+
+            console.log(`Transactions extracted (raw): ${rawTransactions.length}`);
+
+            const existingSignatures = new Set(transactions.map(t => generateTransactionSignature(t)));
+
+            let newUniqueTransactions = rawTransactions.filter(t => {
+                const signature = generateTransactionSignature(t);
+                return !existingSignatures.has(signature);
+            });
+
+            const duplicatesCount = rawTransactions.length - newUniqueTransactions.length;
+
+            if (newUniqueTransactions.length === 0) {
+                throw new Error("Toutes les transactions du fichier existent déjà.");
+            }
+
+            await handleProcessComplete(newUniqueTransactions, [], []);
+
+            alert(`Import réussi !\n\n${newUniqueTransactions.length} transactions ajoutées.\n${duplicatesCount} doublons ignorés.`);
+
+        } catch (err: any) {
+            console.error("Upload failed", err);
+            setUploadError(err.message || "Erreur de lecture du fichier.");
+            alert("Erreur d'importation : " + (err.message || "Erreur lors de l'extraction."));
+        } finally {
+            setIsUploading(false);
+            setUploadProgress(null);
+        }
+    };
 
     // Handle new transactions from Upload Agent
     const handleProcessComplete = async (newTxns: Transaction[], newAccounts: Account[], matchedReceiptIds: string[] = []) => {
@@ -676,8 +762,6 @@ function App() {
         );
     };
 
-    const [isUploading, setIsUploading] = useState(false);
-
     // LOADING STATE
     if (authLoading || (user && dataLoading)) {
         return (
@@ -694,11 +778,21 @@ function App() {
     }
 
     return (
-        <Layout activeTab={activeTab} onTabChange={setActiveTab} user={user} disabled={isUploading}>
+        <Layout activeTab={activeTab} onTabChange={setActiveTab} user={user}>
             {(!isConfigured || guestMode) && (
                 <div className="bg-orange-900/20 border-b border-orange-900/50 text-orange-200 px-4 py-2 text-xs flex items-center justify-center gap-2">
                     <CloudOff size={14} />
                     <span>{guestMode ? "Mode Invité" : "Mode Démo"}. Les données sont stockées uniquement dans votre navigateur (LocalStorage). Connectez-vous pour sauvegarder dans le cloud.</span>
+                </div>
+            )}
+
+            {isUploading && uploadProgress && (
+                <div className="fixed bottom-6 right-6 bg-slate-900 border border-slate-800 text-white rounded-xl shadow-2xl p-4 flex items-center gap-4 z-50 animate-in slide-in-from-bottom-5 duration-300">
+                    <Loader2 className="animate-spin text-blue-500 shrink-0" size={20} />
+                    <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-100">Traitement en arrière-plan...</p>
+                        <p className="text-xs text-slate-400 truncate max-w-[220px]">{uploadProgress.fileName}</p>
+                    </div>
                 </div>
             )}
 
@@ -720,6 +814,9 @@ function App() {
                     onProcessComplete={handleProcessComplete}
                     onProcessingChange={setIsUploading}
                     globalContext={globalAiContext}
+                    isUploading={isUploading}
+                    uploadError={uploadError}
+                    onUploadFile={handleUploadFile}
                 />
             )}
 

@@ -9,64 +9,31 @@ import { User } from 'firebase/auth';
 
 interface UploadViewProps {
   accounts: Account[];
-  transactions: Transaction[]; // Ajout de l'historique
-  receipts: Receipt[]; // Ajout des reçus pour le matching
-  user: User | null; // Pass user for API Context
+  transactions: Transaction[];
+  receipts: Receipt[];
+  user: User | null;
   onProcessComplete: (newTransactions: Transaction[], newAccounts: Account[], matchedReceiptIds: string[]) => void;
   onProcessingChange?: (isProcessing: boolean) => void;
   globalContext?: string;
+  isUploading: boolean;
+  uploadError: string | null;
+  onUploadFile: (file: File, mode: 'PDF' | 'EXCEL') => void;
 }
 
-export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, receipts, user, onProcessComplete, onProcessingChange, globalContext }) => {
+export const UploadView: React.FC<UploadViewProps> = ({ 
+  accounts, 
+  transactions, 
+  receipts, 
+  user, 
+  onProcessComplete, 
+  onProcessingChange, 
+  globalContext,
+  isUploading,
+  uploadError,
+  onUploadFile
+}) => {
   const [activeMode, setActiveMode] = useState<'PDF' | 'EXCEL'>('PDF');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Helper to generate a unique signature for a transaction
-  const generateTransactionSignature = (t: Transaction): string => {
-    // We use Date + Amount + Description (trimmed) as a unique key
-    // We can also add accountId if we trust it, but often accountId is what we want to find.
-    // So sticking to raw data is safer.
-    return `${t.date}-${t.amount.toFixed(2)}-${t.description.trim().toLowerCase()}`;
-  };
-
-  const matchTransactionsWithReceipts = (newTxns: Transaction[]): { processedTxns: Transaction[], matchedReceiptIds: string[] } => {
-    const matchedIds: string[] = [];
-    const unlinkedReceipts = receipts.filter(r => !r.linkedTransactionId);
-
-    const processedTxns = newTxns.map(txn => {
-      // If already has receipt, skip
-      if (txn.receiptUrl) return txn;
-
-      // Find best match in unlinked receipts
-      const match = unlinkedReceipts.find(r => {
-        if (matchedIds.includes(r.id)) return false; // Already taken by another txn in this batch
-
-        let isMatch = false;
-        // Check Amount matches (tolerance 0.1)
-        if (r.extractedAmount && Math.abs(Math.abs(txn.amount) - r.extractedAmount) < 0.1) {
-          // Check Date matches (tolerance 7 days)
-          if (r.extractedDate) {
-            const d1 = new Date(r.extractedDate).getTime();
-            const d2 = new Date(txn.date).getTime();
-            const diff = Math.abs(d1 - d2) / (1000 * 3600 * 24);
-            if (diff <= 7) isMatch = true;
-          }
-        }
-        return isMatch;
-      });
-
-      if (match) {
-        matchedIds.push(match.id);
-        return { ...txn, receiptUrl: match.url };
-      }
-      return txn;
-    });
-
-    return { processedTxns, matchedReceiptIds: matchedIds };
-  };
-
   const [isDragging, setIsDragging] = useState(false);
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -89,104 +56,13 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
     const file = e.dataTransfer?.files?.[0];
     if (!file) return;
     
-    // Create a synthetic event-like object for reuse
-    const syntheticEvent = {
-      target: { files: e.dataTransfer.files }
-    } as unknown as React.ChangeEvent<HTMLInputElement>;
-    
-    handleFileUpload(syntheticEvent);
+    onUploadFile(file, activeMode);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    setIsProcessing(true);
-    if (onProcessingChange) onProcessingChange(true);
-    setError(null);
-
-    try {
-      let rawTransactions: Transaction[] = [];
-
-      if (activeMode === 'PDF') {
-        // PDF LOGIC
-        if (file.type !== 'application/pdf') {
-          throw new Error('Veuillez importer un fichier PDF.');
-        }
-
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-
-        await new Promise<void>((resolve, reject) => {
-          reader.onload = async () => {
-            const base64Data = (reader.result as string).split(',')[1];
-            try {
-              const userId = user ? user.uid : "guest";
-              const result = await parseBankStatementPDF(base64Data, accounts, transactions, userId, globalContext);
-              if (!result || !result.transactions) throw new Error("Échec de l'extraction des transactions.");
-
-              rawTransactions = result.transactions.map((t: any, idx: number) => ({
-                id: `txn-${Date.now()}-${idx}`,
-                date: t.date,
-                description: t.description,
-                amount: typeof t.amount === 'string' ? Number(t.amount.replace(',', '.')) : Number(t.amount || 0),
-                status: t.accountId ? TransactionStatus.REVIEW_NEEDED : TransactionStatus.PENDING,
-                accountId: t.accountId,
-                detectedMemberName: t.detectedMemberName,
-                fullRawText: t.fullRawText,
-                notes: undefined
-              }));
-              resolve();
-            } catch (err: any) {
-              reject(err);
-            }
-          };
-          reader.onerror = (e) => reject(e);
-        });
-
-      } else {
-        // EXCEL LOGIC
-        rawTransactions = await parseExcelLedger(file);
-      }
-
-      // --- DEDUPLICATION LOGIC ---
-      console.log(`Transactions extracted (raw): ${rawTransactions.length}`);
-
-      // 1. Build Set of existing signatures
-      const existingSignatures = new Set(transactions.map(t => generateTransactionSignature(t)));
-
-      // 2. Filter out duplicates
-      let newUniqueTransactions = rawTransactions.filter(t => {
-        const signature = generateTransactionSignature(t);
-        if (existingSignatures.has(signature)) {
-          return false; // Skip duplicate
-        }
-        return true;
-      });
-
-      const duplicatesCount = rawTransactions.length - newUniqueTransactions.length;
-
-      if (duplicatesCount > 0) {
-        console.log(`Skipped ${duplicatesCount} duplicates.`);
-      }
-
-      if (newUniqueTransactions.length === 0) {
-        throw new Error("Toutes les transactions du fichier existent déjà.");
-      }
-
-      // PERFORM MATCHING WITH RECEIPTS
-      const { processedTxns, matchedReceiptIds } = matchTransactionsWithReceipts(newUniqueTransactions);
-
-      onProcessComplete(processedTxns, [], matchedReceiptIds);
-
-      alert(`Import réussi !\n\n${processedTxns.length} transactions ajoutées.\n${duplicatesCount} doublons ignorés.`);
-
-    } catch (err: any) {
-      setError(err.message || "Erreur de lecture du fichier.");
-    } finally {
-      setIsProcessing(false);
-      if (onProcessingChange) onProcessingChange(false);
-    }
+    onUploadFile(file, activeMode);
   };
 
   return (
@@ -220,7 +96,7 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
         </div>
 
         <div className="p-12 flex flex-col items-center justify-center bg-slate-900/50">
-          {!isProcessing ? (
+          {!isUploading ? (
             <div
               className={`w-full max-w-lg border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center cursor-pointer transition-all group ${
                 isDragging 
@@ -258,10 +134,10 @@ export const UploadView: React.FC<UploadViewProps> = ({ accounts, transactions, 
             </div>
           )}
 
-          {error && (
+          {uploadError && (
             <div className="mt-6 p-4 bg-red-900/20 text-red-400 rounded-lg flex items-center gap-3 border border-red-900/50">
               <AlertCircle size={20} />
-              <span>{error}</span>
+              <span>{uploadError}</span>
             </div>
           )}
         </div>
