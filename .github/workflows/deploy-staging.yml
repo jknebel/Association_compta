@@ -1,0 +1,175 @@
+name: Deploy to Staging (ameliorationv2)
+
+on:
+  push:
+    branches:
+      - ameliorationv2
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: europe-west1
+  BACKEND_SERVICE_NAME: assocompta-backend-staging
+  REPO_NAME: assocompta-backend
+
+jobs:
+  # 1. CHANGE DETECTION
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      contents: read
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+              - 'src/**'
+              - '*.json'
+              - '*.html'
+              - '*.tsx'
+              - '*.ts'
+
+  # 2. BUILD & DEPLOY BACKEND (Cloud Run - Staging)
+  deploy-backend:
+    needs: changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    outputs:
+      backend_url: ${{ steps.get-url.outputs.url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      - name: 'Docker Auth'
+        if: ${{ needs.changes.outputs.backend == 'true' }}
+        run: |-
+          gcloud auth configure-docker europe-west1-docker.pkg.dev
+
+      - name: 'Build Container'
+        if: ${{ needs.changes.outputs.backend == 'true' }}
+        run: |-
+          docker build -t europe-west1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$BACKEND_SERVICE_NAME:${{ github.sha }} ./backend
+
+      - name: 'Push Container'
+        if: ${{ needs.changes.outputs.backend == 'true' }}
+        run: |-
+          docker push europe-west1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$BACKEND_SERVICE_NAME:${{ github.sha }}
+
+      - id: 'deploy'
+        name: 'Deploy to Cloud Run (Staging)'
+        if: ${{ needs.changes.outputs.backend == 'true' }}
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+          service: '${{ env.BACKEND_SERVICE_NAME }}'
+          image: 'europe-west1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.BACKEND_SERVICE_NAME }}:${{ github.sha }}'
+          region: '${{ env.REGION }}'
+          flags: '--allow-unauthenticated --timeout=600 --memory=1Gi'
+          env_vars: |
+            GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+
+      - id: 'get-url'
+        name: 'Get Service URL'
+        run: |
+          if [ "${{ steps.deploy.outputs.url }}" != "" ]; then
+             echo "url=${{ steps.deploy.outputs.url }}" >> $GITHUB_OUTPUT
+          else
+             EXISTING_URL=$(gcloud run services describe ${{ env.BACKEND_SERVICE_NAME }} --region ${{ env.REGION }} --format 'value(status.url)' 2>/dev/null || echo "")
+             echo "url=$EXISTING_URL" >> $GITHUB_OUTPUT
+          fi
+
+  # 3. BUILD & DEPLOY FRONTEND (Firebase Hosting - Preview Channel)
+  deploy-frontend:
+    needs: [changes, deploy-backend]
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+      # Build with environment variables (same Firebase project, staging backend)
+      - name: Build Frontend
+        run: npm run build
+        env:
+          VITE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          VITE_API_URL: ${{ needs.deploy-backend.outputs.backend_url }}
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+
+      # Deploy to a Preview Channel (temporary URL, expires after 7 days)
+      - name: Deploy to Firebase Preview Channel
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.GCP_SA_KEY }}'
+          channelId: staging-ameliorationv2
+          expires: 7d
+          projectId: '${{ secrets.GCP_PROJECT_ID }}'
+
+  # 4. DEPLOY FIRESTORE RULES (for testing new rules)
+  deploy-rules:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      # Only deploy rules if firestore.rules or storage.rules changed
+      - name: Check for rules changes
+        id: rules-check
+        run: |
+          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qE '(firestore\.rules|storage\.rules)'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy Firestore & Storage Rules
+        if: steps.rules-check.outputs.changed == 'true'
+        run: |
+          echo "⚠️ ATTENTION: Les rules seront déployées sur le projet de PROD (même projet Firebase)."
+          echo "Vérifiez que les nouvelles rules sont rétro-compatibles avec l'ancienne structure."
+          firebase deploy --only firestore:rules,storage --project ${{ secrets.GCP_PROJECT_ID }}
