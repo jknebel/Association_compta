@@ -81,6 +81,10 @@ jobs:
         if: ${{ needs.changes.outputs.backend == 'true' }}
         run: |-
           gcloud auth configure-docker europe-west1-docker.pkg.dev
+      
+      - name: Deploy Firestore & Storage Rules
+        run: |
+          firebase deploy --only firestore:rules,storage --project ${{ secrets.GCP_PROJECT_ID }}
 
       # Build the Container (Only if backend changed)
       - name: 'Build Container'

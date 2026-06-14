@@ -5,7 +5,8 @@ import { listAllOrganizations, getUserOrganizations, listComptabilites } from '.
 import { getUserComptabilites } from '../services/userService';
 import { Building2, Book, Plus, ArrowRight, Loader2, LogOut } from 'lucide-react';
 import { logout } from '../services/authService';
-
+import { checkHasLegacyData, migrateLegacyDataToOrg } from '../services/migrationService';
+import { createComptabilite } from '../services/organizationService';
 export const OrgSelector: React.FC = () => {
     const { user, isSuperAdmin } = useAuthContext();
     const { setSelectedOrg, setOrgRole } = useOrgContext();
@@ -14,11 +15,18 @@ export const OrgSelector: React.FC = () => {
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [comptasByOrg, setComptasByOrg] = useState<Record<string, Array<{compta: Comptabilite, role: any}>>>({});
     const [loading, setLoading] = useState(true);
+    const [hasLegacyData, setHasLegacyData] = useState(false);
+    const [isMigrating, setIsMigrating] = useState(false);
+    const [isCreatingCompta, setIsCreatingCompta] = useState<string | null>(null); // orgId
 
     useEffect(() => {
         const fetchData = async () => {
             if (!user) return;
             try {
+                // Check legacy data
+                const legacy = await checkHasLegacyData(user.uid);
+                setHasLegacyData(legacy);
+
                 // Fetch Organizations
                 let orgs: Organization[] = [];
                 if (isSuperAdmin) {
@@ -72,6 +80,47 @@ export const OrgSelector: React.FC = () => {
         
         setSelectedCompta(comptaData.compta);
         setComptaRole(comptaData.role);
+    };
+
+    const handleCreateCompta = async (orgId: string) => {
+        if (!user) return;
+        const name = prompt("Nom de la nouvelle comptabilité ? (ex: Exercice 2024)");
+        if (!name) return;
+
+        setIsCreatingCompta(orgId);
+        try {
+            await createComptabilite(orgId, { name });
+            // add user as admin
+            const { doc, setDoc, getDb } = await import('../services/organizationService');
+            // We need a helper for members, or we just rely on SuperAdmin to assign it later...
+            // Wait, we can just do a hacky reload for now
+            window.location.reload();
+        } catch (e) {
+            console.error(e);
+            alert("Erreur lors de la création.");
+        } finally {
+            setIsCreatingCompta(null);
+        }
+    };
+
+    const handleMigrate = async (orgId: string) => {
+        if (!user) return;
+        if (!window.confirm("Voulez-vous copier toutes vos anciennes données dans cette organisation ?")) return;
+        
+        setIsMigrating(true);
+        try {
+            const name = prompt("Nom de la comptabilité pour vos données importées ?", "Comptabilité principale");
+            if (!name) {
+                setIsMigrating(false);
+                return;
+            }
+            await migrateLegacyDataToOrg(user.uid, orgId, name);
+            window.location.reload();
+        } catch (e) {
+            console.error(e);
+            alert("Erreur lors de la migration.");
+            setIsMigrating(false);
+        }
     };
 
     if (loading) {
@@ -141,7 +190,7 @@ export const OrgSelector: React.FC = () => {
                                     <div className="p-4 bg-slate-950">
                                         <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 px-2">Comptabilités accessibles</h3>
                                         {comptas.length === 0 ? (
-                                            <p className="text-sm text-slate-600 italic px-2 pb-2">Aucun accès</p>
+                                            <p className="text-sm text-slate-600 italic px-2 pb-2">Aucune comptabilité trouvée.</p>
                                         ) : (
                                             <div className="space-y-2">
                                                 {comptas.map((item, idx) => (
@@ -164,6 +213,30 @@ export const OrgSelector: React.FC = () => {
                                                         <ArrowRight size={16} className="text-slate-600 group-hover:text-blue-400 transform group-hover:translate-x-1 transition-all" />
                                                     </button>
                                                 ))}
+                                            </div>
+                                        )}
+                                        
+                                        {isSuperAdmin && (
+                                            <div className="mt-4 pt-4 border-t border-slate-800/50 flex flex-col gap-2 px-2">
+                                                <button 
+                                                    onClick={() => handleCreateCompta(org.id)}
+                                                    disabled={isCreatingCompta === org.id}
+                                                    className="flex items-center justify-center gap-2 w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors"
+                                                >
+                                                    {isCreatingCompta === org.id ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                                                    Nouvelle Comptabilité
+                                                </button>
+                                                
+                                                {hasLegacyData && (
+                                                    <button 
+                                                        onClick={() => handleMigrate(org.id)}
+                                                        disabled={isMigrating}
+                                                        className="flex items-center justify-center gap-2 w-full py-2 bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/50 rounded-lg text-sm font-medium transition-colors"
+                                                    >
+                                                        {isMigrating ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
+                                                        Migrer mes données perso ici
+                                                    </button>
+                                                )}
                                             </div>
                                         )}
                                     </div>

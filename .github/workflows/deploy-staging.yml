@@ -157,18 +157,7 @@ jobs:
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-      # Only deploy rules if firestore.rules or storage.rules changed
-      - name: Check for rules changes
-        id: rules-check
-        run: |
-          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qE '(firestore\.rules|storage\.rules)'; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "changed=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Deploy Firestore & Storage Rules
-        if: steps.rules-check.outputs.changed == 'true'
         run: |
           echo "⚠️ ATTENTION: Les rules seront déployées sur le projet de PROD (même projet Firebase)."
           echo "Vérifiez que les nouvelles rules sont rétro-compatibles avec l'ancienne structure."
