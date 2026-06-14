@@ -11,6 +11,8 @@ import { OrgSelector } from './frontend/components/OrgSelector';
 import { AdminView } from './frontend/components/AdminView';
 import { SuperAdminView } from './frontend/components/SuperAdminView';
 import { MembersView } from './frontend/components/MembersView';
+import { LoginView } from './frontend/components/LoginView';
+import { ReceiptsView } from './frontend/components/ReceiptsView';
 
 import { Account, Transaction, AccountType, Receipt, TransactionStatus } from './types';
 import { Edit2, Save, X, AlertTriangle, CloudOff, Loader2, Download, Upload, CheckCircle, XCircle, FileSpreadsheet, RefreshCw } from 'lucide-react';

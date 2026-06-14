@@ -588,8 +588,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <textarea 
                     value={tempAiContext}
                     onChange={(e) => setTempAiContext(e.target.value)}
-                    placeholder="Ex: Liste des membres : Jean Dupont, Marie Curie... 
-Loyer mensuel : Agence Immo Suisse..."
+                    placeholder={`Ex: Liste des membres : Jean Dupont, Marie Curie...\nLoyer mensuel : Agence Immo Suisse...`}
                     className="w-full h-64 bg-slate-950 border border-slate-700 rounded-xl p-4 text-slate-200 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none scrollbar-thin scrollbar-thumb-indigo-900"
                 />
             </div>
