@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { listAllOrganizations, createOrganization, deleteOrganization } from '../services/organizationService';
 import { Organization } from '../types/rbac';
-import { ShieldCheck, Building2, Trash2, Plus, Loader2 } from 'lucide-react';
+import { ShieldCheck, Building2, Trash2, Plus, Loader2, ArrowLeft } from 'lucide-react';
 import { useAuthContext } from '../contexts/AppContext';
 
 export const SuperAdminView: React.FC = () => {
@@ -73,12 +73,21 @@ export const SuperAdminView: React.FC = () => {
 
     return (
         <div className="p-8 max-w-5xl mx-auto">
-            <header className="mb-8">
-                <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
-                    <ShieldCheck className="text-purple-500" size={28} />
-                    Panneau Super Admin
-                </h2>
-                <p className="text-slate-400 mt-1">Gérez toutes les organisations de la plateforme.</p>
+            <header className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+                        <ShieldCheck className="text-purple-500" size={28} />
+                        Panneau Super Admin
+                    </h2>
+                    <p className="text-slate-400 mt-1">Gérez toutes les organisations de la plateforme.</p>
+                </div>
+                <button 
+                    onClick={() => { window.location.href = '/'; window.location.reload(); }}
+                    className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors border border-slate-700 shrink-0"
+                >
+                    <ArrowLeft size={16} />
+                    Retour aux espaces
+                </button>
             </header>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
