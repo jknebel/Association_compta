@@ -5,7 +5,7 @@ import { generateAccountingReport } from '../services/excelService';
 import { uploadReceipt } from '../services/storageService';
 import { auditLedger } from '../services/geminiService';
 import { AuditModal } from './AuditModal';
-import { Check, X, AlertTriangle, Search, Filter, Calendar, Coins, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck } from 'lucide-react';
+import { Check, X, AlertTriangle, Search, Filter, Calendar, Coins, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck, Plus } from 'lucide-react';
 import { formatDate, dateToTimestamp } from '../services/formatUtils';
 
 interface LedgerViewProps {
@@ -68,6 +68,24 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     } finally {
       setIsAuditing(false);
     }
+  };
+
+  const handleAddManualTransaction = () => {
+    const newId = `manual-${Date.now()}`;
+    const newTxn: Transaction = {
+      id: newId,
+      date: new Date().toISOString().split('T')[0],
+      description: 'Nouvelle transaction',
+      amount: 0,
+      status: TransactionStatus.REVIEW_NEEDED,
+      fullRawText: 'Ajout manuel',
+    };
+    onUpdateTransaction(newTxn);
+    // On force l'affichage de tous les filtres pour être sûr de la voir
+    setFilter('ALL');
+    setSearch('');
+    setEditingId(newId);
+    setEditForm(newTxn);
   };
 
   const allApproved = transactions.length > 0 && transactions.every(t => t.status === TransactionStatus.APPROVED);
@@ -337,9 +355,16 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           <h2 className="text-2xl font-bold text-slate-100">Journal des Transactions</h2>
           <p className="text-slate-400">Vérifiez, modifiez et classez vos transactions importées.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <button
             className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+            onClick={handleAddManualTransaction}
+          >
+            <Plus size={16} />
+            Ajout Manuel
+          </button>
+          <button
+            className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
             onClick={() => generateAccountingReport(filteredTransactions, accounts)}
           >
             <FileSpreadsheet size={16} />
