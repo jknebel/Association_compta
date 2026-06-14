@@ -30,5 +30,10 @@ service cloud.firestore {
         allow read, write: if isAuthenticated();
       }
     }
+
+    // Autoriser la recherche de tous les rôles d'un utilisateur (collectionGroup 'members')
+    match /{path=**}/members/{memberId} {
+      allow read: if isAuthenticated();
+    }
   }
 }
