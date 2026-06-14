@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 
+import { AppProvider } from './frontend/contexts/AppContext';
+
 const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error("Could not find root element to mount to");
@@ -11,6 +13,8 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <App />
+    <AppProvider>
+      <App />
+    </AppProvider>
   </React.StrictMode>
 );

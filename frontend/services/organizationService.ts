@@ -178,3 +178,35 @@ export const createInvitation = async (orgId: string, inviteData: Omit<Invitatio
     await setDoc(inviteRef, newInvite);
     return inviteRef.id;
 }
+
+export const listAllOrganizations = async (): Promise<Organization[]> => {
+    const db = getDb();
+    const snapshot = await getDocs(collection(db, 'organizations'));
+    return snapshot.docs.map(doc => doc.data() as Organization);
+}
+
+export const getUserOrganizations = async (uid: string): Promise<Organization[]> => {
+    const db = getDb();
+    const result: Organization[] = [];
+    try {
+        const membersQuery = query(collectionGroup(db, 'members'), where('uid', '==', uid));
+        const membersSnapshot = await getDocs(membersQuery);
+        
+        for (const memberDoc of membersSnapshot.docs) {
+            const pathSegments = memberDoc.ref.path.split('/');
+            // Check if it's an organization member doc: organizations/{orgId}/members/{uid}
+            if (pathSegments.length === 4 && pathSegments[0] === 'organizations' && pathSegments[2] === 'members') {
+                if (memberDoc.data().status === 'approved') {
+                    const orgId = pathSegments[1];
+                    const orgSnap = await getDoc(doc(db, 'organizations', orgId));
+                    if (orgSnap.exists()) {
+                        result.push(orgSnap.data() as Organization);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error("Error fetching user organizations: ", error);
+    }
+    return result;
+}

@@ -1,9 +1,10 @@
 
 import React from 'react';
-import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, User as UserIcon, Receipt } from 'lucide-react';
+import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, Receipt, Shield, ArrowLeft } from 'lucide-react';
 import { useDataService } from '../services/dataService';
 import { logout } from '../services/authService';
 import { User } from 'firebase/auth';
+import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/AppContext';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -15,6 +16,9 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange, user, disabled = false }) => {
   const { isConfigured } = useDataService(user || null);
+  const { isSuperAdmin } = useAuthContext();
+  const { selectedOrg, orgRole, setSelectedOrg } = useOrgContext();
+  const { selectedCompta, setSelectedCompta } = useComptaContext();
 
   const navItems = [
     { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
@@ -26,6 +30,10 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
     { id: 'settings', label: 'Plan Comptable', icon: Settings },
   ];
 
+  if (orgRole === 'admin' || isSuperAdmin) {
+    navItems.push({ id: 'admin', label: 'Administration', icon: Shield });
+  }
+
   const handleLogout = async () => {
     try {
       await logout();
@@ -34,30 +42,48 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
     }
   };
 
+  const handleSwitchOrg = () => {
+      setSelectedOrg(null);
+      setSelectedCompta(null);
+  };
+
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100">
       {/* Sidebar */}
       <aside className={`w-64 bg-slate-900 border-r border-slate-800 flex flex-col shadow-lg z-10 ${disabled ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
-        <div className="p-6 border-b border-slate-800">
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <span className="text-blue-500">Asso</span>Compta AI
-          </h1>
-          <p className="text-xs text-slate-400 mt-1">Comptabilité d'Association</p>
+        <div className="p-4 border-b border-slate-800">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-xl font-bold flex items-center gap-2">
+              <span className="text-blue-500">Asso</span>Compta
+            </h1>
+          </div>
+          
+          {selectedOrg && (
+            <div className="bg-slate-950 rounded-lg p-3 border border-slate-800">
+              <div className="flex justify-between items-start mb-1">
+                <p className="text-sm font-semibold text-white truncate pr-2" title={selectedOrg.name}>{selectedOrg.name}</p>
+                <button onClick={handleSwitchOrg} className="text-slate-500 hover:text-blue-400" title="Changer d'organisation">
+                    <ArrowLeft size={16} />
+                </button>
+              </div>
+              <p className="text-xs text-blue-400 truncate">{selectedCompta?.name || "Aucune compta"}</p>
+            </div>
+          )}
         </div>
 
-        <nav className="flex-1 py-6 px-3 space-y-2">
+        <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => !disabled && onTabChange(item.id)}
               disabled={disabled}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors duration-200 ${activeTab === item.id
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${activeTab === item.id
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                 } ${disabled ? 'cursor-not-allowed' : ''}`}
             >
-              <item.icon size={20} />
-              <span className="font-medium">{item.label}</span>
+              <item.icon size={18} />
+              <span className="font-medium text-sm">{item.label}</span>
             </button>
           ))}
         </nav>

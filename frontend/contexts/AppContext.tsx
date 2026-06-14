@@ -77,7 +77,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             
             try {
                 const idTokenResult = await user.getIdTokenResult();
-                setIsSuperAdmin(!!idTokenResult.claims.superAdmin);
+                // Override for development/admin setup
+                const isHardcodedAdmin = user.email === 'jean.francois.knebel@gmail.com' || user.email === 'jean-francois@knebel.ch';
+                setIsSuperAdmin(!!idTokenResult.claims.superAdmin || isHardcodedAdmin);
             } catch (e) {
                 console.error("Failed to get token claims", e);
             }
