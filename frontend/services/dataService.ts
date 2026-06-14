@@ -53,7 +53,17 @@ try {
 
 // --- HOOKS ---
 
-export const useDataService = (user: User | null, isGuest: boolean = false) => {
+export const useDataService = (user: User | null, isGuest: boolean = false, orgId?: string, comptaId?: string) => {
+    const getBasePath = () => {
+        if (orgId && comptaId) {
+            return `organizations/${orgId}/comptabilites/${comptaId}`;
+        }
+        if (user) {
+            return `users/${user.uid}`;
+        }
+        return '';
+    };
+
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [receipts, setReceipts] = useState<Receipt[]>([]);
@@ -90,8 +100,11 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         }
 
         // CASE 3: Firebase Firestore
+        const basePath = getBasePath();
+        if (!basePath) return; // Should not happen if user exists
+
         const unsubAccounts = onSnapshot(
-            query(collection(db, "users", user.uid, "accounts"), orderBy("code")),
+            query(collection(db, `${basePath}/accounts`), orderBy("code")),
             (snapshot) => {
                 const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Account));
                 setAccounts(data);
@@ -100,7 +113,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         );
 
         const unsubTransactions = onSnapshot(
-            query(collection(db, "users", user.uid, "transactions"), orderBy("date", "desc")),
+            query(collection(db, `${basePath}/transactions`), orderBy("date", "desc")),
             (snapshot) => {
                 const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Transaction));
                 setTransactions(data);
@@ -109,7 +122,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         );
 
         const unsubReceipts = onSnapshot(
-            query(collection(db, "users", user.uid, "receipts"), orderBy("uploadDate", "desc")),
+            query(collection(db, `${basePath}/receipts`), orderBy("uploadDate", "desc")),
             (snapshot) => {
                 const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Receipt));
                 setReceipts(data);
@@ -118,7 +131,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         );
 
         const unsubAiConfig = onSnapshot(
-            doc(db, "users", user.uid, "settings", "aiConfig"),
+            doc(db, `${basePath}/settings`, "aiConfig"),
             (docSnap) => {
                 if (docSnap.exists()) {
                     setGlobalAiContext(docSnap.data().context || "");
@@ -158,7 +171,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            await setDoc(doc(db, "users", user.uid, "accounts", account.id), sanitize(account));
+            await setDoc(doc(db, `${getBasePath()}/accounts`, account.id), sanitize(account));
         }
     };
 
@@ -171,18 +184,18 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         }
         if (user) {
             const batch = writeBatch(db);
-            const snapshot = await getDocs(collection(db, "users", user.uid, "accounts"));
+            const snapshot = await getDocs(collection(db, `${getBasePath()}/accounts`));
             const currentIds = snapshot.docs.map(d => d.id);
             const newIds = new Set(newAccounts.map(a => a.id));
 
             currentIds.forEach(id => {
                 if (!newIds.has(id)) {
-                    batch.delete(doc(db, "users", user.uid, "accounts", id));
+                    batch.delete(doc(db, `${getBasePath()}/accounts`, id));
                 }
             });
 
             newAccounts.forEach(acc => {
-                batch.set(doc(db, "users", user.uid, "accounts", acc.id), sanitize(acc));
+                batch.set(doc(db, `${getBasePath()}/accounts`, acc.id), sanitize(acc));
             });
 
             await batch.commit();
@@ -199,7 +212,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            await deleteDoc(doc(db, "users", user.uid, "accounts", id));
+            await deleteDoc(doc(db, `${getBasePath()}/accounts`, id));
         }
     };
 
@@ -216,7 +229,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
         }
         if (user) {
             const cleanTxn = JSON.parse(JSON.stringify(txn));
-            await setDoc(doc(db, "users", user.uid, "transactions", txn.id), cleanTxn);
+            await setDoc(doc(db, `${getBasePath()}/transactions`, txn.id), cleanTxn);
         }
     };
 
@@ -241,7 +254,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             const batch = writeBatch(db);
             newTxnsList.forEach(txn => {
                 const cleanTxn = JSON.parse(JSON.stringify(txn));
-                batch.set(doc(db, "users", user.uid, "transactions", txn.id), cleanTxn);
+                batch.set(doc(db, `${getBasePath()}/transactions`, txn.id), cleanTxn);
             });
             await batch.commit();
         }
@@ -257,7 +270,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            await deleteDoc(doc(db, "users", user.uid, "transactions", id));
+            await deleteDoc(doc(db, `${getBasePath()}/transactions`, id));
         }
     };
 
@@ -295,7 +308,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
                 let idsToDelete: string[] = [];
                 if (!ids) {
                     // DELETE ALL: fetch all transaction IDs
-                    const qTxns = query(collection(db, "users", user.uid, "transactions"));
+                    const qTxns = query(collection(db, `${getBasePath()}/transactions`));
                     const snapshotTxns = await getDocs(qTxns);
                     idsToDelete = snapshotTxns.docs.map(d => d.id);
                 } else {
@@ -312,7 +325,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
                 // Use individual deleteDoc calls (same as the working X button)
                 const deletePromises = idsToDelete.map(id => {
                     console.log(`[deleteTransactions] Suppression en cours pour id: ${id}`);
-                    return deleteDoc(doc(db, "users", user.uid, "transactions", id));
+                    return deleteDoc(doc(db, `${getBasePath()}/transactions`, id));
                 });
                 await Promise.all(deletePromises);
                 
@@ -320,7 +333,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
 
                 // Unlink any receipts linked to deleted transactions
                 const idsSet = new Set(idsToDelete);
-                const qReceipts = query(collection(db, "users", user.uid, "receipts"));
+                const qReceipts = query(collection(db, `${getBasePath()}/receipts`));
                 const snapshotReceipts = await getDocs(qReceipts);
                 const unlinkPromises: Promise<void>[] = [];
                 for (const docSnap of snapshotReceipts.docs) {
@@ -349,7 +362,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            await setDoc(doc(db, "users", user.uid, "settings", "aiConfig"), { context: text }, { merge: true });
+            await setDoc(doc(db, `${getBasePath()}/settings`, "aiConfig"), { context: text }, { merge: true });
         }
     };
 
@@ -367,7 +380,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            await setDoc(doc(db, "users", user.uid, "receipts", receipt.id), sanitize(receipt));
+            await setDoc(doc(db, `${getBasePath()}/receipts`, receipt.id), sanitize(receipt));
         }
     };
 
@@ -381,7 +394,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             return;
         }
         if (user) {
-            await deleteDoc(doc(db, "users", user.uid, "receipts", id));
+            await deleteDoc(doc(db, `${getBasePath()}/receipts`, id));
         }
     }
 
@@ -402,8 +415,9 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
 
         // Try Firebase Storage first
         try {
+            const basePath = orgId && comptaId ? `receipts/${orgId}/${comptaId}` : `receipts/${user?.uid}`;
             const path = user
-                ? `receipts/${user.uid}/${Date.now()}_${file.name}`
+                ? `${basePath}/${Date.now()}_${file.name}`
                 : `receipts/public/${Date.now()}_${file.name}`;
 
             const storageRef = ref(storage, path);
@@ -441,12 +455,12 @@ export const useDataService = (user: User | null, isGuest: boolean = false) => {
             
             // 1. Update Accounts
             finalAccounts.forEach(acc => {
-                batch.set(doc(db, "users", user.uid, "accounts", acc.id), sanitize(acc));
+                batch.set(doc(db, `${getBasePath()}/accounts`, acc.id), sanitize(acc));
             });
             
             // 2. Archive Transactions
             transactionsToArchive.forEach(txn => {
-                batch.update(doc(db, "users", user.uid, "transactions", txn.id), { status: TransactionStatus.ARCHIVED });
+                batch.update(doc(db, `${getBasePath()}/transactions`, txn.id), { status: TransactionStatus.ARCHIVED });
             });
             
             await batch.commit();
