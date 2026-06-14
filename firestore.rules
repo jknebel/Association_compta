@@ -16,9 +16,18 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, write: if isAuthenticated() && isOwner(userId);
       
-      // Allow access to subcollections (accounts, transactions, receipts)
+    // Allow access to subcollections (accounts, transactions, receipts)
       match /{document=**} {
         allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+    }
+
+    // Phase 2 : Organisations
+    match /organizations/{orgId} {
+      allow read, write: if isAuthenticated();
+      
+      match /{document=**} {
+        allow read, write: if isAuthenticated();
       }
     }
   }
