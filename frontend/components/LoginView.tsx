@@ -1,32 +1,75 @@
-import React, { useState } from 'react';
-import { loginWithGoogle, loginWithEmail } from '../services/authService';
-import { Lock, Mail, Chrome, ArrowRight, AlertCircle, LayoutDashboard, UserX, Copy } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { loginWithGoogle, loginWithEmail, registerWithEmail } from '../services/authService';
+import { Lock, Mail, Chrome, ArrowRight, AlertCircle, LayoutDashboard, UserX, Copy, User as UserIcon } from 'lucide-react';
+import { createUserProfile } from '../services/userService';
+import { getAuth, sendEmailVerification } from 'firebase/auth';
+import { app } from '../services/dataService';
 
 interface LoginViewProps {
   onGuestAccess: () => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
+  const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   const currentDomain = window.location.hostname;
+
+  // Détection des paramètres d'invitation (redirigera vers JoinOrgPage plus tard si géré par App.tsx, 
+  // mais on peut aussi afficher un message ici)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('org') && params.get('code')) {
+      setIsSignUp(true);
+      setMessage("Vous avez été invité à rejoindre une organisation. Veuillez créer un compte ou vous connecter.");
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
+    setMessage(null);
 
     try {
-      await loginWithEmail(email, password);
+      if (isSignUp) {
+        if (!firstName.trim() || !lastName.trim()) {
+          throw new Error("Veuillez saisir votre prénom et nom.");
+        }
+        const userCredential = await registerWithEmail(email, password);
+        const user = userCredential.user;
+        
+        // Créer le profil
+        await createUserProfile(user.uid, {
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          email: user.email || email,
+        });
+
+        // Envoyer l'email de vérification
+        await sendEmailVerification(user);
+        setMessage("Compte créé avec succès ! Un email de vérification vous a été envoyé.");
+        
+        // S'il y a des paramètres d'invitation, on pourrait rediriger.
+        // Mais App.tsx gérera le flow via JoinOrgPage si l'URL contient /join
+      } else {
+        await loginWithEmail(email, password);
+      }
     } catch (err: any) {
       console.error("Auth Error:", err);
-      let msg = "Une erreur est survenue.";
+      let msg = err.message || "Une erreur est survenue.";
       if (err.code === 'auth/invalid-credential') msg = "Email ou mot de passe incorrect.";
       if (err.code === 'auth/user-not-found') msg = "Aucun utilisateur trouvé avec cet email.";
       if (err.code === 'auth/wrong-password') msg = "Mot de passe incorrect.";
+      if (err.code === 'auth/email-already-in-use') msg = "Cet email est déjà utilisé.";
+      if (err.code === 'auth/weak-password') msg = "Le mot de passe doit faire au moins 6 caractères.";
       setError(msg);
     } finally {
       setIsLoading(false);
@@ -37,11 +80,20 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
     setIsLoading(true);
     setError(null);
     try {
-      await loginWithGoogle();
+      const result = await loginWithGoogle();
+      // On check si c'est un nouvel utilisateur pour créer son profil
+      // result.additionalUserInfo n'est plus dispo dans le nouveau SDK facilement sans getAdditionalUserInfo
+      // On va juste essayer de créer le profil, s'il existe déjà la fonction merge/ignore
+      if (result.user) {
+        const names = (result.user.displayName || "").split(" ");
+        await createUserProfile(result.user.uid, {
+          firstName: names[0] || "",
+          lastName: names.slice(1).join(" ") || "",
+          email: result.user.email || "",
+        });
+      }
     } catch (err: any) {
       console.error("Google Auth Error:", err);
-
-      // Gestion précise des erreurs courantes
       if (err.code === 'auth/popup-closed-by-user') {
         setError("La fenêtre de connexion a été fermée avant la fin.");
       } else if (err.code === 'auth/unauthorized-domain') {
@@ -73,11 +125,50 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
       </div>
 
       <div className="w-full max-w-md bg-slate-900 rounded-2xl shadow-xl border border-slate-800 overflow-hidden">
-
         <div className="p-8">
-          <h2 className="text-xl font-semibold text-white mb-6 text-center">Connexion</h2>
+          <h2 className="text-xl font-semibold text-white mb-6 text-center">
+            {isSignUp ? "Créer un compte" : "Connexion"}
+          </h2>
+
+          {message && (
+            <div className="mb-4 p-3 bg-blue-900/20 border border-blue-900/50 rounded-lg text-sm text-blue-400 text-center">
+              {message}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {isSignUp && (
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Prénom</label>
+                  <div className="relative">
+                    <UserIcon className="absolute left-3 top-3 text-slate-500" size={18} />
+                    <input
+                      type="text"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                      placeholder="Jean"
+                      required={isSignUp}
+                    />
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Nom</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                      placeholder="Dupont"
+                      required={isSignUp}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Email</label>
               <div className="relative">
@@ -104,6 +195,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   placeholder="••••••••"
                   required
+                  minLength={6}
                 />
               </div>
             </div>
@@ -124,12 +216,22 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
                 <span className="animate-pulse">Chargement...</span>
               ) : (
                 <>
-                  Connexion
+                  {isSignUp ? "S'inscrire" : "Connexion"}
                   <ArrowRight size={18} />
                 </>
               )}
             </button>
           </form>
+
+          <div className="mt-4 text-center">
+            <button
+              type="button"
+              onClick={() => { setIsSignUp(!isSignUp); setError(null); setMessage(null); }}
+              className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              {isSignUp ? "Déjà un compte ? Connectez-vous" : "Pas de compte ? Inscrivez-vous"}
+            </button>
+          </div>
 
           <div className="my-6 flex items-center gap-4">
             <div className="h-px bg-slate-800 flex-1" />
@@ -184,4 +286,4 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
       </div>
     </div>
   );
-};
+};

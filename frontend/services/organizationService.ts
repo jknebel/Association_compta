@@ -153,3 +153,28 @@ export const updateMemberRole = async (orgId: string, comptaId: string, uid: str
     const db = getDb();
     await updateDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId, 'members', uid), { role: newRole });
 }
+
+export const getOrganizationByInviteCode = async (inviteCode: string): Promise<Organization | null> => {
+    const db = getDb();
+    const q = query(collection(db, 'organizations'), where('inviteCode', '==', inviteCode));
+    const snapshot = await getDocs(q);
+    if (!snapshot.empty) {
+        return snapshot.docs[0].data() as Organization;
+    }
+    return null;
+}
+
+export const createInvitation = async (orgId: string, inviteData: Omit<Invitation, 'id' | 'requestedAt' | 'status'>): Promise<string> => {
+    const db = getDb();
+    const inviteRef = doc(collection(db, 'organizations', orgId, 'invitations'));
+    
+    const newInvite: Invitation = {
+        ...inviteData,
+        id: inviteRef.id,
+        status: 'pending',
+        requestedAt: Date.now()
+    };
+
+    await setDoc(inviteRef, newInvite);
+    return inviteRef.id;
+}
