@@ -94,7 +94,7 @@ export const OrgSelector: React.FC = () => {
                         <p className="text-slate-400">Sélectionnez un espace de travail pour continuer</p>
                     </div>
                     <button 
-                        onClick={() => logout()}
+                        onClick={async () => { await logout(); window.location.href = '/'; }}
                         className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg transition-colors border border-slate-800"
                     >
                         <LogOut size={16} />
@@ -111,7 +111,10 @@ export const OrgSelector: React.FC = () => {
                             Veuillez demander à un administrateur de vous inviter.
                         </p>
                         {isSuperAdmin && (
-                            <button className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg transition-colors font-medium inline-flex items-center gap-2">
+                            <button 
+                                onClick={() => { window.location.href = '/#superadmin'; window.location.reload(); }}
+                                className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg transition-colors font-medium inline-flex items-center gap-2"
+                            >
                                 <Plus size={18} />
                                 Créer une organisation
                             </button>
@@ -172,8 +175,10 @@ export const OrgSelector: React.FC = () => {
                 
                 {isSuperAdmin && organizations.length > 0 && (
                     <div className="mt-8 text-center">
-                        {/* We will trigger SuperAdminView from here later, or simply show a Super Admin Dashboard button */}
-                        <button className="text-sm text-purple-400 hover:text-purple-300 hover:underline transition-colors font-medium">
+                        <button 
+                            onClick={() => { window.location.href = '/#superadmin'; window.location.reload(); }}
+                            className="text-sm text-purple-400 hover:text-purple-300 hover:underline transition-colors font-medium"
+                        >
                             Accéder au panneau Super Admin
                         </button>
                     </div>

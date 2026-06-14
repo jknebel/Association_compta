@@ -37,6 +37,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
   const handleLogout = async () => {
     try {
       await logout();
+      window.location.href = '/';
     } catch (e) {
       console.error("Logout failed", e);
     }
