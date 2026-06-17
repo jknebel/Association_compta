@@ -81,7 +81,33 @@ export const createComptabilite = async (orgId: string, data: Omit<Comptabilite,
 
 export const deleteComptabilite = async (orgId: string, comptaId: string): Promise<void> => {
     const db = getDb();
+    
+    // Recursive delete helper for subcollections
+    const deleteSubcollection = async (sub: string) => {
+        const snap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites', comptaId, sub));
+        const batchDeletes = snap.docs.map(d => deleteDoc(d.ref));
+        await Promise.all(batchDeletes);
+    };
+
+    // Delete known subcollections
+    await deleteSubcollection('accounts');
+    await deleteSubcollection('transactions');
+    await deleteSubcollection('categories');
+    await deleteSubcollection('members');
+
+    // Delete the main compta document
     await deleteDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId));
+}
+
+export const toggleArchiveComptabilite = async (orgId: string, comptaId: string, isArchived: boolean): Promise<void> => {
+    const db = getDb();
+    const data: Partial<Comptabilite> = { isArchived };
+    if (isArchived) {
+        data.archivedAt = Date.now();
+    } else {
+        data.archivedAt = undefined;
+    }
+    await updateDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId), data);
 }
 
 export const listComptabilites = async (orgId: string): Promise<Comptabilite[]> => {

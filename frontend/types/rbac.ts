@@ -66,6 +66,8 @@ export interface Comptabilite {
     fiscalYearStart: string; // YYYY-MM-DD
     fiscalYearEnd: string;   // YYYY-MM-DD
     currency: string;
+    isArchived?: boolean;
+    archivedAt?: number;
 }
 
 export interface ComptaMember {

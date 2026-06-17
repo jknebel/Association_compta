@@ -3,10 +3,10 @@ import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/App
 import { Organization, Comptabilite } from '../types/rbac';
 import { listAllOrganizations, getUserOrganizations, listComptabilites } from '../services/organizationService';
 import { getUserComptabilites } from '../services/userService';
-import { Building2, Book, Plus, ArrowRight, Loader2, LogOut } from 'lucide-react';
+import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore } from 'lucide-react';
 import { logout } from '../services/authService';
 import { checkHasLegacyData, migrateLegacyDataToOrg } from '../services/migrationService';
-import { createComptabilite } from '../services/organizationService';
+import { createComptabilite, deleteComptabilite, toggleArchiveComptabilite } from '../services/organizationService';
 export const OrgSelector: React.FC = () => {
     const { user, isSuperAdmin } = useAuthContext();
     const { setSelectedOrg, setOrgRole } = useOrgContext();
@@ -18,6 +18,7 @@ export const OrgSelector: React.FC = () => {
     const [hasLegacyData, setHasLegacyData] = useState(false);
     const [isMigrating, setIsMigrating] = useState(false);
     const [isCreatingCompta, setIsCreatingCompta] = useState<string | null>(null); // orgId
+    const [showArchived, setShowArchived] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
         const fetchData = async () => {
@@ -75,11 +76,14 @@ export const OrgSelector: React.FC = () => {
 
     const handleSelectCompta = (org: Organization, comptaData: {compta: Comptabilite, role: any}) => {
         setSelectedOrg(org);
-        // We set a fake orgRole here, the proper way is to read it from userProfile
-        setOrgRole('member' as any); // fallback, should be handled accurately
+        setOrgRole('member' as any); // fallback
         
         setSelectedCompta(comptaData.compta);
-        setComptaRole(comptaData.role);
+        if (comptaData.compta.isArchived) {
+            setComptaRole('viewer' as any); // Lecture seule
+        } else {
+            setComptaRole(comptaData.role);
+        }
     };
 
     const handleCreateCompta = async (orgId: string) => {
@@ -103,6 +107,30 @@ export const OrgSelector: React.FC = () => {
             alert("Erreur lors de la création.");
         } finally {
             setIsCreatingCompta(null);
+        }
+    };
+
+    const handleDelete = async (e: React.MouseEvent, orgId: string, comptaId: string) => {
+        e.stopPropagation();
+        if (window.confirm("Êtes-vous sûr de vouloir supprimer DÉFINITIVEMENT cette comptabilité et toutes ses données (comptes, transactions, etc) ? Cette action est irréversible.")) {
+            try {
+                await deleteComptabilite(orgId, comptaId);
+                window.location.reload();
+            } catch (err) {
+                console.error(err);
+                alert("Erreur lors de la suppression.");
+            }
+        }
+    };
+
+    const handleToggleArchive = async (e: React.MouseEvent, orgId: string, comptaId: string, isArchived: boolean) => {
+        e.stopPropagation();
+        try {
+            await toggleArchiveComptabilite(orgId, comptaId, !isArchived);
+            window.location.reload();
+        } catch (err) {
+            console.error(err);
+            alert("Erreur lors de l'archivage/désarchivage.");
         }
     };
 
@@ -175,7 +203,10 @@ export const OrgSelector: React.FC = () => {
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {organizations.map(org => {
-                            const comptas = comptasByOrg[org.id] || [];
+                            const allComptas = comptasByOrg[org.id] || [];
+                            const activeComptas = allComptas.filter(c => !c.compta.isArchived);
+                            const archivedComptas = allComptas.filter(c => c.compta.isArchived);
+                            const comptasToShow = showArchived[org.id] ? allComptas : activeComptas;
                             
                             return (
                                 <div key={org.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg shadow-black/20">
@@ -192,30 +223,75 @@ export const OrgSelector: React.FC = () => {
                                     
                                     <div className="p-4 bg-slate-950">
                                         <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 px-2">Comptabilités accessibles</h3>
-                                        {comptas.length === 0 ? (
+                                        {allComptas.length === 0 ? (
                                             <p className="text-sm text-slate-600 italic px-2 pb-2">Aucune comptabilité trouvée.</p>
                                         ) : (
                                             <div className="space-y-2">
-                                                {comptas.map((item, idx) => (
-                                                    <button
-                                                        key={`${item.compta.id}-${idx}`}
-                                                        onClick={() => handleSelectCompta(org, item)}
-                                                        className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-blue-900/20 hover:border-blue-800/50 border border-transparent transition-all group"
-                                                    >
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="bg-slate-800 p-2 rounded-lg group-hover:bg-blue-900/50 transition-colors">
-                                                                <Book size={16} className="text-slate-400 group-hover:text-blue-400" />
-                                                            </div>
-                                                            <div className="text-left">
-                                                                <div className="font-medium text-slate-200 group-hover:text-blue-300 transition-colors">{item.compta.name}</div>
-                                                                <div className="text-xs text-slate-500">
-                                                                    Rôle: <span className="text-slate-400">{item.role}</span>
+                                                {comptasToShow.map((item, idx) => (
+                                                    <div key={`${item.compta.id}-${idx}`} className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => handleSelectCompta(org, item)}
+                                                            className={`flex-1 flex items-center justify-between p-3 rounded-lg border transition-all group ${
+                                                                item.compta.isArchived 
+                                                                    ? 'bg-slate-900/50 border-slate-800 hover:border-slate-700' 
+                                                                    : 'hover:bg-blue-900/20 hover:border-blue-800/50 border-transparent'
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center gap-3">
+                                                                <div className={`p-2 rounded-lg transition-colors ${
+                                                                    item.compta.isArchived 
+                                                                        ? 'bg-slate-800/50 text-slate-500' 
+                                                                        : 'bg-slate-800 group-hover:bg-blue-900/50 text-slate-400 group-hover:text-blue-400'
+                                                                }`}>
+                                                                    <Book size={16} />
+                                                                </div>
+                                                                <div className="text-left">
+                                                                    <div className={`font-medium transition-colors ${
+                                                                        item.compta.isArchived ? 'text-slate-500 line-through' : 'text-slate-200 group-hover:text-blue-300'
+                                                                    }`}>
+                                                                        {item.compta.name}
+                                                                        {item.compta.isArchived && <span className="ml-2 text-[10px] uppercase tracking-wider bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">Archivé</span>}
+                                                                    </div>
+                                                                    <div className="text-xs text-slate-500">
+                                                                        Rôle: <span className="text-slate-400">{item.role}</span>
+                                                                    </div>
                                                                 </div>
                                                             </div>
-                                                        </div>
-                                                        <ArrowRight size={16} className="text-slate-600 group-hover:text-blue-400 transform group-hover:translate-x-1 transition-all" />
-                                                    </button>
+                                                            <ArrowRight size={16} className={`transform transition-all ${
+                                                                item.compta.isArchived ? 'text-slate-600' : 'text-slate-600 group-hover:text-blue-400 group-hover:translate-x-1'
+                                                            }`} />
+                                                        </button>
+                                                        
+                                                        {isSuperAdmin && (
+                                                            <div className="flex flex-col gap-1">
+                                                                <button
+                                                                    onClick={(e) => handleToggleArchive(e, org.id, item.compta.id, !!item.compta.isArchived)}
+                                                                    className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-800 rounded transition-colors"
+                                                                    title={item.compta.isArchived ? "Désarchiver" : "Archiver"}
+                                                                >
+                                                                    {item.compta.isArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+                                                                </button>
+                                                                <button
+                                                                    onClick={(e) => handleDelete(e, org.id, item.compta.id)}
+                                                                    className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
+                                                                    title="Supprimer définitivement"
+                                                                >
+                                                                    <Trash2 size={16} />
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 ))}
+                                                {archivedComptas.length > 0 && (
+                                                    <div className="mt-2 text-center">
+                                                        <button 
+                                                            onClick={() => setShowArchived(prev => ({...prev, [org.id]: !prev[org.id]}))}
+                                                            className="text-xs text-slate-500 hover:text-slate-400 underline transition-colors pt-2"
+                                                        >
+                                                            {showArchived[org.id] ? "Masquer les archives" : `Voir les archives (${archivedComptas.length})`}
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                         
