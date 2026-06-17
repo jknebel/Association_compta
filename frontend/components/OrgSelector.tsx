@@ -89,11 +89,14 @@ export const OrgSelector: React.FC = () => {
 
         setIsCreatingCompta(orgId);
         try {
-            await createComptabilite(orgId, { name });
-            // add user as admin
-            const { doc, setDoc, getDb } = await import('../services/organizationService');
-            // We need a helper for members, or we just rely on SuperAdmin to assign it later...
-            // Wait, we can just do a hacky reload for now
+            await createComptabilite(orgId, { 
+                name,
+                description: '',
+                createdBy: user.uid,
+                fiscalYearStart: '',
+                fiscalYearEnd: '',
+                currency: 'CHF'
+            }, user.uid);
             window.location.reload();
         } catch (e) {
             console.error(e);

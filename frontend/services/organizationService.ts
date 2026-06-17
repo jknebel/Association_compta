@@ -56,7 +56,7 @@ export const updateOrganization = async (orgId: string, data: Partial<Organizati
     await updateDoc(doc(db, 'organizations', orgId), data);
 }
 
-export const createComptabilite = async (orgId: string, data: Omit<Comptabilite, 'id' | 'createdAt'>): Promise<string> => {
+export const createComptabilite = async (orgId: string, data: Omit<Comptabilite, 'id' | 'createdAt'>, creatorUid: string): Promise<string> => {
     const db = getDb();
     const comptaRef = doc(collection(db, 'organizations', orgId, 'comptabilites'));
     
@@ -67,6 +67,15 @@ export const createComptabilite = async (orgId: string, data: Omit<Comptabilite,
     };
 
     await setDoc(comptaRef, newCompta);
+
+    // Add the creator as COMPTABLE
+    const memberRef = doc(db, 'organizations', orgId, 'comptabilites', comptaRef.id, 'members', creatorUid);
+    await setDoc(memberRef, {
+        role: ComptaRole.COMPTABLE,
+        uid: creatorUid,
+        joinedAt: Date.now()
+    });
+
     return comptaRef.id;
 }
 

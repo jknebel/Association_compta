@@ -29,10 +29,10 @@ export const migrateLegacyDataToOrg = async (uid: string, orgId: string, comptaN
     
     await setDoc(comptaRef, newCompta);
     
-    // 2. Add user as ADMIN of this comptabilité
+    // 2. Add user as COMPTABLE of this comptabilité
     const memberRef = doc(db, 'organizations', orgId, 'comptabilites', comptaId, 'members', uid);
     await setDoc(memberRef, {
-        role: ComptaRole.ADMIN,
+        role: ComptaRole.COMPTABLE,
         uid: uid,
         joinedAt: Date.now()
     });
