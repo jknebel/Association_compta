@@ -4,7 +4,11 @@ import { Organization } from '../types/rbac';
 import { ShieldCheck, Building2, Trash2, Plus, Loader2, ArrowLeft } from 'lucide-react';
 import { useAuthContext } from '../contexts/AppContext';
 
-export const SuperAdminView: React.FC = () => {
+interface SuperAdminViewProps {
+    onBack?: () => void;
+}
+
+export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
     const { user, isSuperAdmin } = useAuthContext();
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [loading, setLoading] = useState(true);
@@ -82,7 +86,14 @@ export const SuperAdminView: React.FC = () => {
                     <p className="text-slate-400 mt-1">Gérez toutes les organisations de la plateforme.</p>
                 </div>
                 <button 
-                    onClick={() => { window.location.href = '/'; window.location.reload(); }}
+                    onClick={() => { 
+                        if (onBack) {
+                            onBack();
+                        } else {
+                            window.location.hash = ''; 
+                            window.location.replace(window.location.pathname); 
+                        }
+                    }}
                     className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors border border-slate-700 shrink-0"
                 >
                     <ArrowLeft size={16} />

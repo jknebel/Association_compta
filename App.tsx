@@ -32,6 +32,13 @@ function App() {
     const [isUploading, setIsUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState<{ fileName: string, mode: 'PDF' | 'EXCEL' } | null>(null);
     const [uploadError, setUploadError] = useState<string | null>(null);
+    const [currentHash, setCurrentHash] = useState(window.location.hash);
+
+    useEffect(() => {
+        const handleHashChange = () => setCurrentHash(window.location.hash);
+        window.addEventListener('hashchange', handleHashChange);
+        return () => window.removeEventListener('hashchange', handleHashChange);
+    }, []);
 
     // 1. Check Authentication Status from Context
     const { user, loading: authLoading, isSuperAdmin } = useAuthContext();
@@ -494,8 +501,15 @@ function App() {
             return <JoinOrgPage orgId={joinOrgId} inviteCode={inviteCode} onSuccess={() => window.location.href = '/'} />;
         }
 
-        if (isSuperAdmin && window.location.hash === '#superadmin') {
-            return <SuperAdminView />;
+        if (isSuperAdmin && currentHash === '#superadmin') {
+            return (
+                <SuperAdminView 
+                    onBack={() => {
+                        window.location.hash = '';
+                        setCurrentHash('');
+                    }} 
+                />
+            );
         }
 
         if (!selectedOrg) {

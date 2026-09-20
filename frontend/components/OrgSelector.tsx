@@ -192,7 +192,7 @@ export const OrgSelector: React.FC = () => {
                         </p>
                         {isSuperAdmin && (
                             <button 
-                                onClick={() => { window.location.href = '/#superadmin'; window.location.reload(); }}
+                                onClick={() => { window.location.hash = '#superadmin'; }}
                                 className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg transition-colors font-medium inline-flex items-center gap-2"
                             >
                                 <Plus size={18} />
@@ -328,7 +328,7 @@ export const OrgSelector: React.FC = () => {
                 {isSuperAdmin && organizations.length > 0 && (
                     <div className="mt-8 text-center">
                         <button 
-                            onClick={() => { window.location.href = '/#superadmin'; window.location.reload(); }}
+                            onClick={() => { window.location.hash = '#superadmin'; }}
                             className="text-sm text-purple-400 hover:text-purple-300 hover:underline transition-colors font-medium"
                         >
                             Accéder au panneau Super Admin
