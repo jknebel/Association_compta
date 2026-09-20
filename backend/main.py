@@ -21,6 +21,11 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 # LangChain / LangGraph
+try:
+    from langchain_google_vertexai import ChatVertexAI
+except ImportError:
+    ChatVertexAI = None
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END
@@ -176,19 +181,38 @@ class PipelineResult(BaseModel):
     layout: Optional[Dict] = None
 
 # --- LLM HELPERS ---
-def get_llm():
+def create_llm(model_name: str, temperature: float = 0):
+    """
+    Creates an LLM instance using Vertex AI (default if configured) or Google AI Studio (fallback).
+    Vertex AI uses Google Cloud ADC / Service Account and respects VERTEX_LOCATION (e.g. 'eu').
+    """
+    use_vertex = os.getenv("USE_VERTEX_AI", "true").lower() in ("true", "1", "yes")
+    project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("PROJECT_ID")
+    location = os.getenv("VERTEX_LOCATION", "eu")
+
+    if use_vertex and ChatVertexAI is not None:
+        try:
+            return ChatVertexAI(
+                model_name=model_name,
+                project=project_id,
+                location=location,
+                temperature=temperature,
+            )
+        except Exception as e:
+            print(f"⚠️ ChatVertexAI initialization failed ({e}). Attempting fallback to ChatGoogleGenerativeAI...")
+
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        print("⚠️ GOOGLE_API_KEY missing. LLM calls will fail.")
-    model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-pro")
-    return ChatGoogleGenerativeAI(model=model_name, temperature=0)
+        print("⚠️ Warning: Neither Vertex AI credentials nor GOOGLE_API_KEY could be resolved cleanly.")
+    return ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
+
+def get_llm():
+    model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-3.5-flash")
+    return create_llm(model_name=model_name, temperature=0)
 
 def get_pro_llm():
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        print("⚠️ GOOGLE_API_KEY missing. LLM calls will fail.")
-    model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro")
-    return ChatGoogleGenerativeAI(model=model_name, temperature=0)
+    model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3-pro-preview")
+    return create_llm(model_name=model_name, temperature=0)
 
 # --- UTILITY FUNCTIONS ---
 
@@ -1275,8 +1299,8 @@ async def chat_agent(request: ChatRequest):
         messages.append(HumanMessage(content=request.newMessage))
         
         # Use Pro model if available, or Flash
-        model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash")
-        llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.7)
+        model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3-pro-preview")
+        llm = create_llm(model_name=model_name, temperature=0.7)
         response = llm.invoke(messages)
         
         return ChatResponse(response=response.content)
