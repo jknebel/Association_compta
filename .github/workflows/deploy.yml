@@ -112,10 +112,13 @@ jobs:
           env_vars: |
             GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
             GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+            GOOGLE_CLOUD_PROJECT=${{ secrets.GCP_PROJECT_ID }}
             VERTEX_LOCATION=global
+            GOOGLE_CLOUD_LOCATION=global
             GEMINI_FLASH_MODEL=gemini-3.5-flash
             GEMINI_PRO_MODEL=gemini-3.1-pro-preview
             USE_VERTEX_AI=true
+            GOOGLE_GENAI_USE_VERTEXAI=true
 
       # ALWAYS GET URL (Even if we didn't deploy, we need the URL for frontend)
       - id: 'get-url'
