@@ -207,7 +207,7 @@ def create_llm(model_name: str, temperature: float = 0):
     return ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
 
 def get_llm():
-    model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash")
+    model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-3.5-flash")
     return create_llm(model_name=model_name, temperature=0)
 
 def get_pro_llm():
