@@ -95,6 +95,7 @@ class TransactionList(BaseModel):
     transactions: List[Transaction]
 
 class ClassifiedTransaction(Transaction):
+    accountId: Optional[str] = Field(None, description="L'identifiant exact (champ 'ID' du PLAN COMPTABLE, ex: 'acc_123') du compte associé à la transaction. Laisser null si aucun compte ne convient.")
     accountChoiceReasoning: str = Field(description="Raisonnement détaillé pour le choix du compte de cette transaction précise (pourquoi ce compte et pas un autre ?)")
 
 class ClassifiedTransactionList(BaseModel):
@@ -181,14 +182,17 @@ class PipelineResult(BaseModel):
 # --- LLM HELPERS ---
 def create_llm(model_name: str, temperature: float = 0):
     """
-    Creates an LLM instance using Vertex AI (default if configured) or Google AI Studio (fallback).
+    Creates an LLM instance using Vertex AI (default if configured and GCP project present) or Google AI Studio (fallback).
     Vertex AI uses Google Cloud ADC / Service Account and respects VERTEX_LOCATION (e.g. 'global').
     """
-    use_vertex = os.getenv("USE_VERTEX_AI", "true").lower() in ("true", "1", "yes")
     project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("PROJECT_ID")
     location = os.getenv("VERTEX_LOCATION", "global")
+    use_vertex_env = os.getenv("USE_VERTEX_AI")
+    
+    # Only use Vertex AI if explicitly requested AND a project is configured
+    use_vertex = (use_vertex_env.lower() in ("true", "1", "yes")) if use_vertex_env is not None else bool(project_id)
 
-    if use_vertex:
+    if use_vertex and project_id:
         return ChatGoogleGenerativeAI(
             model=model_name,
             temperature=temperature,
@@ -200,14 +204,20 @@ def create_llm(model_name: str, temperature: float = 0):
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         print("⚠️ Warning: Neither Vertex AI credentials nor GOOGLE_API_KEY could be resolved cleanly.")
-    return ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
+    return ChatGoogleGenerativeAI(
+        model=model_name,
+        temperature=temperature,
+        google_api_key=api_key,
+    )
 
 def get_llm():
-    model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-3.5-flash")
+    model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash")
     return create_llm(model_name=model_name, temperature=0)
 
 def get_pro_llm():
-    model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3-pro-preview")
+    model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
+    if model_name == "gemini-3-pro-preview":
+        model_name = "gemini-3.1-pro-preview"
     return create_llm(model_name=model_name, temperature=0)
 
 # --- UTILITY FUNCTIONS ---
@@ -436,7 +446,7 @@ async def classification_consensus_node(state: AgentState):
 
     # Build shared context once
     accounts_info = "\n".join([
-        f"ID: {a.id} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'} | Contexte IA: {a.iaContext or 'N/A'}" 
+        f"ID: {a.id} | Nom: {a.label} | Type: {a.type} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'} | Contexte IA: {a.iaContext or 'N/A'}" 
         for a in state.existing_accounts
     ])
     history_context = get_user_history_context(state.user_id)
@@ -463,17 +473,24 @@ async def classification_consensus_node(state: AgentState):
                     "description_simplifiee": t.simplifiedDescription
                 })
 
+            polarity_rules = """RÈGLES STRICTES DE POLARITÉ / SIGNE :
+1. Montant positif (> 0) : choisir UNIQUEMENT un compte de Type PRODUIT ou MIXTE.
+2. Montant négatif (< 0) : choisir UNIQUEMENT un compte de Type CHARGE ou MIXTE.
+3. Renseigne TOUJOURS le champ 'accountId' avec l'identifiant exact ('ID') du compte dans le PLAN COMPTABLE (ex: 'acc_123'). Ne mets JAMAIS le nom ou le code du compte."""
+
             # Agent A (History) & Agent B (Members) in parallel
-            prompt_a = f"""Tu es le Comptable A (Expert Historique). Classe chaque transaction.
+            prompt_a = f"""Tu es le Comptable A (Expert Historique). Classe chaque transaction dans le bon compte.
 Utilise 'description_complete' et 'description_simplifiee' pour vérifier tes choix.
+{polarity_rules}
 {f"CONTEXTE GLOBAL : {global_ctx}" if global_ctx else ""}
 HISTORIQUE: {history_context}
 PLAN COMPTABLE:
 {accounts_info}
 TRANSACTIONS: {json.dumps(batch_data, ensure_ascii=False)}"""
 
-            prompt_b = f"""Tu es le Comptable B (Expert Membres). Classe chaque transaction.
+            prompt_b = f"""Tu es le Comptable B (Expert Membres). Classe chaque transaction dans le bon compte.
 Utilise 'description_simplifiee' pour identifier les noms de personnes.
+{polarity_rules}
 {f"CONTEXTE GLOBAL : {global_ctx}" if global_ctx else ""}
 PLAN COMPTABLE:
 {accounts_info}
@@ -490,9 +507,10 @@ TRANSACTIONS: {json.dumps(batch_data, ensure_ascii=False)}"""
                 prompt_j = f"""Tu es le Juge. Consolide les résultats des Comptables A et B.
 PLAN COMPTABLE:
 {accounts_info}
+{polarity_rules}
 PROPOSITION A: {json.dumps([t.model_dump() for t in res_a.transactions], ensure_ascii=False)}
 PROPOSITION B: {json.dumps([t.model_dump() for t in res_b.transactions], ensure_ascii=False)}
-RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Priorité à A sinon. Explique ton choix pour chaque transaction."""
+RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Priorité à A sinon. Conserve impérativement le champ 'accountId' exact pour chaque transaction."""
 
                 res_j = await struct_list.ainvoke(prompt_j)
                 results = res_j.transactions
@@ -509,8 +527,36 @@ RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Prio
                 print(f"  [BATCH {batch_idx}] OK: {len(results)} classified")
                 return results
             except Exception as e:
-                print(f"  [BATCH {batch_idx}] ERROR: {e}")
-                return [ClassifiedTransaction(**t.model_dump(), accountChoiceReasoning=f"Erreur consensus: {str(e)}") for t in batch]
+                print(f"  [BATCH {batch_idx}] WARNING: Pro LLM failed ({e}), attempting fallback with Flash LLM...")
+                try:
+                    flash_llm = get_llm()
+                    flash_struct = flash_llm.with_structured_output(ClassifiedTransactionList)
+                    task_a = flash_struct.ainvoke(prompt_a)
+                    task_b = flash_struct.ainvoke(prompt_b)
+                    res_a, res_b = await asyncio.gather(task_a, task_b)
+                    
+                    prompt_j_fallback = f"""Tu es le Juge. Consolide les résultats des Comptables A et B.
+PLAN COMPTABLE:
+{accounts_info}
+{polarity_rules}
+PROPOSITION A: {json.dumps([t.model_dump() for t in res_a.transactions], ensure_ascii=False)}
+PROPOSITION B: {json.dumps([t.model_dump() for t in res_b.transactions], ensure_ascii=False)}
+RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Priorité à A sinon. Conserve impérativement le champ 'accountId' exact."""
+
+                    res_j = await flash_struct.ainvoke(prompt_j_fallback)
+                    results = res_j.transactions
+                    batch_map = {t.id: t for t in batch}
+                    for r in results:
+                        orig = batch_map.get(r.id)
+                        if orig:
+                            r.simplifiedDescription = orig.simplifiedDescription
+                            r.fullRawText = orig.fullRawText
+                            r.description = orig.description
+                    print(f"  [BATCH {batch_idx}] Fallback Flash OK: {len(results)} classified")
+                    return results
+                except Exception as e2:
+                    print(f"  [BATCH {batch_idx}] ERROR consensus fallback: {e2}")
+                    return [ClassifiedTransaction(**t.model_dump(), accountChoiceReasoning=f"Erreur consensus: {str(e)} / {str(e2)}") for t in batch]
 
     tasks = [process_consensus_batch(b, i) for i, b in enumerate(batches)]
     batch_results = await asyncio.gather(*tasks)
@@ -1295,7 +1341,9 @@ async def chat_agent(request: ChatRequest):
         messages.append(HumanMessage(content=request.newMessage))
         
         # Use Pro model if available, or Flash
-        model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3-pro-preview")
+        model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
+        if model_name == "gemini-3-pro-preview":
+            model_name = "gemini-3.1-pro-preview"
         llm = create_llm(model_name=model_name, temperature=0.7)
         response = llm.invoke(messages)
         
@@ -1341,6 +1389,7 @@ async def suggest_category(request: SuggestCategoryRequest):
                 "id": a.id, 
                 "label": a.label,
                 "path": full_path,
+                "type": a.type,
                 "description": desc,
                 "isMembership": getattr(a, 'isMembership', False)
             }
@@ -1355,6 +1404,9 @@ async def suggest_category(request: SuggestCategoryRequest):
         
         ATTENTION : Les deux champs LES PLUS IMPORTANTS pour ta décision sont 'amount' (signe et valeur) et 'fullRawText' (texte original complet).
         La 'Description' courte n'est qu'un résumé qui peut être trompeur.
+        RÈGLES DE SIGNE :
+        - Montant positif (> 0) : choisir UNIQUEMENT un compte de Type PRODUIT ou MIXTE.
+        - Montant négatif (< 0) : choisir UNIQUEMENT un compte de Type CHARGE ou MIXTE.
         
         Task 1: Select the best matching Account ID from the list below.
         CRITICAL INSTRUCTIONS FOR MATCHING:
@@ -1364,7 +1416,7 @@ async def suggest_category(request: SuggestCategoryRequest):
         
         Task 2: Extract 'memberName' if available in 'fullRawText' or 'description'.
         
-        Accounts: {json.dumps([{"id": a.id, "label": a.label, "code": a.code, "description": a.description, "iaContext": a.iaContext} for a in request.accounts])}
+        Accounts: {json.dumps([{"id": a.id, "label": a.label, "code": a.code, "type": a.type, "description": a.description, "iaContext": a.iaContext} for a in request.accounts])}
         
         Return a strict JSON object: {{ "accountId": "ID_OR_NULL", "memberName": "EXTRACTED_NAME_OR_NULL" }}
         """
