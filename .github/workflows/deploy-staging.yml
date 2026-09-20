@@ -29,6 +29,7 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              - '.github/workflows/**'
             frontend:
               - 'frontend/**'
               - 'src/**'
@@ -83,6 +84,11 @@ jobs:
           flags: '--allow-unauthenticated --timeout=600 --memory=1Gi'
           env_vars: |
             GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+            GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+            VERTEX_LOCATION=eu
+            GEMINI_FLASH_MODEL=gemini-3.5-flash
+            GEMINI_PRO_MODEL=gemini-3-pro-preview
+            USE_VERTEX_AI=true
 
       - id: 'get-url'
         name: 'Get Service URL'
