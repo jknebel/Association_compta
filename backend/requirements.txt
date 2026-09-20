@@ -4,7 +4,6 @@ python-multipart
 pydantic
 firebase-admin
 langchain-google-genai
-langchain-google-vertexai
 langchain-core
 langgraph
 python-dotenv

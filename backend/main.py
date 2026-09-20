@@ -6,7 +6,10 @@ import asyncio
 import math
 import hashlib
 import re
-import fitz # PyMuPDF
+try:
+    import pymupdf as fitz
+except ImportError:
+    import fitz  # Fallback for older PyMuPDF versions
 import operator
 from typing import List, Optional, Dict, Any, Annotated
 from datetime import datetime
@@ -21,11 +24,6 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 # LangChain / LangGraph
-try:
-    from langchain_google_vertexai import ChatVertexAI
-except ImportError:
-    ChatVertexAI = None
-
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END
@@ -184,22 +182,20 @@ class PipelineResult(BaseModel):
 def create_llm(model_name: str, temperature: float = 0):
     """
     Creates an LLM instance using Vertex AI (default if configured) or Google AI Studio (fallback).
-    Vertex AI uses Google Cloud ADC / Service Account and respects VERTEX_LOCATION (e.g. 'eu').
+    Vertex AI uses Google Cloud ADC / Service Account and respects VERTEX_LOCATION (e.g. 'global').
     """
     use_vertex = os.getenv("USE_VERTEX_AI", "true").lower() in ("true", "1", "yes")
     project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("PROJECT_ID")
-    location = os.getenv("VERTEX_LOCATION", "eu")
+    location = os.getenv("VERTEX_LOCATION", "global")
 
-    if use_vertex and ChatVertexAI is not None:
-        try:
-            return ChatVertexAI(
-                model_name=model_name,
-                project=project_id,
-                location=location,
-                temperature=temperature,
-            )
-        except Exception as e:
-            print(f"⚠️ ChatVertexAI initialization failed ({e}). Attempting fallback to ChatGoogleGenerativeAI...")
+    if use_vertex:
+        return ChatGoogleGenerativeAI(
+            model=model_name,
+            temperature=temperature,
+            vertexai=True,
+            project=project_id,
+            location=location,
+        )
 
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:

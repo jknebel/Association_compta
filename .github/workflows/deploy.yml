@@ -108,7 +108,7 @@ jobs:
           env_vars: |
             GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
             GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
-            VERTEX_LOCATION=eu
+            VERTEX_LOCATION=global
             GEMINI_FLASH_MODEL=gemini-3.5-flash
             GEMINI_PRO_MODEL=gemini-3-pro-preview
             USE_VERTEX_AI=true
