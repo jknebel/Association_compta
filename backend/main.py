@@ -6,7 +6,10 @@ import asyncio
 import math
 import hashlib
 import re
-import fitz # PyMuPDF
+try:
+    import pymupdf as fitz
+except ImportError:
+    import fitz  # Fallback for older PyMuPDF versions
 import operator
 from typing import List, Optional, Dict, Any, Annotated
 from datetime import datetime
@@ -21,11 +24,6 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 # LangChain / LangGraph
-try:
-    from langchain_google_vertexai import ChatVertexAI
-except ImportError:
-    ChatVertexAI = None
-
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END
@@ -97,6 +95,7 @@ class TransactionList(BaseModel):
     transactions: List[Transaction]
 
 class ClassifiedTransaction(Transaction):
+    accountId: Optional[str] = Field(None, description="L'identifiant exact (champ 'ID' du PLAN COMPTABLE, ex: 'acc_123') du compte associé à la transaction. Laisser null si aucun compte ne convient.")
     accountChoiceReasoning: str = Field(description="Raisonnement détaillé pour le choix du compte de cette transaction précise (pourquoi ce compte et pas un autre ?)")
 
 class ClassifiedTransactionList(BaseModel):
@@ -183,35 +182,42 @@ class PipelineResult(BaseModel):
 # --- LLM HELPERS ---
 def create_llm(model_name: str, temperature: float = 0):
     """
-    Creates an LLM instance using Vertex AI (default if configured) or Google AI Studio (fallback).
-    Vertex AI uses Google Cloud ADC / Service Account and respects VERTEX_LOCATION (e.g. 'eu').
+    Creates an LLM instance using Vertex AI (default if configured and GCP project present) or Google AI Studio (fallback).
+    Vertex AI uses Google Cloud ADC / Service Account and respects VERTEX_LOCATION (e.g. 'global').
     """
-    use_vertex = os.getenv("USE_VERTEX_AI", "true").lower() in ("true", "1", "yes")
     project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("PROJECT_ID")
-    location = os.getenv("VERTEX_LOCATION", "eu")
+    location = os.getenv("VERTEX_LOCATION", "global")
+    use_vertex_env = os.getenv("USE_VERTEX_AI")
+    
+    # Only use Vertex AI if explicitly requested AND a project is configured
+    use_vertex = (use_vertex_env.lower() in ("true", "1", "yes")) if use_vertex_env is not None else bool(project_id)
 
-    if use_vertex and ChatVertexAI is not None:
-        try:
-            return ChatVertexAI(
-                model_name=model_name,
-                project=project_id,
-                location=location,
-                temperature=temperature,
-            )
-        except Exception as e:
-            print(f"⚠️ ChatVertexAI initialization failed ({e}). Attempting fallback to ChatGoogleGenerativeAI...")
+    if use_vertex and project_id:
+        return ChatGoogleGenerativeAI(
+            model=model_name,
+            temperature=temperature,
+            vertexai=True,
+            project=project_id,
+            location=location,
+        )
 
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         print("⚠️ Warning: Neither Vertex AI credentials nor GOOGLE_API_KEY could be resolved cleanly.")
-    return ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
+    return ChatGoogleGenerativeAI(
+        model=model_name,
+        temperature=temperature,
+        google_api_key=api_key,
+    )
 
 def get_llm():
-    model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-3.5-flash")
+    model_name = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash")
     return create_llm(model_name=model_name, temperature=0)
 
 def get_pro_llm():
-    model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3-pro-preview")
+    model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
+    if model_name == "gemini-3-pro-preview":
+        model_name = "gemini-3.1-pro-preview"
     return create_llm(model_name=model_name, temperature=0)
 
 # --- UTILITY FUNCTIONS ---
@@ -440,7 +446,7 @@ async def classification_consensus_node(state: AgentState):
 
     # Build shared context once
     accounts_info = "\n".join([
-        f"ID: {a.id} | Nom: {a.label} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'} | Contexte IA: {a.iaContext or 'N/A'}" 
+        f"ID: {a.id} | Nom: {a.label} | Type: {a.type} | Description: {a.description or 'N/A'} | Suivi: {'OUI' if a.isMembership else 'NON'} | Contexte IA: {a.iaContext or 'N/A'}" 
         for a in state.existing_accounts
     ])
     history_context = get_user_history_context(state.user_id)
@@ -467,17 +473,24 @@ async def classification_consensus_node(state: AgentState):
                     "description_simplifiee": t.simplifiedDescription
                 })
 
+            polarity_rules = """RÈGLES STRICTES DE POLARITÉ / SIGNE :
+1. Montant positif (> 0) : choisir UNIQUEMENT un compte de Type PRODUIT ou MIXTE.
+2. Montant négatif (< 0) : choisir UNIQUEMENT un compte de Type CHARGE ou MIXTE.
+3. Renseigne TOUJOURS le champ 'accountId' avec l'identifiant exact ('ID') du compte dans le PLAN COMPTABLE (ex: 'acc_123'). Ne mets JAMAIS le nom ou le code du compte."""
+
             # Agent A (History) & Agent B (Members) in parallel
-            prompt_a = f"""Tu es le Comptable A (Expert Historique). Classe chaque transaction.
+            prompt_a = f"""Tu es le Comptable A (Expert Historique). Classe chaque transaction dans le bon compte.
 Utilise 'description_complete' et 'description_simplifiee' pour vérifier tes choix.
+{polarity_rules}
 {f"CONTEXTE GLOBAL : {global_ctx}" if global_ctx else ""}
 HISTORIQUE: {history_context}
 PLAN COMPTABLE:
 {accounts_info}
 TRANSACTIONS: {json.dumps(batch_data, ensure_ascii=False)}"""
 
-            prompt_b = f"""Tu es le Comptable B (Expert Membres). Classe chaque transaction.
+            prompt_b = f"""Tu es le Comptable B (Expert Membres). Classe chaque transaction dans le bon compte.
 Utilise 'description_simplifiee' pour identifier les noms de personnes.
+{polarity_rules}
 {f"CONTEXTE GLOBAL : {global_ctx}" if global_ctx else ""}
 PLAN COMPTABLE:
 {accounts_info}
@@ -494,9 +507,10 @@ TRANSACTIONS: {json.dumps(batch_data, ensure_ascii=False)}"""
                 prompt_j = f"""Tu es le Juge. Consolide les résultats des Comptables A et B.
 PLAN COMPTABLE:
 {accounts_info}
+{polarity_rules}
 PROPOSITION A: {json.dumps([t.model_dump() for t in res_a.transactions], ensure_ascii=False)}
 PROPOSITION B: {json.dumps([t.model_dump() for t in res_b.transactions], ensure_ascii=False)}
-RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Priorité à A sinon. Explique ton choix pour chaque transaction."""
+RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Priorité à A sinon. Conserve impérativement le champ 'accountId' exact pour chaque transaction."""
 
                 res_j = await struct_list.ainvoke(prompt_j)
                 results = res_j.transactions
@@ -513,8 +527,36 @@ RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Prio
                 print(f"  [BATCH {batch_idx}] OK: {len(results)} classified")
                 return results
             except Exception as e:
-                print(f"  [BATCH {batch_idx}] ERROR: {e}")
-                return [ClassifiedTransaction(**t.model_dump(), accountChoiceReasoning=f"Erreur consensus: {str(e)}") for t in batch]
+                print(f"  [BATCH {batch_idx}] WARNING: Pro LLM failed ({e}), attempting fallback with Flash LLM...")
+                try:
+                    flash_llm = get_llm()
+                    flash_struct = flash_llm.with_structured_output(ClassifiedTransactionList)
+                    task_a = flash_struct.ainvoke(prompt_a)
+                    task_b = flash_struct.ainvoke(prompt_b)
+                    res_a, res_b = await asyncio.gather(task_a, task_b)
+                    
+                    prompt_j_fallback = f"""Tu es le Juge. Consolide les résultats des Comptables A et B.
+PLAN COMPTABLE:
+{accounts_info}
+{polarity_rules}
+PROPOSITION A: {json.dumps([t.model_dump() for t in res_a.transactions], ensure_ascii=False)}
+PROPOSITION B: {json.dumps([t.model_dump() for t in res_b.transactions], ensure_ascii=False)}
+RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Priorité à A sinon. Conserve impérativement le champ 'accountId' exact."""
+
+                    res_j = await flash_struct.ainvoke(prompt_j_fallback)
+                    results = res_j.transactions
+                    batch_map = {t.id: t for t in batch}
+                    for r in results:
+                        orig = batch_map.get(r.id)
+                        if orig:
+                            r.simplifiedDescription = orig.simplifiedDescription
+                            r.fullRawText = orig.fullRawText
+                            r.description = orig.description
+                    print(f"  [BATCH {batch_idx}] Fallback Flash OK: {len(results)} classified")
+                    return results
+                except Exception as e2:
+                    print(f"  [BATCH {batch_idx}] ERROR consensus fallback: {e2}")
+                    return [ClassifiedTransaction(**t.model_dump(), accountChoiceReasoning=f"Erreur consensus: {str(e)} / {str(e2)}") for t in batch]
 
     tasks = [process_consensus_batch(b, i) for i, b in enumerate(batches)]
     batch_results = await asyncio.gather(*tasks)
@@ -698,13 +740,14 @@ def robust_parsing_node(state: AgentState):
         if not val: return 0.0
         text = " ".join(val) if isinstance(val, list) else str(val)
         # On ne supprime l'espace/apostrophe QUE s'il est entre deux chiffres (ex: 1 500 -> 1500)
-        clean_val = re.sub(r"(\d)[ ' ](\d)", r"\1\2", text)
+        clean_val = re.sub(r"(\d)[ '’ ](\d)", r"\1\2", text)
         clean_val = clean_val.replace(",", ".")
         numbers = re.findall(r"-?\d+\.\d+|-?\d+", clean_val)
         if not numbers: return 0.0
         for n in reversed(numbers):
-            if "." in n: return int(float(n) * 100) / 100.0
-        return float(numbers[-1])
+            if "." in n:
+                return round(float(n), 2)
+        return round(float(numbers[-1]), 2)
 
     try:
         pdf_bytes = base64.b64decode(state.pdf_base64)
@@ -877,7 +920,14 @@ def robust_parsing_node(state: AgentState):
                 words_in_tx = group_horizontal_words(words_in_tx, boundaries)
                 words_in_tx.sort(key=lambda w: (w[1], w[0]))
                 
-                tx_data = {"date": [], "desc": [], "debit": [], "credit": [], "solde": [], "is_orphan": r["is_orphan"]}
+                tx_data = {
+                    "date": [], "desc": [], "debit": [], "credit": [], "solde": [],
+                    "is_orphan": r["is_orphan"],
+                    "page_idx": p_idx,
+                    "y_start": r["y_start"],
+                    "y_end": r["y_end"],
+                    "words_in_tx": words_in_tx
+                }
                 
                 for w in words_in_tx:
                     x0, y0, x1, y1, txt = w[:5]
@@ -917,6 +967,8 @@ def robust_parsing_node(state: AgentState):
         # 4. Nettoyage et conversion vers Transaction
         final_txns = []
         date_clean_pattern = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}")
+        verification_5cts_count = 0
+        rectified_5cts_count = 0
         
         for t in all_raw_txns:
             # Handle orphan merging
@@ -940,6 +992,56 @@ def robust_parsing_node(state: AgentState):
             s_val = parse_amount(t["solde"])
             
             amount = c_val if c_val != 0 else -d_val
+
+            # --- OUTIL DE VÉRIFICATION 2ÈME PASSE AVEC LES VRAIS NOMBRES DU PDF ORIGINAL ---
+            # Activé pour toute transaction dont le montant n'est pas un multiple de 5 centimes
+            abs_amt = round(abs(amount), 2)
+            if amount != 0 and round(abs_amt * 100) % 5 != 0:
+                verification_5cts_count += 1
+                p_idx = t.get("page_idx", 0)
+                page = doc[p_idx]
+                y_start = t.get("y_start", 0)
+                y_end = t.get("y_end", 0)
+                tx_rect = fitz.Rect(0, max(0, y_start - 3), page.rect.width, min(page.rect.height, y_end + 3))
+                
+                # Extraction directe des mots et textes réels imprimés dans la zone PDF
+                raw_words = page.get_text("words", clip=tx_rect)
+                raw_text_clip = page.get_text("text", clip=tx_rect)
+                
+                sources_text = [
+                    " ".join(t.get("debit", []) + t.get("credit", [])),
+                    " ".join([w[4] for w in raw_words]),
+                    raw_text_clip,
+                    t.get("raw_line", "")
+                ]
+                
+                # Extraire tous les vrais nombres décimaux à 2 chiffres présents dans le document PDF
+                real_numbers_pdf = []
+                for src in sources_text:
+                    if not src: continue
+                    clean_src = re.sub(r"(\d)[ '’ ](\d)", r"\1\2", src).replace(",", ".")
+                    for m in re.finditer(r"\b(\d+\.\d{2})\b", clean_src):
+                        real_numbers_pdf.append((round(float(m.group(1)), 2), m.group(1)))
+                
+                sign = 1 if amount > 0 else -1
+                corrected = False
+                
+                # 1. Si un vrai nombre dans le PDF est un multiple de 5 centimes à ±0.01 ou ±0.02 (ex: 170.70 au lieu de 170.69)
+                for num_val, raw_str in real_numbers_pdf:
+                    if round(num_val * 100) % 5 == 0 and abs(num_val - abs_amt) <= 0.02:
+                        corrected_amount = sign * num_val
+                        print(f"  [VÉRIFICATION PDF 5 CTS] Rectifié avec le VRAI nombre du PDF : {amount} -> {corrected_amount} CHF (lu: '{raw_str}')")
+                        amount = corrected_amount
+                        rectified_5cts_count += 1
+                        corrected = True
+                        break
+                        
+                # 2. Si le montant non multiple de 5 centimes est bien présent tel quel dans le PDF, on confirme qu'il est exact
+                if not corrected:
+                    exact_match = any(num_val == abs_amt for num_val, _ in real_numbers_pdf)
+                    if exact_match:
+                        print(f"  [VÉRIFICATION PDF 5 CTS] Confirmé avec le VRAI nombre du PDF : {amount} CHF est bien le montant imprimé.")
+
             description = " ".join(t["desc"]).replace("\n", " ").strip()
             
             # Case-insensitive removal of artifacts from main description
@@ -969,13 +1071,17 @@ def robust_parsing_node(state: AgentState):
         
         is_ok = abs(calc_delta - expected_delta) < 0.05
         
+        parsing_logs = [
+            f"Robust Parsing : {len(final_txns)} transactions extraites.",
+            f"Audit mathématique : {'OK' if is_ok else 'ÉCHEC'} (Delta calculé: {calc_delta} vs Attendu: {expected_delta})"
+        ]
+        if verification_5cts_count > 0:
+            parsing_logs.append(f"Vérification 5 centimes : {verification_5cts_count} transaction(s) non-multiples contrôlée(s) sur le PDF original ({rectified_5cts_count} rectifiée(s)).")
+        
         return {
             "extracted_transactions": final_txns,
             "success_parsing": True,
-            "logs": [
-                f"Robust Parsing : {len(final_txns)} transactions extraites.",
-                f"Audit mathématique : {'OK' if is_ok else 'ÉCHEC'} (Delta calculé: {calc_delta} vs Attendu: {expected_delta})"
-            ]
+            "logs": parsing_logs
         }
 
     except Exception as e:
@@ -1299,7 +1405,9 @@ async def chat_agent(request: ChatRequest):
         messages.append(HumanMessage(content=request.newMessage))
         
         # Use Pro model if available, or Flash
-        model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3-pro-preview")
+        model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
+        if model_name == "gemini-3-pro-preview":
+            model_name = "gemini-3.1-pro-preview"
         llm = create_llm(model_name=model_name, temperature=0.7)
         response = llm.invoke(messages)
         
@@ -1345,6 +1453,7 @@ async def suggest_category(request: SuggestCategoryRequest):
                 "id": a.id, 
                 "label": a.label,
                 "path": full_path,
+                "type": a.type,
                 "description": desc,
                 "isMembership": getattr(a, 'isMembership', False)
             }
@@ -1359,6 +1468,9 @@ async def suggest_category(request: SuggestCategoryRequest):
         
         ATTENTION : Les deux champs LES PLUS IMPORTANTS pour ta décision sont 'amount' (signe et valeur) et 'fullRawText' (texte original complet).
         La 'Description' courte n'est qu'un résumé qui peut être trompeur.
+        RÈGLES DE SIGNE :
+        - Montant positif (> 0) : choisir UNIQUEMENT un compte de Type PRODUIT ou MIXTE.
+        - Montant négatif (< 0) : choisir UNIQUEMENT un compte de Type CHARGE ou MIXTE.
         
         Task 1: Select the best matching Account ID from the list below.
         CRITICAL INSTRUCTIONS FOR MATCHING:
@@ -1368,7 +1480,7 @@ async def suggest_category(request: SuggestCategoryRequest):
         
         Task 2: Extract 'memberName' if available in 'fullRawText' or 'description'.
         
-        Accounts: {json.dumps([{"id": a.id, "label": a.label, "code": a.code, "description": a.description, "iaContext": a.iaContext} for a in request.accounts])}
+        Accounts: {json.dumps([{"id": a.id, "label": a.label, "code": a.code, "type": a.type, "description": a.description, "iaContext": a.iaContext} for a in request.accounts])}
         
         Return a strict JSON object: {{ "accountId": "ID_OR_NULL", "memberName": "EXTRACTED_NAME_OR_NULL" }}
         """
