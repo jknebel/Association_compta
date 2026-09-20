@@ -740,13 +740,14 @@ def robust_parsing_node(state: AgentState):
         if not val: return 0.0
         text = " ".join(val) if isinstance(val, list) else str(val)
         # On ne supprime l'espace/apostrophe QUE s'il est entre deux chiffres (ex: 1 500 -> 1500)
-        clean_val = re.sub(r"(\d)[ ' ](\d)", r"\1\2", text)
+        clean_val = re.sub(r"(\d)[ '’ ](\d)", r"\1\2", text)
         clean_val = clean_val.replace(",", ".")
         numbers = re.findall(r"-?\d+\.\d+|-?\d+", clean_val)
         if not numbers: return 0.0
         for n in reversed(numbers):
-            if "." in n: return int(float(n) * 100) / 100.0
-        return float(numbers[-1])
+            if "." in n:
+                return round(float(n), 2)
+        return round(float(numbers[-1]), 2)
 
     try:
         pdf_bytes = base64.b64decode(state.pdf_base64)
@@ -919,7 +920,14 @@ def robust_parsing_node(state: AgentState):
                 words_in_tx = group_horizontal_words(words_in_tx, boundaries)
                 words_in_tx.sort(key=lambda w: (w[1], w[0]))
                 
-                tx_data = {"date": [], "desc": [], "debit": [], "credit": [], "solde": [], "is_orphan": r["is_orphan"]}
+                tx_data = {
+                    "date": [], "desc": [], "debit": [], "credit": [], "solde": [],
+                    "is_orphan": r["is_orphan"],
+                    "page_idx": p_idx,
+                    "y_start": r["y_start"],
+                    "y_end": r["y_end"],
+                    "words_in_tx": words_in_tx
+                }
                 
                 for w in words_in_tx:
                     x0, y0, x1, y1, txt = w[:5]
@@ -959,6 +967,8 @@ def robust_parsing_node(state: AgentState):
         # 4. Nettoyage et conversion vers Transaction
         final_txns = []
         date_clean_pattern = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}")
+        verification_5cts_count = 0
+        rectified_5cts_count = 0
         
         for t in all_raw_txns:
             # Handle orphan merging
@@ -982,6 +992,56 @@ def robust_parsing_node(state: AgentState):
             s_val = parse_amount(t["solde"])
             
             amount = c_val if c_val != 0 else -d_val
+
+            # --- OUTIL DE VÉRIFICATION 2ÈME PASSE AVEC LES VRAIS NOMBRES DU PDF ORIGINAL ---
+            # Activé pour toute transaction dont le montant n'est pas un multiple de 5 centimes
+            abs_amt = round(abs(amount), 2)
+            if amount != 0 and round(abs_amt * 100) % 5 != 0:
+                verification_5cts_count += 1
+                p_idx = t.get("page_idx", 0)
+                page = doc[p_idx]
+                y_start = t.get("y_start", 0)
+                y_end = t.get("y_end", 0)
+                tx_rect = fitz.Rect(0, max(0, y_start - 3), page.rect.width, min(page.rect.height, y_end + 3))
+                
+                # Extraction directe des mots et textes réels imprimés dans la zone PDF
+                raw_words = page.get_text("words", clip=tx_rect)
+                raw_text_clip = page.get_text("text", clip=tx_rect)
+                
+                sources_text = [
+                    " ".join(t.get("debit", []) + t.get("credit", [])),
+                    " ".join([w[4] for w in raw_words]),
+                    raw_text_clip,
+                    t.get("raw_line", "")
+                ]
+                
+                # Extraire tous les vrais nombres décimaux à 2 chiffres présents dans le document PDF
+                real_numbers_pdf = []
+                for src in sources_text:
+                    if not src: continue
+                    clean_src = re.sub(r"(\d)[ '’ ](\d)", r"\1\2", src).replace(",", ".")
+                    for m in re.finditer(r"\b(\d+\.\d{2})\b", clean_src):
+                        real_numbers_pdf.append((round(float(m.group(1)), 2), m.group(1)))
+                
+                sign = 1 if amount > 0 else -1
+                corrected = False
+                
+                # 1. Si un vrai nombre dans le PDF est un multiple de 5 centimes à ±0.01 ou ±0.02 (ex: 170.70 au lieu de 170.69)
+                for num_val, raw_str in real_numbers_pdf:
+                    if round(num_val * 100) % 5 == 0 and abs(num_val - abs_amt) <= 0.02:
+                        corrected_amount = sign * num_val
+                        print(f"  [VÉRIFICATION PDF 5 CTS] Rectifié avec le VRAI nombre du PDF : {amount} -> {corrected_amount} CHF (lu: '{raw_str}')")
+                        amount = corrected_amount
+                        rectified_5cts_count += 1
+                        corrected = True
+                        break
+                        
+                # 2. Si le montant non multiple de 5 centimes est bien présent tel quel dans le PDF, on confirme qu'il est exact
+                if not corrected:
+                    exact_match = any(num_val == abs_amt for num_val, _ in real_numbers_pdf)
+                    if exact_match:
+                        print(f"  [VÉRIFICATION PDF 5 CTS] Confirmé avec le VRAI nombre du PDF : {amount} CHF est bien le montant imprimé.")
+
             description = " ".join(t["desc"]).replace("\n", " ").strip()
             
             # Case-insensitive removal of artifacts from main description
@@ -1011,13 +1071,17 @@ def robust_parsing_node(state: AgentState):
         
         is_ok = abs(calc_delta - expected_delta) < 0.05
         
+        parsing_logs = [
+            f"Robust Parsing : {len(final_txns)} transactions extraites.",
+            f"Audit mathématique : {'OK' if is_ok else 'ÉCHEC'} (Delta calculé: {calc_delta} vs Attendu: {expected_delta})"
+        ]
+        if verification_5cts_count > 0:
+            parsing_logs.append(f"Vérification 5 centimes : {verification_5cts_count} transaction(s) non-multiples contrôlée(s) sur le PDF original ({rectified_5cts_count} rectifiée(s)).")
+        
         return {
             "extracted_transactions": final_txns,
             "success_parsing": True,
-            "logs": [
-                f"Robust Parsing : {len(final_txns)} transactions extraites.",
-                f"Audit mathématique : {'OK' if is_ok else 'ÉCHEC'} (Delta calculé: {calc_delta} vs Attendu: {expected_delta})"
-            ]
+            "logs": parsing_logs
         }
 
     except Exception as e:
