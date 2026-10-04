@@ -8,6 +8,7 @@ import { logout } from '../services/authService';
 import { checkLegacyData, LegacyDataSummary, connectCurrentCompta, markLegacyMigrationDone } from '../services/migrationService';
 import { createComptabilite, deleteComptabilite, toggleArchiveComptabilite } from '../services/organizationService';
 import { UnauthorizedView } from './UnauthorizedView';
+import { CreateOrgModal } from './CreateOrgModal';
 
 export const OrgSelector: React.FC = () => {
     const { user, isSuperAdmin } = useAuthContext();
@@ -22,6 +23,7 @@ export const OrgSelector: React.FC = () => {
     const [isConnectingLegacy, setIsConnectingLegacy] = useState(false);
     const [isCreatingCompta, setIsCreatingCompta] = useState<string | null>(null); // orgId
     const [showArchived, setShowArchived] = useState<Record<string, boolean>>({});
+    const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
 
     const fetchData = async () => {
         if (!user) return;
@@ -237,6 +239,8 @@ export const OrgSelector: React.FC = () => {
         );
     }
 
+    const canCreateOrg = isSuperAdmin || organizations.some(org => isOrgAdminOf(org)) || organizations.length === 0;
+
     return (
         <div className="min-h-screen bg-slate-950 flex flex-col items-center p-8">
             <div className="w-full max-w-4xl">
@@ -247,13 +251,24 @@ export const OrgSelector: React.FC = () => {
                         </h1>
                         <p className="text-slate-400">Sélectionnez un espace de travail pour continuer</p>
                     </div>
-                    <button 
-                        onClick={async () => { await logout(); window.location.href = '/'; }}
-                        className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg transition-colors border border-slate-800"
-                    >
-                        <LogOut size={16} />
-                        Déconnexion
-                    </button>
+                    <div className="flex items-center gap-3">
+                        {canCreateOrg && (
+                            <button 
+                                onClick={() => setShowCreateOrgModal(true)}
+                                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg transition-all font-medium text-sm shadow-md shadow-blue-900/20 cursor-pointer"
+                            >
+                                <Plus size={16} />
+                                Nouvelle Organisation
+                            </button>
+                        )}
+                        <button 
+                            onClick={async () => { await logout(); window.location.href = '/'; }}
+                            className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg transition-colors border border-slate-800"
+                        >
+                            <LogOut size={16} />
+                            Déconnexion
+                        </button>
+                    </div>
                 </div>
 
                 {/* Legacy Data Detection & 1-Click Connect Banner */}
@@ -330,15 +345,13 @@ export const OrgSelector: React.FC = () => {
                                     Connecter ma compta actuelle
                                 </button>
                             )}
-                            {isSuperAdmin && (
-                                <button 
-                                    onClick={() => { window.location.hash = '#superadmin'; }}
-                                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-6 py-2.5 rounded-lg transition-colors font-medium inline-flex items-center gap-2"
-                                >
-                                    <Plus size={18} />
-                                    Créer une organisation vide
-                                </button>
-                            )}
+                            <button 
+                                onClick={() => setShowCreateOrgModal(true)}
+                                className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg transition-colors font-medium inline-flex items-center gap-2 shadow-lg shadow-blue-600/20 cursor-pointer"
+                            >
+                                <Plus size={18} />
+                                Créer une nouvelle organisation
+                            </button>
                         </div>
                     </div>
                 ) : (
@@ -529,6 +542,12 @@ export const OrgSelector: React.FC = () => {
                         </button>
                     </div>
                 )}
+
+                <CreateOrgModal 
+                    isOpen={showCreateOrgModal} 
+                    onClose={() => setShowCreateOrgModal(false)} 
+                    onSuccess={() => fetchData()} 
+                />
             </div>
         </div>
     );

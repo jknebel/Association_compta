@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldAlert, LogOut, RefreshCw, Mail, HelpCircle, CheckCircle2, Building2, Send, Clock, Key } from 'lucide-react';
+import { ShieldAlert, LogOut, RefreshCw, Mail, HelpCircle, CheckCircle2, Building2, Send, Clock, Key, Plus } from 'lucide-react';
 import { logout } from '../services/authService';
 import { useAuthContext } from '../contexts/AppContext';
 import { 
@@ -9,6 +9,7 @@ import {
   getOrganizationByInviteCode 
 } from '../services/organizationService';
 import { Organization } from '../types/rbac';
+import { CreateOrgModal } from './CreateOrgModal';
 
 interface UnauthorizedViewProps {
   email: string;
@@ -32,6 +33,7 @@ export const UnauthorizedView: React.FC<UnauthorizedViewProps> = ({
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showCreateOrgModal, setShowCreateOrgModal] = useState<boolean>(false);
 
   const fetchStatus = async () => {
     if (!email) return;
@@ -275,6 +277,20 @@ export const UnauthorizedView: React.FC<UnauthorizedViewProps> = ({
                   {submitting ? "Envoi de la demande..." : "Envoyer ma demande d'accès"}
                 </button>
               </form>
+
+              <div className="relative my-4">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-800" /></div>
+                <div className="relative flex justify-center text-xs uppercase"><span className="bg-slate-900 px-2 text-slate-500">ou</span></div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowCreateOrgModal(true)}
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg font-medium text-xs transition-colors cursor-pointer"
+              >
+                <Plus size={14} className="text-blue-400" />
+                Créer ma propre organisation (Association)
+              </button>
             </div>
           )}
 
@@ -293,6 +309,15 @@ export const UnauthorizedView: React.FC<UnauthorizedViewProps> = ({
       <div className="text-center text-xs text-slate-600">
         AssoCompta AI &bull; Système multi-association & gestion des unités
       </div>
+
+      <CreateOrgModal 
+        isOpen={showCreateOrgModal} 
+        onClose={() => setShowCreateOrgModal(false)} 
+        onSuccess={() => {
+          if (onRefresh) onRefresh();
+          else window.location.reload();
+        }} 
+      />
     </div>
   );
 };
