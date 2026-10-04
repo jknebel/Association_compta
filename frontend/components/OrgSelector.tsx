@@ -8,7 +8,6 @@ import { logout } from '../services/authService';
 import { checkLegacyData, LegacyDataSummary, connectCurrentCompta, markLegacyMigrationDone } from '../services/migrationService';
 import { createComptabilite, deleteComptabilite, toggleArchiveComptabilite } from '../services/organizationService';
 import { UnauthorizedView } from './UnauthorizedView';
-import { CreateOrgModal } from './CreateOrgModal';
 
 export const OrgSelector: React.FC = () => {
     const { user, isSuperAdmin } = useAuthContext();
@@ -23,7 +22,6 @@ export const OrgSelector: React.FC = () => {
     const [isConnectingLegacy, setIsConnectingLegacy] = useState(false);
     const [isCreatingCompta, setIsCreatingCompta] = useState<string | null>(null); // orgId
     const [showArchived, setShowArchived] = useState<Record<string, boolean>>({});
-    const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
 
     const fetchData = async () => {
         if (!user) return;
@@ -239,8 +237,6 @@ export const OrgSelector: React.FC = () => {
         );
     }
 
-    const canCreateOrg = isSuperAdmin || organizations.some(org => isOrgAdminOf(org)) || organizations.length === 0;
-
     return (
         <div className="min-h-screen bg-slate-950 flex flex-col items-center p-8">
             <div className="w-full max-w-4xl">
@@ -252,13 +248,13 @@ export const OrgSelector: React.FC = () => {
                         <p className="text-slate-400">Sélectionnez un espace de travail pour continuer</p>
                     </div>
                     <div className="flex items-center gap-3">
-                        {canCreateOrg && (
+                        {isSuperAdmin && (
                             <button 
-                                onClick={() => setShowCreateOrgModal(true)}
-                                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg transition-all font-medium text-sm shadow-md shadow-blue-900/20 cursor-pointer"
+                                onClick={() => { window.location.hash = '#superadmin'; }}
+                                className="flex items-center gap-2 px-3.5 py-2 bg-purple-950/60 hover:bg-purple-900/80 text-purple-200 border border-purple-800/60 rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-md shadow-purple-950/40"
                             >
-                                <Plus size={16} />
-                                Nouvelle Organisation
+                                <Shield size={14} className="text-purple-400" />
+                                Panneau Super Admin (Créer des associations)
                             </button>
                         )}
                         <button 
@@ -345,13 +341,15 @@ export const OrgSelector: React.FC = () => {
                                     Connecter ma compta actuelle
                                 </button>
                             )}
-                            <button 
-                                onClick={() => setShowCreateOrgModal(true)}
-                                className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg transition-colors font-medium inline-flex items-center gap-2 shadow-lg shadow-blue-600/20 cursor-pointer"
-                            >
-                                <Plus size={18} />
-                                Créer une nouvelle organisation
-                            </button>
+                            {isSuperAdmin && (
+                                <button 
+                                    onClick={() => { window.location.hash = '#superadmin'; }}
+                                    className="bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-700/60 px-6 py-2.5 rounded-lg transition-colors font-medium inline-flex items-center gap-2 shadow-lg shadow-purple-900/20 cursor-pointer"
+                                >
+                                    <Shield size={18} />
+                                    Créer une organisation (Panneau Super Admin)
+                                </button>
+                            )}
                         </div>
                     </div>
                 ) : (
@@ -542,12 +540,6 @@ export const OrgSelector: React.FC = () => {
                         </button>
                     </div>
                 )}
-
-                <CreateOrgModal 
-                    isOpen={showCreateOrgModal} 
-                    onClose={() => setShowCreateOrgModal(false)} 
-                    onSuccess={() => fetchData()} 
-                />
             </div>
         </div>
     );

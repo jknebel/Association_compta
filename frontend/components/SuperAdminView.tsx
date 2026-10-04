@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { listAllOrganizations, createOrganization, deleteOrganization, changeOrganizationAdmin } from '../services/organizationService';
+import { listAllRegisteredUsers } from '../services/userService';
 import { Organization } from '../types/rbac';
 import { ShieldCheck, Building2, Trash2, Plus, Loader2, ArrowLeft, Edit2, Check, X } from 'lucide-react';
 import { useAuthContext } from '../contexts/AppContext';
@@ -12,6 +13,7 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
     const { user, isSuperAdmin } = useAuthContext();
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [loading, setLoading] = useState(true);
+    const [registeredUsers, setRegisteredUsers] = useState<Array<{ uid: string; email: string; displayName: string }>>([]);
     
     const [newOrgName, setNewOrgName] = useState('');
     const [newOrgDesc, setNewOrgDesc] = useState('');
@@ -25,8 +27,12 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
     const fetchOrgs = async () => {
         setLoading(true);
         try {
-            const orgs = await listAllOrganizations();
+            const [orgs, users] = await Promise.all([
+                listAllOrganizations(),
+                listAllRegisteredUsers()
+            ]);
             setOrganizations(orgs);
+            setRegisteredUsers(users);
         } catch (e) {
             console.error(e);
         } finally {
@@ -145,7 +151,32 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs font-semibold text-slate-400 mb-1">Email de l'Administrateur Organisation</label>
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="block text-xs font-semibold text-slate-400">
+                                        Administrateur de l'Organisation
+                                    </label>
+                                    {registeredUsers.length > 0 && (
+                                        <span className="text-[10px] text-blue-400">
+                                            {registeredUsers.length} utilisateurs inscrits
+                                        </span>
+                                    )}
+                                </div>
+                                {registeredUsers.length > 0 && (
+                                    <select
+                                        value={registeredUsers.some(u => u.email === newOrgAdminEmail.trim().toLowerCase()) ? newOrgAdminEmail.trim().toLowerCase() : ''}
+                                        onChange={(e) => {
+                                            if (e.target.value) setNewOrgAdminEmail(e.target.value);
+                                        }}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white text-xs mb-2 focus:outline-none focus:border-blue-500"
+                                    >
+                                        <option value="">-- Choisir parmi les utilisateurs Firebase --</option>
+                                        {registeredUsers.map(u => (
+                                            <option key={u.uid} value={u.email}>
+                                                {u.displayName} ({u.email}) {u.email === user?.email?.toLowerCase() ? '(Vous)' : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                )}
                                 <input
                                     type="email"
                                     value={newOrgAdminEmail}
@@ -154,7 +185,7 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
                                     placeholder="admin@organisation.ch"
                                     required
                                 />
-                                <p className="text-[11px] text-slate-500 mt-1">L'utilisateur avec cet email sera l'administrateur principal de cette organisation.</p>
+                                <p className="text-[11px] text-slate-500 mt-1">L'utilisateur avec cet email sera l'administrateur exclusif de cette organisation.</p>
                             </div>
                             <div>
                                 <label className="block text-xs font-semibold text-slate-400 mb-1">Description</label>
@@ -209,13 +240,29 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
                                                     <span className="text-slate-500 font-mono text-[10px]">ID: {org.id}</span>
                                                     <span className="text-slate-600">•</span>
                                                     {editingOrgId === org.id ? (
-                                                        <div className="flex items-center gap-1.5 mt-1 sm:mt-0">
+                                                        <div className="flex flex-wrap items-center gap-1.5 mt-1 sm:mt-0">
+                                                            {registeredUsers.length > 0 && (
+                                                                <select
+                                                                    value={registeredUsers.some(u => u.email === editAdminEmail.trim().toLowerCase()) ? editAdminEmail.trim().toLowerCase() : ''}
+                                                                    onChange={(e) => {
+                                                                        if (e.target.value) setEditAdminEmail(e.target.value);
+                                                                    }}
+                                                                    className="bg-slate-950 border border-purple-500/60 rounded px-2 py-0.5 text-xs text-white focus:outline-none max-w-[200px]"
+                                                                >
+                                                                    <option value="">-- Choisir un utilisateur --</option>
+                                                                    {registeredUsers.map(u => (
+                                                                        <option key={u.uid} value={u.email}>
+                                                                            {u.displayName} ({u.email})
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            )}
                                                             <input
                                                                 type="email"
                                                                 value={editAdminEmail}
                                                                 onChange={(e) => setEditAdminEmail(e.target.value)}
                                                                 placeholder="nouvel.admin@organisation.ch"
-                                                                className="bg-slate-950 border border-purple-500/60 rounded px-2 py-0.5 text-xs text-white focus:outline-none w-56"
+                                                                className="bg-slate-950 border border-purple-500/60 rounded px-2 py-0.5 text-xs text-white focus:outline-none w-52"
                                                                 autoFocus
                                                             />
                                                             <button

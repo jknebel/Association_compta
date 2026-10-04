@@ -16,7 +16,6 @@ import {
 import { listAllRegisteredUsers } from '../services/userService';
 import { Comptabilite, Invitation, OrgRole, ComptaRole, OrganizationMember } from '../types/rbac';
 import { Settings, Users, Book, Link as LinkIcon, Plus, Trash2, Check, X, Loader2, UserPlus, Edit2, ShieldAlert, Eye, PenTool, CheckCircle, Search, UserCheck } from 'lucide-react';
-import { CreateOrgModal } from './CreateOrgModal';
 
 export const AdminView: React.FC = () => {
     const { user, isSuperAdmin } = useAuthContext();
@@ -29,7 +28,6 @@ export const AdminView: React.FC = () => {
     const [registeredUsers, setRegisteredUsers] = useState<Array<{ uid: string; email: string; displayName: string }>>([]);
     const [selectedFirebaseUserUid, setSelectedFirebaseUserUid] = useState<string>('');
     const [loading, setLoading] = useState(false);
-    const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
 
     // Form state pour nouvelle compta
     const [newComptaName, setNewComptaName] = useState('');
@@ -211,21 +209,12 @@ export const AdminView: React.FC = () => {
 
     return (
         <div className="p-8 max-w-5xl mx-auto">
-            <header className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
-                        <Settings className="text-blue-500" size={28} />
-                        Administration: {selectedOrg.name}
-                    </h2>
-                    <p className="text-slate-400 text-sm mt-1">Gérez les espaces comptables et les permissions de vos collaborateurs.</p>
-                </div>
-                <button
-                    onClick={() => setShowCreateOrgModal(true)}
-                    className="flex items-center gap-2 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold transition-all shrink-0 w-fit cursor-pointer shadow-sm"
-                >
-                    <Plus size={14} className="text-blue-400" />
-                    Nouvelle Organisation
-                </button>
+            <header className="mb-8">
+                <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+                    <Settings className="text-blue-500" size={28} />
+                    Administration: {selectedOrg.name}
+                </h2>
+                <p className="text-slate-400 text-sm mt-1">Gérez les espaces comptables et les permissions de vos collaborateurs.</p>
             </header>
 
             <div className="flex gap-4 border-b border-slate-800 mb-6">
@@ -696,15 +685,6 @@ export const AdminView: React.FC = () => {
                     )}
                 </div>
             )}
-
-            <CreateOrgModal 
-                isOpen={showCreateOrgModal} 
-                onClose={() => setShowCreateOrgModal(false)} 
-                onSuccess={() => {
-                    window.location.hash = '';
-                    window.location.reload();
-                }} 
-            />
         </div>
     );
 };
