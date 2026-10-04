@@ -15,6 +15,7 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
     
     const [newOrgName, setNewOrgName] = useState('');
     const [newOrgDesc, setNewOrgDesc] = useState('');
+    const [newOrgAdminEmail, setNewOrgAdminEmail] = useState('');
     const [isCreating, setIsCreating] = useState(false);
 
     const fetchOrgs = async () => {
@@ -41,9 +42,10 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
         
         setIsCreating(true);
         try {
-            await createOrganization(newOrgName, newOrgDesc, user.uid);
+            await createOrganization(newOrgName, newOrgDesc, user.uid, newOrgAdminEmail);
             setNewOrgName('');
             setNewOrgDesc('');
+            setNewOrgAdminEmail('');
             await fetchOrgs();
         } catch (error) {
             console.error("Failed to create org:", error);
@@ -122,6 +124,18 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
                                 />
                             </div>
                             <div>
+                                <label className="block text-xs font-semibold text-slate-400 mb-1">Email de l'Administrateur Organisation</label>
+                                <input
+                                    type="email"
+                                    value={newOrgAdminEmail}
+                                    onChange={(e) => setNewOrgAdminEmail(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:border-blue-500"
+                                    placeholder="admin@organisation.ch"
+                                    required
+                                />
+                                <p className="text-[11px] text-slate-500 mt-1">L'utilisateur avec cet email sera l'administrateur principal de cette organisation.</p>
+                            </div>
+                            <div>
                                 <label className="block text-xs font-semibold text-slate-400 mb-1">Description</label>
                                 <textarea
                                     value={newOrgDesc}
@@ -132,7 +146,7 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
                             </div>
                             <button
                                 type="submit"
-                                disabled={isCreating || !newOrgName.trim()}
+                                disabled={isCreating || !newOrgName.trim() || !newOrgAdminEmail.trim()}
                                 className="w-full bg-blue-600 hover:bg-blue-500 text-white rounded-lg py-2 text-sm font-semibold transition-colors flex justify-center items-center gap-2 disabled:opacity-50"
                             >
                                 {isCreating ? <Loader2 size={16} className="animate-spin" /> : "Créer l'organisation"}
@@ -170,8 +184,12 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
                                             <div>
                                                 <h4 className="font-semibold text-white">{org.name}</h4>
                                                 <p className="text-xs text-slate-400">{org.description}</p>
-                                                <div className="mt-1 text-[10px] text-slate-500 font-mono">
-                                                    ID: {org.id}
+                                                <div className="mt-1 flex items-center gap-2 text-xs">
+                                                    <span className="text-slate-500 font-mono text-[10px]">ID: {org.id}</span>
+                                                    <span className="text-slate-600">•</span>
+                                                    <span className="text-purple-400 font-medium">
+                                                        Admin: {org.adminEmail || "Non assigné"}
+                                                    </span>
                                                 </div>
                                             </div>
                                         </div>

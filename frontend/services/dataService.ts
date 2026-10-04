@@ -103,6 +103,8 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
         const basePath = getBasePath();
         if (!basePath) return; // Should not happen if user exists
 
+        setLoading(true);
+
         const unsubAccounts = onSnapshot(
             query(collection(db, `${basePath}/accounts`), orderBy("code")),
             (snapshot) => {
@@ -150,7 +152,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
             unsubReceipts();
             unsubAiConfig();
         };
-    }, [user, shouldUseLocalStorage]);
+    }, [user, shouldUseLocalStorage, orgId, comptaId]);
 
     // --- ACTIONS ---
 

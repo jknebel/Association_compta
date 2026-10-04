@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Layout } from './frontend/components/Layout';
 import { Dashboard } from './frontend/components/Dashboard';
 import { UploadView } from './frontend/components/UploadView';

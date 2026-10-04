@@ -18,11 +18,20 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
   const { isConfigured } = useDataService(user || null);
   const { isSuperAdmin } = useAuthContext();
   const { selectedOrg, orgRole, setSelectedOrg } = useOrgContext();
-  const { selectedCompta, setSelectedCompta } = useComptaContext();
+  const { selectedCompta, setSelectedCompta, comptaRole } = useComptaContext();
+
+  const isCaissier = comptaRole === 'caissier' || comptaRole === 'comptable' || comptaRole === 'admin' || orgRole === 'admin' || isSuperAdmin;
+  const isVerif = comptaRole === 'verificateur';
+
+  React.useEffect(() => {
+    if (!isCaissier && activeTab === 'upload') {
+      onTabChange('dashboard');
+    }
+  }, [isCaissier, activeTab, onTabChange]);
 
   const navItems = [
     { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
-    { id: 'upload', label: 'Import & Traitement', icon: Upload },
+    ...(isCaissier ? [{ id: 'upload', label: 'Import & Traitement', icon: Upload }] : []),
     { id: 'receipts', label: 'Pièces Comptables', icon: Receipt },
     { id: 'ledger', label: 'Journal / Transactions', icon: BookOpen },
     { id: 'members', label: 'Membres / Payeurs', icon: Users },
@@ -67,7 +76,28 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
                     <ArrowLeft size={16} />
                 </button>
               </div>
-              <p className="text-xs text-blue-400 truncate">{selectedCompta?.name || "Aucune compta"}</p>
+              <div className="flex items-center justify-between gap-1 mt-1">
+                <p className="text-xs text-blue-400 truncate font-medium">{selectedCompta?.name || "Aucune compta"}</p>
+                {comptaRole && (
+                  <span className={`text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border shrink-0 ${
+                    comptaRole === 'admin'
+                      ? 'bg-purple-900/30 text-purple-300 border-purple-800/50'
+                      : (comptaRole === 'caissier' || comptaRole === 'comptable')
+                        ? 'bg-emerald-900/30 text-emerald-300 border-emerald-800/50'
+                        : comptaRole === 'verificateur'
+                        ? 'bg-amber-900/30 text-amber-300 border-amber-800/50'
+                        : 'bg-blue-900/30 text-blue-300 border-blue-800/50'
+                  }`}>
+                    {comptaRole === 'admin' 
+                      ? 'Admin' 
+                      : (comptaRole === 'caissier' || comptaRole === 'comptable') 
+                        ? 'Caissier' 
+                        : comptaRole === 'verificateur'
+                        ? 'Vérificateur'
+                        : 'Lecteur'}
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>

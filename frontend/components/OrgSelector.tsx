@@ -3,10 +3,12 @@ import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/App
 import { Organization, Comptabilite } from '../types/rbac';
 import { listAllOrganizations, getUserOrganizations, listComptabilites } from '../services/organizationService';
 import { getUserComptabilites } from '../services/userService';
-import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore } from 'lucide-react';
+import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles } from 'lucide-react';
 import { logout } from '../services/authService';
-import { checkHasLegacyData, migrateLegacyDataToOrg } from '../services/migrationService';
+import { checkLegacyData, LegacyDataSummary, connectCurrentCompta } from '../services/migrationService';
 import { createComptabilite, deleteComptabilite, toggleArchiveComptabilite } from '../services/organizationService';
+import { UnauthorizedView } from './UnauthorizedView';
+
 export const OrgSelector: React.FC = () => {
     const { user, isSuperAdmin } = useAuthContext();
     const { setSelectedOrg, setOrgRole } = useOrgContext();
@@ -15,68 +17,81 @@ export const OrgSelector: React.FC = () => {
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [comptasByOrg, setComptasByOrg] = useState<Record<string, Array<{compta: Comptabilite, role: any}>>>({});
     const [loading, setLoading] = useState(true);
+    const [legacySummary, setLegacySummary] = useState<LegacyDataSummary | null>(null);
     const [hasLegacyData, setHasLegacyData] = useState(false);
-    const [isMigrating, setIsMigrating] = useState(false);
+    const [isConnectingLegacy, setIsConnectingLegacy] = useState(false);
     const [isCreatingCompta, setIsCreatingCompta] = useState<string | null>(null); // orgId
     const [showArchived, setShowArchived] = useState<Record<string, boolean>>({});
 
-    useEffect(() => {
-        const fetchData = async () => {
-            if (!user) return;
-            try {
-                // Check legacy data
-                const legacy = await checkHasLegacyData(user.uid);
-                setHasLegacyData(legacy);
+    const fetchData = async () => {
+        if (!user) return;
+        setLoading(true);
+        try {
+            // Check legacy data summary (Firestore and localStorage)
+            const summary = await checkLegacyData(user.uid);
+            setLegacySummary(summary);
+            setHasLegacyData(summary.hasData);
 
-                // Fetch Organizations
-                let orgs: Organization[] = [];
-                if (isSuperAdmin) {
-                    orgs = await listAllOrganizations();
-                } else {
-                    orgs = await getUserOrganizations(user.uid);
+            // Fetch Organizations
+            let orgs: Organization[] = [];
+            if (isSuperAdmin) {
+                orgs = await listAllOrganizations();
+            } else {
+                orgs = await getUserOrganizations(user.uid, user.email || undefined);
+            }
+            setOrganizations(orgs);
+
+            // Fetch Comptas
+            const userComptas = await getUserComptabilites(user.uid, user.email || undefined);
+            
+            const byOrg: Record<string, Array<{compta: Comptabilite, role: any}>> = {};
+            
+            if (isSuperAdmin) {
+                // SuperAdmin a accès à TOUTES les comptas
+                for (const org of orgs) {
+                    const allComptas = await listComptabilites(org.id);
+                    byOrg[org.id] = allComptas.map(c => ({ compta: c, role: 'admin' }));
                 }
-                setOrganizations(orgs);
-
-                // Fetch Comptas
-                const userComptas = await getUserComptabilites(user.uid);
+            } else {
+                // Normal user
+                userComptas.forEach(uc => {
+                    if (!byOrg[uc.orgId]) byOrg[uc.orgId] = [];
+                    byOrg[uc.orgId].push({ compta: uc.compta, role: uc.role });
+                });
                 
-                const byOrg: Record<string, Array<{compta: Comptabilite, role: any}>> = {};
-                
-                if (isSuperAdmin) {
-                    // SuperAdmin a accès à TOUTES les comptas
-                    for (const org of orgs) {
+                // Admin d'une organisation a accès à toutes les comptabilités de son organisation
+                for (const org of orgs) {
+                    const isOrgAdmin = org.createdBy === user.uid || (user.email && org.adminEmail && org.adminEmail.trim().toLowerCase() === user.email.trim().toLowerCase());
+                    if (isOrgAdmin) {
                         const allComptas = await listComptabilites(org.id);
                         byOrg[org.id] = allComptas.map(c => ({ compta: c, role: 'admin' }));
                     }
-                } else {
-                    // Normal user
-                    userComptas.forEach(uc => {
-                        if (!byOrg[uc.orgId]) byOrg[uc.orgId] = [];
-                        byOrg[uc.orgId].push({ compta: uc.compta, role: uc.role });
-                    });
-                    
-                    // Admin d'une org a accès à toutes les comptas de son org
-                    for (const org of orgs) {
-                        // Check if admin of this org (we fetch this from user profile or we trust that getUserOrganizations returns orgs they are member of)
-                        // Actually, if we want to be clean we should check `userProfile.organizations[org.id]?.role === 'admin'`
-                        // but let's just fetch all comptas for orgs where they are admin
-                        // To keep it simple, if they are admin, they can see all comptas in AdminView.
-                    }
                 }
-                
-                setComptasByOrg(byOrg);
-            } catch (err) {
-                console.error("Error fetching orgs/comptas:", err);
-            } finally {
-                setLoading(false);
             }
-        };
+            
+            setComptasByOrg(byOrg);
+        } catch (err) {
+            console.error("Error fetching orgs/comptas:", err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
         fetchData();
     }, [user, isSuperAdmin]);
 
+    const isOrgAdminOf = (org: Organization) => {
+        if (isSuperAdmin) return true;
+        if (user && org.createdBy === user.uid) return true;
+        if (user?.email && org.adminEmail && org.adminEmail.trim().toLowerCase() === user.email.trim().toLowerCase()) return true;
+        return false;
+    };
+
     const handleSelectCompta = (org: Organization, comptaData: {compta: Comptabilite, role: any}) => {
         setSelectedOrg(org);
-        setOrgRole('member' as any); // fallback
+        const isOrgAdmin = isOrgAdminOf(org);
+        setOrgRole(isOrgAdmin ? 'admin' : 'member');
         
         setSelectedCompta(comptaData.compta);
         if (comptaData.compta.isArchived) {
@@ -134,23 +149,54 @@ export const OrgSelector: React.FC = () => {
         }
     };
 
-    const handleMigrate = async (orgId: string) => {
+    const handleAutoConnectLegacy = async (targetOrgId?: string) => {
         if (!user) return;
-        if (!window.confirm("Voulez-vous copier toutes vos anciennes données dans cette organisation ?")) return;
-        
-        setIsMigrating(true);
+        setIsConnectingLegacy(true);
         try {
-            const name = prompt("Nom de la comptabilité pour vos données importées ?", "Comptabilité principale");
-            if (!name) {
-                setIsMigrating(false);
-                return;
+            let finalTargetOrgId = targetOrgId;
+            let targetOrg = organizations.find(o => o.id === finalTargetOrgId);
+
+            if (!finalTargetOrgId) {
+                if (organizations.length === 1) {
+                    const confirmUseSingle = window.confirm(`Voulez-vous connecter votre comptabilité actuelle dans votre association "${organizations[0].name}" ?\n\n(Cliquez sur Annuler pour créer une nouvelle association)`);
+                    if (confirmUseSingle) {
+                        finalTargetOrgId = organizations[0].id;
+                        targetOrg = organizations[0];
+                    }
+                } else if (organizations.length > 1) {
+                    const orgListNames = organizations.map((o, idx) => `${idx + 1}. ${o.name}`).join('\n');
+                    const choice = prompt(`Dans quelle association souhaitez-vous connecter votre comptabilité actuelle ?\n\n${orgListNames}\n\nEntrez le numéro correspondant (ou laissez vide pour créer une nouvelle association) :`);
+                    if (choice) {
+                        const idx = parseInt(choice.trim(), 10) - 1;
+                        if (organizations[idx]) {
+                            finalTargetOrgId = organizations[idx].id;
+                            targetOrg = organizations[idx];
+                        }
+                    }
+                }
             }
-            await migrateLegacyDataToOrg(user.uid, orgId, name);
-            window.location.reload();
-        } catch (e) {
-            console.error(e);
-            alert("Erreur lors de la migration.");
-            setIsMigrating(false);
+
+            let newOrgName = "Mon Association";
+            if (!finalTargetOrgId) {
+                const entered = prompt("Nom de votre association pour cette comptabilité :", "Mon Association");
+                if (!entered) {
+                    setIsConnectingLegacy(false);
+                    return;
+                }
+                newOrgName = entered;
+            }
+
+            const comptaName = prompt("Nom de la comptabilité/exercice pour vos données actuelles ?", "Comptabilité principale") || "Comptabilité principale";
+
+            const result = await connectCurrentCompta(user, finalTargetOrgId, newOrgName, comptaName);
+            
+            // Immediately open the workspace with newly migrated data
+            handleSelectCompta(result.org, { compta: result.compta, role: 'caissier' });
+        } catch (err: any) {
+            console.error("Erreur de connexion:", err);
+            alert("Erreur lors de la connexion de la comptabilité : " + (err.message || "Erreur inconnue"));
+        } finally {
+            setIsConnectingLegacy(false);
         }
     };
 
@@ -163,10 +209,25 @@ export const OrgSelector: React.FC = () => {
         );
     }
 
+    const hasAnyAccess = isSuperAdmin || 
+        organizations.some(org => isOrgAdminOf(org)) || 
+        Object.values(comptasByOrg).some(list => list.length > 0) ||
+        hasLegacyData;
+
+    if (!hasAnyAccess) {
+        return (
+            <UnauthorizedView 
+                email={user?.email || ''} 
+                onRefresh={fetchData} 
+                isRefreshing={loading} 
+            />
+        );
+    }
+
     return (
         <div className="min-h-screen bg-slate-950 flex flex-col items-center p-8">
             <div className="w-full max-w-4xl">
-                <div className="flex justify-between items-center mb-12">
+                <div className="flex justify-between items-center mb-8">
                     <div>
                         <h1 className="text-3xl font-bold text-white tracking-tight mb-2">
                             <span className="text-blue-500">Asso</span>Compta AI
@@ -182,27 +243,80 @@ export const OrgSelector: React.FC = () => {
                     </button>
                 </div>
 
+                {/* Legacy Data Detection & 1-Click Connect Banner */}
+                {legacySummary && legacySummary.hasData && (
+                    <div className="bg-gradient-to-r from-blue-950/70 via-indigo-950/70 to-slate-900 border border-blue-500/40 rounded-xl p-5 mb-8 shadow-xl shadow-blue-950/40">
+                        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                            <div className="flex items-start gap-3.5">
+                                <div className="p-3 bg-blue-600/20 text-blue-400 rounded-lg shrink-0 border border-blue-500/20">
+                                    <Database size={24} />
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="text-base font-semibold text-white">
+                                            Comptabilité actuelle détectée
+                                        </h3>
+                                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded border border-blue-400/30">
+                                            Prête à connecter
+                                        </span>
+                                    </div>
+                                    <p className="text-sm text-slate-300 mt-1">
+                                        <span className="font-semibold text-white">{legacySummary.accountsCount}</span> comptes, <span className="font-semibold text-white">{legacySummary.transactionsCount}</span> transactions
+                                        {legacySummary.receiptsCount > 0 ? <>, <span className="font-semibold text-white">{legacySummary.receiptsCount}</span> pièces comptables</> : ''}
+                                        {legacySummary.hasAiConfig ? ' et règles IA' : ''}.
+                                    </p>
+                                    <p className="text-xs text-slate-400 mt-1">
+                                        Connectez immédiatement votre comptabilité actuelle à une organisation pour l'utiliser avec les rôles (Caissier, Vérificateur, Lecteur) et le travail d'équipe.
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => handleAutoConnectLegacy()}
+                                disabled={isConnectingLegacy}
+                                className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg shadow-lg shadow-blue-600/30 transition-all shrink-0 w-full md:w-auto justify-center cursor-pointer"
+                            >
+                                {isConnectingLegacy ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                                Connecter ma compta actuelle
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {organizations.length === 0 ? (
                     <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center">
                         <Building2 size={48} className="mx-auto text-slate-600 mb-4" />
-                        <h2 className="text-xl font-semibold text-white mb-2">Aucune organisation</h2>
+                        <h2 className="text-xl font-semibold text-white mb-2">Aucune organisation configurée</h2>
                         <p className="text-slate-400 mb-6 max-w-md mx-auto">
-                            Vous n'êtes membre d'aucune organisation pour le moment. 
-                            Veuillez demander à un administrateur de vous inviter.
+                            {hasLegacyData 
+                                ? "Vous avez une comptabilité prête à être utilisée. Cliquez sur 'Connecter ma compta actuelle' pour créer votre organisation et y retrouver immédiatement toutes vos données."
+                                : "Vous n'êtes membre d'aucune organisation pour le moment. Veuillez demander à un administrateur de vous inviter."}
                         </p>
-                        {isSuperAdmin && (
-                            <button 
-                                onClick={() => { window.location.hash = '#superadmin'; }}
-                                className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg transition-colors font-medium inline-flex items-center gap-2"
-                            >
-                                <Plus size={18} />
-                                Créer une organisation
-                            </button>
-                        )}
+                        <div className="flex flex-wrap items-center justify-center gap-3">
+                            {hasLegacyData && (
+                                <button 
+                                    onClick={() => handleAutoConnectLegacy()}
+                                    disabled={isConnectingLegacy}
+                                    className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg transition-colors font-medium inline-flex items-center gap-2 shadow-lg shadow-blue-600/20"
+                                >
+                                    {isConnectingLegacy ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                                    Connecter ma compta actuelle
+                                </button>
+                            )}
+                            {isSuperAdmin && (
+                                <button 
+                                    onClick={() => { window.location.hash = '#superadmin'; }}
+                                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-6 py-2.5 rounded-lg transition-colors font-medium inline-flex items-center gap-2"
+                                >
+                                    <Plus size={18} />
+                                    Créer une organisation vide
+                                </button>
+                            )}
+                        </div>
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {organizations.map(org => {
+                            const isOrgAdmin = isOrgAdminOf(org);
                             const allComptas = comptasByOrg[org.id] || [];
                             const activeComptas = allComptas.filter(c => !c.compta.isArchived);
                             const archivedComptas = allComptas.filter(c => c.compta.isArchived);
@@ -216,7 +330,11 @@ export const OrgSelector: React.FC = () => {
                                                 <Building2 size={20} className="text-blue-500" />
                                                 {org.name}
                                             </h2>
-                                            {isSuperAdmin && <span className="px-2 py-1 bg-purple-900/30 text-purple-400 border border-purple-800/50 rounded text-xs font-bold uppercase tracking-wider">Admin</span>}
+                                            {isSuperAdmin ? (
+                                                <span className="px-2 py-1 bg-purple-900/30 text-purple-400 border border-purple-800/50 rounded text-xs font-bold uppercase tracking-wider">Super Admin</span>
+                                            ) : isOrgAdmin ? (
+                                                <span className="px-2 py-1 bg-blue-900/30 text-blue-400 border border-blue-800/50 rounded text-xs font-bold uppercase tracking-wider">Admin Org</span>
+                                            ) : null}
                                         </div>
                                         <p className="text-sm text-slate-400">{org.description || "Aucune description"}</p>
                                     </div>
@@ -252,8 +370,24 @@ export const OrgSelector: React.FC = () => {
                                                                         {item.compta.name}
                                                                         {item.compta.isArchived && <span className="ml-2 text-[10px] uppercase tracking-wider bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">Archivé</span>}
                                                                     </div>
-                                                                    <div className="text-xs text-slate-500">
-                                                                        Rôle: <span className="text-slate-400">{item.role}</span>
+                                                                    <div className="flex items-center gap-1.5 mt-1">
+                                                                        <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${
+                                                                            item.role === 'admin'
+                                                                                ? 'bg-purple-900/30 text-purple-300 border-purple-800/50'
+                                                                                : (item.role === 'caissier' || item.role === 'comptable')
+                                                                                    ? 'bg-emerald-900/30 text-emerald-300 border-emerald-800/50'
+                                                                                    : item.role === 'verificateur'
+                                                                                        ? 'bg-amber-900/30 text-amber-300 border-amber-800/50'
+                                                                                        : 'bg-blue-900/30 text-blue-300 border-blue-800/50'
+                                                                        }`}>
+                                                                            {item.role === 'admin' 
+                                                                                ? 'Admin' 
+                                                                                : (item.role === 'caissier' || item.role === 'comptable') 
+                                                                                    ? 'Caissier' 
+                                                                                    : item.role === 'verificateur'
+                                                                                        ? 'Vérificateur'
+                                                                                        : 'Lecteur'}
+                                                                        </span>
                                                                     </div>
                                                                 </div>
                                                             </div>
@@ -262,7 +396,7 @@ export const OrgSelector: React.FC = () => {
                                                             }`} />
                                                         </button>
                                                         
-                                                        {isSuperAdmin && (
+                                                        {(isSuperAdmin || isOrgAdmin) && (
                                                             <div className="flex flex-col gap-1">
                                                                 <button
                                                                     onClick={(e) => handleToggleArchive(e, org.id, item.compta.id, !!item.compta.isArchived)}
@@ -295,7 +429,7 @@ export const OrgSelector: React.FC = () => {
                                             </div>
                                         )}
                                         
-                                        {isSuperAdmin && (
+                                        {(isSuperAdmin || isOrgAdmin) && (
                                             <div className="mt-4 pt-4 border-t border-slate-800/50 flex flex-col gap-2 px-2">
                                                 <button 
                                                     onClick={() => handleCreateCompta(org.id)}
@@ -308,12 +442,12 @@ export const OrgSelector: React.FC = () => {
                                                 
                                                 {hasLegacyData && (
                                                     <button 
-                                                        onClick={() => handleMigrate(org.id)}
-                                                        disabled={isMigrating}
-                                                        className="flex items-center justify-center gap-2 w-full py-2 bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/50 rounded-lg text-sm font-medium transition-colors"
+                                                        onClick={() => handleAutoConnectLegacy(org.id)}
+                                                        disabled={isConnectingLegacy}
+                                                        className="flex items-center justify-center gap-2 w-full py-2 bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
                                                     >
-                                                        {isMigrating ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
-                                                        Migrer mes données perso ici
+                                                        {isConnectingLegacy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                                                        Connecter ma compta actuelle ici
                                                     </button>
                                                 )}
                                             </div>
@@ -325,7 +459,7 @@ export const OrgSelector: React.FC = () => {
                     </div>
                 )}
                 
-                {isSuperAdmin && organizations.length > 0 && (
+                {isSuperAdmin && (
                     <div className="mt-8 text-center">
                         <button 
                             onClick={() => { window.location.hash = '#superadmin'; }}

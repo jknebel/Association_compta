@@ -5,8 +5,11 @@ import { generateAccountingReport } from '../services/excelService';
 import { uploadReceipt } from '../services/storageService';
 import { auditLedger } from '../services/geminiService';
 import { AuditModal } from './AuditModal';
-import { Check, X, AlertTriangle, Search, Filter, Calendar, Coins, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck, Plus } from 'lucide-react';
+import { Check, X, AlertTriangle, Search, Filter, Calendar, Coins, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck, Plus, MessageSquare, CheckCircle, Send } from 'lucide-react';
 import { formatDate, dateToTimestamp } from '../services/formatUtils';
+import { useAuthContext, useComptaContext } from '../contexts/AppContext';
+import { TransactionCommentsModal } from './TransactionCommentsModal';
+import { TransactionComment } from '../types/rbac';
 
 interface LedgerViewProps {
   transactions: Transaction[];
@@ -39,6 +42,12 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   onAddReceipt,
   onCloseFiscalYear
 }) => {
+  const { user } = useAuthContext();
+  const { comptaRole } = useComptaContext();
+  const isViewer = comptaRole === 'viewer';
+  const isVerificateur = comptaRole === 'verificateur';
+  const isCaissier = !isViewer && !isVerificateur; // caissier / comptable / admin
+
   const [filter, setFilter] = useState('ALL');
   const [search, setSearch] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -51,6 +60,53 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Transaction>>({});
   const [isGuessing, setIsGuessing] = useState<string | null>(null); // AI loading state
+
+  // Verifier proposal state
+  const [verifierProposalTarget, setVerifierProposalTarget] = useState<{
+    transaction: Transaction;
+    newAccountId: string;
+    detectedMemberName?: string;
+  } | null>(null);
+  const [verifierNote, setVerifierNote] = useState('');
+
+  const handleConfirmVerifierProposal = () => {
+    if (!verifierProposalTarget) return;
+    const t = verifierProposalTarget.transaction;
+    onUpdateTransaction({
+      ...t,
+      accountId: verifierProposalTarget.newAccountId,
+      detectedMemberName: verifierProposalTarget.detectedMemberName,
+      status: TransactionStatus.PROPOSED,
+      verifierProposal: {
+        proposedAccountId: verifierProposalTarget.newAccountId,
+        note: verifierNote.trim() || undefined,
+        verifierUid: user?.uid || '',
+        verifierName: user?.displayName || user?.email?.split('@')[0] || 'Vérificateur',
+        verifierEmail: user?.email || '',
+        proposedAt: Date.now()
+      }
+    });
+    setVerifierProposalTarget(null);
+    setVerifierNote('');
+  };
+
+  const handleApproveProposal = (t: Transaction) => {
+    if (!t.accountId) return;
+    onUpdateTransaction({
+      ...t,
+      status: TransactionStatus.APPROVED
+    });
+  };
+
+  // Comment Modal State
+  const [activeCommentTxn, setActiveCommentTxn] = useState<Transaction | null>(null);
+
+  const handleSaveComments = (updatedComments: TransactionComment[]) => {
+    if (!activeCommentTxn) return;
+    const updatedTxn = { ...activeCommentTxn, comments: updatedComments };
+    onUpdateTransaction(updatedTxn);
+    setActiveCommentTxn(updatedTxn);
+  };
 
   // Audit State
   const [isAuditOpen, setIsAuditOpen] = useState(false);
@@ -308,6 +364,12 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           icon: <Check size={12} />,
           label: 'Approuvé'
         };
+      case TransactionStatus.PROPOSED:
+        return {
+          className: 'bg-amber-900/40 text-amber-300 border-amber-800/80',
+          icon: <Search size={12} />,
+          label: 'Proposé (Vérificateur)'
+        };
       case TransactionStatus.PENDING_REVIEW:
         return {
           className: 'bg-indigo-900/30 text-indigo-400 border-indigo-800',
@@ -355,14 +417,29 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           <h2 className="text-2xl font-bold text-slate-100">Journal des Transactions</h2>
           <p className="text-slate-400">Vérifiez, modifiez et classez vos transactions importées.</p>
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          <button
-            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
-            onClick={handleAddManualTransaction}
-          >
-            <Plus size={16} />
-            Ajout Manuel
-          </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {isViewer && (
+            <span className="px-3 py-2 bg-blue-900/30 text-blue-400 border border-blue-800/50 rounded-lg text-xs font-semibold flex items-center gap-1.5">
+              <Eye size={14} /> Mode Lecteur (Consultation seule)
+            </span>
+          )}
+
+          {isVerificateur && (
+            <span className="px-3 py-2 bg-amber-900/30 text-amber-400 border border-amber-800/50 rounded-lg text-xs font-semibold flex items-center gap-1.5">
+              <Search size={14} /> Mode Vérificateur (Proposition d'affectation & Notes)
+            </span>
+          )}
+
+          {isCaissier && (
+            <button
+              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+              onClick={handleAddManualTransaction}
+            >
+              <Plus size={16} />
+              Ajout Manuel
+            </button>
+          )}
+
           <button
             className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
             onClick={() => generateAccountingReport(filteredTransactions, accounts)}
@@ -370,67 +447,73 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             <FileSpreadsheet size={16} />
             Exporter Bilan & Journal (.xlsx)
           </button>
-          <button
-            className={`px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
-            onClick={onAutoMatch}
-            disabled={!!autoMatchProgress}
-          >
-            {autoMatchProgress ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                {autoMatchProgress.message}
-              </>
-            ) : (
-              <>
-                <RefreshCw size={16} />
-                Auto-Match
-              </>
-            )}
-          </button>
-          <button
-            className={`px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
-            onClick={onReanalyzeAll}
-            disabled={!!autoMatchProgress}
-            title="Relancer l'analyse IA sur toutes les transactions (écrase les catégories existantes)"
-          >
-            <RotateCcw size={16} />
-            Re-Scan Complet
-          </button>
 
-          <button
-            className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ml-2"
-            onClick={onArchiveAll}
-            disabled={!!autoMatchProgress}
-            title="Archiver toutes les transactions visibles"
-          >
-            <Archive size={16} />
-            Archiver Tout
-          </button>
+          {isCaissier && (
+            <>
+              <button
+                className={`px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
+                onClick={onAutoMatch}
+                disabled={!!autoMatchProgress}
+              >
+                {autoMatchProgress ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    {autoMatchProgress.message}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={16} />
+                    Auto-Match
+                  </>
+                )}
+              </button>
 
-          <button
-            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
-            onClick={() => {
-              const ids = filteredTransactions.map(t => t.id);
-              console.log(`[LedgerView] Tout Effacer cliqué. Nombre filtré: ${ids.length}`, ids);
-              onClearAll(ids);
-            }}
-            disabled={!!autoMatchProgress}
-            title={transactions.length === filteredTransactions.length ? "Supprimer TOUTES les transactions" : "Supprimer uniquement les transactions FILTRÉES"}
-          >
-            <Trash2 size={16} />
-            Tout Effacer
-          </button>
+              <button
+                className={`px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
+                onClick={onReanalyzeAll}
+                disabled={!!autoMatchProgress}
+                title="Relancer l'analyse IA sur toutes les transactions (écrase les catégories existantes)"
+              >
+                <RotateCcw size={16} />
+                Re-Scan Complet
+              </button>
 
-          <div className="w-px h-8 bg-slate-700 mx-2"></div>
+              <button
+                className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ml-2"
+                onClick={onArchiveAll}
+                disabled={!!autoMatchProgress}
+                title="Archiver toutes les transactions visibles"
+              >
+                <Archive size={16} />
+                Archiver Tout
+              </button>
 
-          <button
-            className={`px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-lg hover:from-amber-600 hover:to-orange-700 text-sm font-bold flex items-center gap-2 shadow-lg shadow-orange-900/20 transition-all ${!allApproved ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
-            onClick={allApproved ? handleRunAudit : undefined}
-            title={allApproved ? "Générer le rapport de clôture" : "Validez toutes les transactions pour auditer"}
-          >
-            <ShieldCheck size={18} />
-            Clôture & Audit
-          </button>
+              <button
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+                onClick={() => {
+                  const ids = filteredTransactions.map(t => t.id);
+                  console.log(`[LedgerView] Tout Effacer cliqué. Nombre filtré: ${ids.length}`, ids);
+                  onClearAll(ids);
+                }}
+                disabled={!!autoMatchProgress}
+                title={transactions.length === filteredTransactions.length ? "Supprimer TOUTES les transactions" : "Supprimer uniquement les transactions FILTRÉES"}
+              >
+                <Trash2 size={16} />
+                Tout Effacer
+              </button>
+
+              <div className="w-px h-8 bg-slate-700 mx-2"></div>
+
+              <button
+                className={`px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-lg hover:from-amber-600 hover:to-orange-700 text-sm font-bold flex items-center gap-2 shadow-lg shadow-orange-900/20 transition-all ${!allApproved ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
+                onClick={allApproved ? handleRunAudit : undefined}
+                title={allApproved ? "Générer le rapport de clôture" : "Validez toutes les transactions pour auditer"}
+              >
+                <ShieldCheck size={18} />
+                Clôture & Audit
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -457,6 +540,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             >
               <option value="ALL">Tous les statuts</option>
               <option value="UNCATEGORIZED">⚠️ Non Catégorisé</option>
+              <option value={TransactionStatus.PROPOSED}>🔍 Propositions Vérificateur</option>
               <option value={TransactionStatus.PENDING}>En Attente</option>
               <option value={TransactionStatus.REVIEW_NEEDED}>À Vérifier</option>
               <option value={TransactionStatus.PENDING_REVIEW}>En Attente de Revue</option>
@@ -551,18 +635,20 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                   <XCircle size={14} />
                   Réinitialiser Filtres
                 </button>
-                <button
-                  onClick={() => {
-                    const ids = filteredTransactions.map(t => t.id);
-                    if (confirm(`Voulez-vous vraiment supprimer uniquement les ${ids.length} transactions filtrées ?`)) {
-                        onClearAll(ids);
-                    }
-                  }}
-                  className="flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg border border-rose-800/50 transition-colors"
-                >
-                  <Trash2 size={14} />
-                  Effacer les {filteredTransactions.length} filtrées
-                </button>
+                {!isViewer && (
+                  <button
+                    onClick={() => {
+                      const ids = filteredTransactions.map(t => t.id);
+                      if (confirm(`Voulez-vous vraiment supprimer uniquement les ${ids.length} transactions filtrées ?`)) {
+                          onClearAll(ids);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-900/20 hover:bg-rose-900/40 rounded-lg border border-rose-800/50 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                    Effacer les {filteredTransactions.length} filtrées
+                  </button>
+                )}
               </div>
             )
           }
@@ -609,8 +695,10 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               });
               validAccounts.sort((a, b) => a.code.localeCompare(b.code));
 
+              const isProposed = t.status === TransactionStatus.PROPOSED;
+
               return (
-                <tr key={t.id} className={`transition-colors ${isEditing ? 'bg-blue-900/20' : 'hover:bg-slate-800/50'}`}>
+                <tr key={t.id} className={`transition-colors ${isEditing ? 'bg-blue-900/20' : isProposed ? 'bg-amber-950/20 border-l-2 border-amber-500' : 'hover:bg-slate-800/50'}`}>
 
                   {/* DATE */}
                   <td className="px-6 py-4 text-slate-300 whitespace-nowrap">
@@ -695,13 +783,17 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                         )}
                       </div>
                     ) : (
-                      <button
-                        onClick={() => setLinkingTxnId(t.id)}
-                        className="text-slate-500 hover:text-blue-400 transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-800 text-xs"
-                      >
-                        <Paperclip size={14} />
-                        Joindre
-                      </button>
+                      !isViewer ? (
+                        <button
+                          onClick={() => setLinkingTxnId(t.id)}
+                          className="text-slate-500 hover:text-blue-400 transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-800 text-xs"
+                        >
+                          <Paperclip size={14} />
+                          Joindre
+                        </button>
+                      ) : (
+                        <span className="text-slate-600 text-xs">-</span>
+                      )
                     )}
                   </td>
 
@@ -720,48 +812,64 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
                   {/* ACCOUNT */}
                   <td className="px-6 py-4">
-                    <select
-                      value={isEditing ? (editForm.accountId || '') : (t.accountId || '')}
-                      onChange={(e) => {
-                        const newAccountId = e.target.value;
-                        const selectedAccount = accounts.find(a => a.id === newAccountId);
-                        let detectedMemberName = isEditing ? editForm.detectedMemberName : t.detectedMemberName;
+                    {isViewer ? (
+                      <span className="text-slate-300 text-sm">
+                        {currentAccount ? (
+                          <span title={`${currentAccount.code} - ${currentAccount.name}`}>
+                            {currentAccount.code} - {currentAccount.name}
+                          </span>
+                        ) : (
+                          <span className="text-rose-400 font-semibold italic text-xs">Non assigné</span>
+                        )}
+                      </span>
+                    ) : (
+                      <select
+                        value={isEditing ? (editForm.accountId || '') : (t.accountId || '')}
+                        onChange={(e) => {
+                          const newAccountId = e.target.value;
+                          const selectedAccount = accounts.find(a => a.id === newAccountId);
+                          let detectedMemberName = isEditing ? editForm.detectedMemberName : t.detectedMemberName;
 
-                        // Auto-extract member name if account is a Membership account (Class 7 + isMembership)
-                        if (selectedAccount?.isMembership) {
-                          // REFINED LOGIC: VIRT CPTE as "Last Resort".
-                          // If we already have a name (from AI or previous edit), we KEEP it (Strategy 1).
-                          // We only search if detectedMemberName is empty.
-                          if (!detectedMemberName) {
-                            const desc = isEditing ? (editForm.description || t.description) : t.description;
-                            // Last Resort: VIRT CPTE
-                            const virtMatch = desc.match(/(?:VIRT\s+CPTE|VIREMENT\s+DE|VIREMENT)\s+(?:DE\s+)?([A-Z\s\.]+)/i);
-                            if (virtMatch && virtMatch[1]) {
-                              detectedMemberName = virtMatch[1].trim();
+                          // Auto-extract member name if account is a Membership account (Class 7 + isMembership)
+                          if (selectedAccount?.isMembership) {
+                            // REFINED LOGIC: VIRT CPTE as "Last Resort".
+                            // If we already have a name (from AI or previous edit), we KEEP it (Strategy 1).
+                            // We only search if detectedMemberName is empty.
+                            if (!detectedMemberName) {
+                              const desc = isEditing ? (editForm.description || t.description) : t.description;
+                              // Last Resort: VIRT CPTE
+                              const virtMatch = desc.match(/(?:VIRT\s+CPTE|VIREMENT\s+DE|VIREMENT)\s+(?:DE\s+)?([A-Z\s\.]+)/i);
+                              if (virtMatch && virtMatch[1]) {
+                                detectedMemberName = virtMatch[1].trim();
+                              }
                             }
                           }
-                        }
 
-                        if (isEditing) {
-                          setEditForm({ ...editForm, accountId: newAccountId, detectedMemberName })
-                        } else {
-                          onUpdateTransaction({ ...t, accountId: newAccountId, detectedMemberName, status: TransactionStatus.REVIEW_NEEDED })
-                        }
-                      }}
-                      className={`bg-transparent border-b border-dashed border-slate-600 focus:border-blue-500 focus:outline-none py-1 max-w-[200px] truncate ${!(isEditing ? editForm.accountId : t.accountId) ? 'text-rose-400 font-semibold' : 'text-slate-300'} [&>option]:bg-slate-900 [&>option]:text-white`}
-                    >
-                      <option value="">
-                        {validAccounts.length === 0 ? "Aucun compte correspondant" : "Sélectionner Compte..."}
-                      </option>
-                      {validAccounts.map(a => (
-                        <option key={a.id} value={a.id}>{a.code} - {renderAccountOption(a)}</option>
-                      ))}
-                      {t.accountId && !validAccounts.find(a => a.id === t.accountId) && accounts.find(a => a.id === t.accountId) && (
-                        <option value={t.accountId} disabled>
-                          ⚠️ {accounts.find(a => a.id === t.accountId)?.code} - {renderAccountOption(accounts.find(a => a.id === t.accountId)!)} (Invalide)
+                          if (isEditing) {
+                            setEditForm({ ...editForm, accountId: newAccountId, detectedMemberName });
+                          } else {
+                            if (isVerificateur) {
+                              setVerifierProposalTarget({ transaction: t, newAccountId, detectedMemberName });
+                            } else {
+                              onUpdateTransaction({ ...t, accountId: newAccountId, detectedMemberName, status: TransactionStatus.REVIEW_NEEDED });
+                            }
+                          }
+                        }}
+                        className={`bg-transparent border-b border-dashed border-slate-600 focus:border-blue-500 focus:outline-none py-1 max-w-[200px] truncate ${!(isEditing ? editForm.accountId : t.accountId) ? 'text-rose-400 font-semibold' : 'text-slate-300'} [&>option]:bg-slate-900 [&>option]:text-white`}
+                      >
+                        <option value="">
+                          {validAccounts.length === 0 ? "Aucun compte correspondant" : "Sélectionner Compte..."}
                         </option>
-                      )}
-                    </select>
+                        {validAccounts.map(a => (
+                          <option key={a.id} value={a.id}>{a.code} - {renderAccountOption(a)}</option>
+                        ))}
+                        {t.accountId && !validAccounts.find(a => a.id === t.accountId) && accounts.find(a => a.id === t.accountId) && (
+                          <option value={t.accountId} disabled>
+                            ⚠️ {accounts.find(a => a.id === t.accountId)?.code} - {renderAccountOption(accounts.find(a => a.id === t.accountId)!)} (Invalide)
+                          </option>
+                        )}
+                      </select>
+                    )}
                   </td>
 
                   {/* MEMBER */}
@@ -788,16 +896,41 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                   {/* STATUS */}
                   <td className="px-6 py-4">
                     {!isEditing && (
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${badge.className}`}>
-                        {badge.icon}
-                        {badge.label}
-                      </span>
+                      <div className="flex flex-col items-start gap-1">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${badge.className}`}>
+                          {badge.icon}
+                          {badge.label}
+                        </span>
+                        {t.status === TransactionStatus.PROPOSED && t.verifierProposal?.note && (
+                          <span className="text-[11px] text-amber-400 bg-amber-950/40 border border-amber-800/40 px-2 py-0.5 rounded max-w-[200px] truncate" title={t.verifierProposal.note}>
+                            📝 {t.verifierProposal.note}
+                          </span>
+                        )}
+                      </div>
                     )}
                   </td>
 
                   {/* ACTIONS */}
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
+                      {/* Comments / Audit Notes Button (Available to all roles) */}
+                      <button
+                        onClick={() => setActiveCommentTxn(t)}
+                        className={`p-1.5 rounded-md transition-colors relative ${
+                          t.comments && t.comments.length > 0
+                            ? 'text-blue-400 hover:bg-blue-900/40 bg-blue-950/60 border border-blue-800/50'
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
+                        }`}
+                        title={t.comments && t.comments.length > 0 ? `${t.comments.length} commentaire(s)` : "Ajouter une note / commentaire"}
+                      >
+                        <MessageSquare size={16} />
+                        {t.comments && t.comments.length > 0 && (
+                          <span className="absolute -top-1 -right-1 bg-blue-500 text-[10px] text-white font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                            {t.comments.length}
+                          </span>
+                        )}
+                      </button>
+
                       {isEditing ? (
                         <>
                           <button onClick={saveEditing} className="p-1.5 bg-blue-900/30 text-blue-400 rounded-md hover:bg-blue-900/50 transition-colors" title="Enregistrer">
@@ -807,8 +940,31 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                             <X size={16} />
                           </button>
                         </>
-                      ) : (
+                      ) : isVerificateur ? (
                         <>
+                          {/* Verifier Proposal / Note Button */}
+                          <button
+                            onClick={() => setVerifierProposalTarget({ transaction: t, newAccountId: t.accountId || '', detectedMemberName: t.detectedMemberName })}
+                            className="p-1.5 hover:bg-amber-900/30 text-amber-400 rounded-md transition-colors flex items-center gap-1 text-xs"
+                            title="Proposer une note ou modifier l'affectation"
+                          >
+                            <Search size={16} />
+                            <span className="hidden sm:inline">Proposer</span>
+                          </button>
+                        </>
+                      ) : isCaissier && (
+                        <>
+                          {/* If proposed, Caissier can directly validate the proposal */}
+                          {t.status === TransactionStatus.PROPOSED && (
+                            <button
+                              onClick={() => handleApproveProposal(t)}
+                              className="p-1.5 bg-emerald-900/40 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-700/60 rounded-md transition-colors"
+                              title="Valider la proposition du vérificateur"
+                            >
+                              <CheckCircle size={16} />
+                            </button>
+                          )}
+
                           {/* Edit Button */}
                           <button
                             onClick={() => startEditing(t)}
@@ -1029,6 +1185,81 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         accounts={accounts}
         onCloseFiscalYear={onCloseFiscalYear}
       />
+
+      {activeCommentTxn && (
+        <TransactionCommentsModal
+          isOpen={!!activeCommentTxn}
+          onClose={() => setActiveCommentTxn(null)}
+          transaction={activeCommentTxn}
+          onSaveComments={handleSaveComments}
+          currentUserEmail={user?.email || ''}
+          currentUserName={user?.displayName || ''}
+          currentUserRole={comptaRole || 'viewer'}
+        />
+      )}
+
+      {/* MODAL DE PROPOSITION DU VERIFICATEUR */}
+      {verifierProposalTarget && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-800">
+              <h3 className="font-bold text-white text-base flex items-center gap-2">
+                <Search size={18} className="text-amber-400" />
+                Proposition d'affectation au caissier
+              </h3>
+              <button 
+                onClick={() => {
+                  setVerifierProposalTarget(null);
+                  setVerifierNote('');
+                }} 
+                className="text-slate-500 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3 mb-5">
+              <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs space-y-1">
+                <div className="text-slate-400">Transaction : <strong className="text-white">{verifierProposalTarget.transaction.description}</strong></div>
+                <div className="text-slate-400">Montant : <strong className={verifierProposalTarget.transaction.amount >= 0 ? "text-emerald-400" : "text-rose-400"}>{verifierProposalTarget.transaction.amount.toFixed(2)} CHF</strong></div>
+                <div className="text-slate-400">Compte proposé : <strong className="text-amber-300">{accounts.find(a => a.id === verifierProposalTarget.newAccountId)?.code} - {accounts.find(a => a.id === verifierProposalTarget.newAccountId)?.label || 'Sélectionné'}</strong></div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Note explicative pour le caissier (optionnelle) :
+                </label>
+                <textarea
+                  value={verifierNote}
+                  onChange={(e) => setVerifierNote(e.target.value)}
+                  placeholder="Ex: Facture reçue, imputation recommandée sur ce compte..."
+                  rows={3}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white text-xs focus:outline-none focus:border-amber-500 resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setVerifierProposalTarget(null);
+                  setVerifierNote('');
+                }}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition-colors"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleConfirmVerifierProposal}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-amber-900/20 transition-colors"
+              >
+                <Send size={14} />
+                Transmettre au caissier
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 };

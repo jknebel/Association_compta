@@ -1,4 +1,6 @@
 
+import { TransactionComment } from './frontend/types/rbac';
+
 export enum AccountType {
   INCOME = 'PRODUIT',
   EXPENSE = 'CHARGE',
@@ -26,8 +28,18 @@ export enum TransactionStatus {
   PENDING = 'PENDING',
   REVIEW_NEEDED = 'REVIEW_NEEDED',
   PENDING_REVIEW = 'PENDING_REVIEW',
+  PROPOSED = 'PROPOSED', // Affectation proposée par le vérificateur
   APPROVED = 'APPROVED',
   ARCHIVED = 'ARCHIVED'
+}
+
+export interface TransactionVerifierProposal {
+  proposedAccountId: string;
+  note?: string;
+  verifierUid: string;
+  verifierName: string;
+  verifierEmail: string;
+  proposedAt: number;
 }
 
 export interface Transaction {
@@ -43,6 +55,8 @@ export interface Transaction {
   fullRawText?: string; // Literal text from bank statement
   receiptUrl?: string; // URL to the uploaded receipt image
   receiptFileName?: string; // Name of the receipt file
+  comments?: TransactionComment[]; // Comments & audit notes
+  verifierProposal?: TransactionVerifierProposal; // Proposition du vérificateur en attente de validation par le caissier
 }
 
 export interface Receipt {

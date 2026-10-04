@@ -33,29 +33,84 @@ export const updateUserProfile = async (uid: string, data: Partial<UserProfile>)
     await updateDoc(doc(db, 'users', uid), data);
 }
 
-export const getUserComptabilites = async (uid: string): Promise<Array<{ orgId: string, compta: Comptabilite, role: ComptaRole }>> => {
+export const getUserComptabilites = async (uid: string, userEmail?: string): Promise<Array<{ orgId: string, compta: Comptabilite, role: ComptaRole }>> => {
     const db = getDb();
     const result: Array<{ orgId: string, compta: Comptabilite, role: ComptaRole }> = [];
-    
+    const seenComptaIds = new Set<string>();
+    const normalizedEmail = userEmail?.trim().toLowerCase();
+
     try {
+        // 1. Direct compta members by uid: organizations/{orgId}/comptabilites/{comptaId}/members/{uid}
         const membersQuery = query(collectionGroup(db, 'members'), where('uid', '==', uid));
         const membersSnapshot = await getDocs(membersQuery);
         
         for (const memberDoc of membersSnapshot.docs) {
-            // Path: organizations/{orgId}/comptabilites/{comptaId}/members/{uid}
             const pathSegments = memberDoc.ref.path.split('/');
+            // Check direct compta member
             if (pathSegments.length === 6 && pathSegments[0] === 'organizations' && pathSegments[2] === 'comptabilites' && pathSegments[4] === 'members') {
                 const orgId = pathSegments[1];
                 const comptaId = pathSegments[3];
                 const role = memberDoc.data().role as ComptaRole;
                 
-                const comptaSnap = await getDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId));
-                if (comptaSnap.exists()) {
-                    result.push({
-                        orgId,
-                        compta: comptaSnap.data() as Comptabilite,
-                        role
-                    });
+                if (!seenComptaIds.has(comptaId)) {
+                    const comptaSnap = await getDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId));
+                    if (comptaSnap.exists()) {
+                        seenComptaIds.add(comptaId);
+                        result.push({
+                            orgId,
+                            compta: comptaSnap.data() as Comptabilite,
+                            role
+                        });
+                    }
+                }
+            }
+            
+            // Check org member with comptaAccess map
+            if (pathSegments.length === 4 && pathSegments[0] === 'organizations' && pathSegments[2] === 'members') {
+                const orgId = pathSegments[1];
+                const comptaAccess = memberDoc.data().comptaAccess as Record<string, ComptaRole> | undefined;
+                if (comptaAccess) {
+                    for (const [comptaId, role] of Object.entries(comptaAccess)) {
+                        if (!seenComptaIds.has(comptaId)) {
+                            const comptaSnap = await getDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId));
+                            if (comptaSnap.exists()) {
+                                seenComptaIds.add(comptaId);
+                                result.push({
+                                    orgId,
+                                    compta: comptaSnap.data() as Comptabilite,
+                                    role
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Org members by email if invited before user had uid
+        if (normalizedEmail) {
+            const emailMembersQuery = query(collectionGroup(db, 'members'), where('email', '==', normalizedEmail));
+            const emailSnap = await getDocs(emailMembersQuery);
+            for (const memberDoc of emailSnap.docs) {
+                const pathSegments = memberDoc.ref.path.split('/');
+                if (pathSegments.length === 4 && pathSegments[0] === 'organizations' && pathSegments[2] === 'members') {
+                    const orgId = pathSegments[1];
+                    const comptaAccess = memberDoc.data().comptaAccess as Record<string, ComptaRole> | undefined;
+                    if (comptaAccess) {
+                        for (const [comptaId, role] of Object.entries(comptaAccess)) {
+                            if (!seenComptaIds.has(comptaId)) {
+                                const comptaSnap = await getDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId));
+                                if (comptaSnap.exists()) {
+                                    seenComptaIds.add(comptaId);
+                                    result.push({
+                                        orgId,
+                                        compta: comptaSnap.data() as Comptabilite,
+                                        role
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -64,4 +119,4 @@ export const getUserComptabilites = async (uid: string): Promise<Array<{ orgId: 
     }
     
     return result;
-}
+};

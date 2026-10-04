@@ -6,7 +6,7 @@ import { getAuth, sendEmailVerification } from 'firebase/auth';
 import { app } from '../services/dataService';
 
 interface LoginViewProps {
-  onGuestAccess: () => void;
+  onGuestAccess?: () => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
@@ -126,9 +126,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
 
       <div className="w-full max-w-md bg-slate-900 rounded-2xl shadow-xl border border-slate-800 overflow-hidden">
         <div className="p-8">
-          <h2 className="text-xl font-semibold text-white mb-6 text-center">
+          <h2 className="text-xl font-semibold text-white mb-2 text-center">
             {isSignUp ? "Créer un compte" : "Connexion"}
           </h2>
+          {isSignUp && (
+            <p className="text-xs text-slate-400 text-center mb-6">
+              Inscrivez-vous avec votre adresse email. Vos accès aux organisations et comptabilités seront reconnus automatiquement.
+            </p>
+          )}
 
           {message && (
             <div className="mb-4 p-3 bg-blue-900/20 border border-blue-900/50 rounded-lg text-sm text-blue-400 text-center">
@@ -247,15 +252,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
             >
               <Chrome size={18} className="text-blue-600" />
               Continuer avec Google
-            </button>
-
-            <button
-              onClick={onGuestAccess}
-              disabled={isLoading}
-              className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 border border-slate-700"
-            >
-              <UserX size={18} />
-              Mode Invité (Données Locales)
             </button>
           </div>
 

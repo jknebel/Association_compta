@@ -5,9 +5,20 @@ export enum OrgRole {
 }
 
 export enum ComptaRole {
-    COMPTABLE = 'comptable',
-    VIEWER = 'viewer'
+    CAISSIER = 'caissier',
+    VERIFICATEUR = 'verificateur',
+    VIEWER = 'viewer',
+    COMPTABLE = 'comptable' // Rétro-compatibilité
 }
+
+export const isCaissierRole = (role?: ComptaRole | string | null): boolean => 
+    role === ComptaRole.CAISSIER || role === ComptaRole.COMPTABLE || role === 'caissier' || role === 'comptable' || role === 'admin';
+
+export const isVerificateurRole = (role?: ComptaRole | string | null): boolean => 
+    role === ComptaRole.VERIFICATEUR || role === 'verificateur';
+
+export const isViewerRole = (role?: ComptaRole | string | null): boolean => 
+    role === ComptaRole.VIEWER || role === 'viewer';
 
 // User Profile
 export interface UserProfile {
@@ -39,21 +50,34 @@ export interface Organization {
     description: string;
     createdAt: number;
     createdBy: string;
+    adminEmail?: string;
+    adminUid?: string;
     inviteCode: string;
     customFields: CustomField[];
 }
 
 export interface OrganizationMember {
-    uid: string;
+    uid?: string;
+    id?: string;
     role: OrgRole;
-    displayName: string;
+    displayName?: string;
     email: string;
-    firstName: string;
-    lastName: string;
-    customFields: Record<string, string>;
+    firstName?: string;
+    lastName?: string;
+    customFields?: Record<string, string>;
     status: 'pending' | 'approved' | 'rejected';
     joinedAt: number;
     approvedBy?: string;
+    comptaAccess?: Record<string, ComptaRole>; // map comptaId -> 'comptable' | 'viewer'
+}
+
+export interface TransactionComment {
+    id: string;
+    authorEmail: string;
+    authorName: string;
+    authorRole: string;
+    text: string;
+    createdAt: number;
 }
 
 // Comptabilite
