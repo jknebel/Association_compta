@@ -28,6 +28,8 @@ export interface UserProfile {
     lastName: string;
     displayName: string;
     createdAt: number;
+    orgId?: string;
+    orgName?: string;
     organizations: Record<string, {
         role: OrgRole;
         status: 'pending' | 'approved' | 'rejected';

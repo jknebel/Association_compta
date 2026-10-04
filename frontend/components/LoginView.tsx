@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { loginWithGoogle, loginWithEmail, registerWithEmail } from '../services/authService';
-import { Lock, Mail, Chrome, ArrowRight, AlertCircle, LayoutDashboard, UserX, Copy, User as UserIcon } from 'lucide-react';
+import { Lock, Mail, Chrome, ArrowRight, AlertCircle, LayoutDashboard, UserX, Copy, User as UserIcon, Building2 } from 'lucide-react';
 import { createUserProfile } from '../services/userService';
+import { listAllOrganizations } from '../services/organizationService';
+import { Organization } from '../types/rbac';
 import { getAuth, sendEmailVerification } from 'firebase/auth';
 import { app } from '../services/dataService';
 
@@ -15,12 +17,41 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState<string>('TDGL');
   
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const currentDomain = window.location.hostname;
+
+  // Charger les associations disponibles pour l'inscription
+  useEffect(() => {
+    const fetchOrgs = async () => {
+      try {
+        const orgs = await listAllOrganizations();
+        if (orgs.length > 0) {
+          setOrganizations(orgs);
+          const tdglOrg = orgs.find(o => o.name?.toLowerCase().includes('tdgl') || o.id === 'TDGL');
+          setSelectedOrgId(tdglOrg ? tdglOrg.id : orgs[0].id);
+        } else {
+          setOrganizations([{
+            id: 'TDGL',
+            name: 'TDGL',
+            description: 'Association TDGL',
+            createdAt: Date.now(),
+            createdBy: 'system',
+            customFields: []
+          }]);
+          setSelectedOrgId('TDGL');
+        }
+      } catch (err) {
+        console.error("Erreur lors de la récupération des associations:", err);
+      }
+    };
+    fetchOrgs();
+  }, []);
 
   // Détection des paramètres d'invitation (redirigera vers JoinOrgPage plus tard si géré par App.tsx, 
   // mais on peut aussi afficher un message ici)
@@ -46,11 +77,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
         const userCredential = await registerWithEmail(email, password);
         const user = userCredential.user;
         
-        // Créer le profil
+        const selectedOrg = organizations.find(o => o.id === selectedOrgId);
+        const orgName = selectedOrg ? selectedOrg.name : selectedOrgId;
+
+        // Créer le profil avec l'association choisie
         await createUserProfile(user.uid, {
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           email: user.email || email,
+          orgId: selectedOrgId,
+          orgName: orgName,
         });
 
         // Envoyer l'email de vérification
@@ -86,10 +122,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
       // On va juste essayer de créer le profil, s'il existe déjà la fonction merge/ignore
       if (result.user) {
         const names = (result.user.displayName || "").split(" ");
+        const selectedOrg = organizations.find(o => o.id === selectedOrgId);
+        const orgName = selectedOrg ? selectedOrg.name : (selectedOrgId || 'TDGL');
         await createUserProfile(result.user.uid, {
           firstName: names[0] || "",
           lastName: names.slice(1).join(" ") || "",
           email: result.user.email || "",
+          orgId: selectedOrgId || 'TDGL',
+          orgName: orgName,
         });
       }
     } catch (err: any) {
@@ -143,35 +183,57 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {isSignUp && (
-              <div className="flex gap-4">
-                <div className="flex-1">
-                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Prénom</label>
+              <>
+                <div className="flex gap-4">
+                  <div className="flex-1">
+                    <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Prénom</label>
+                    <div className="relative">
+                      <UserIcon className="absolute left-3 top-3 text-slate-500" size={18} />
+                      <input
+                        type="text"
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                        placeholder="Jean"
+                        required={isSignUp}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Nom</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                        placeholder="Dupont"
+                        required={isSignUp}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Association</label>
                   <div className="relative">
-                    <UserIcon className="absolute left-3 top-3 text-slate-500" size={18} />
-                    <input
-                      type="text"
-                      value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
+                    <Building2 className="absolute left-3 top-3 text-slate-500" size={18} />
+                    <select
+                      value={selectedOrgId}
+                      onChange={(e) => setSelectedOrgId(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                      placeholder="Jean"
                       required={isSignUp}
-                    />
+                    >
+                      {organizations.map((org) => (
+                        <option key={org.id} value={org.id} className="bg-slate-900 text-white">
+                          {org.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                  <p className="text-[11px] text-slate-500 mt-1">Sélectionnez l'association à laquelle vous appartenez.</p>
                 </div>
-                <div className="flex-1">
-                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Nom</label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={lastName}
-                      onChange={(e) => setLastName(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2.5 px-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                      placeholder="Dupont"
-                      required={isSignUp}
-                    />
-                  </div>
-                </div>
-              </div>
+              </>
             )}
 
             <div>

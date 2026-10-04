@@ -59,7 +59,7 @@ export const AdminView: React.FC = () => {
                 listComptabilites(selectedOrg.id),
                 listInvitations(selectedOrg.id),
                 listOrganizationMembers(selectedOrg.id),
-                listAllRegisteredUsers()
+                listAllRegisteredUsers(selectedOrg.id)
             ]);
             setComptas(cList);
             setInvitations(iList);

@@ -1,21 +1,41 @@
 import { doc, setDoc, getDoc, updateDoc, collection, collectionGroup, getDocs, query, where } from 'firebase/firestore';
 import { getDb } from './organizationService';
-import { UserProfile, Comptabilite, ComptaRole } from '../types/rbac';
+import { UserProfile, Comptabilite, ComptaRole, OrgRole } from '../types/rbac';
 
-export const createUserProfile = async (uid: string, data: { firstName: string, lastName: string, email: string }): Promise<void> => {
+export const createUserProfile = async (
+    uid: string, 
+    data: { firstName: string; lastName: string; email: string; orgId?: string; orgName?: string }
+): Promise<void> => {
     const db = getDb();
     const userRef = doc(db, 'users', uid);
     const docSnap = await getDoc(userRef);
     
+    const assignedOrgId = data.orgId || 'TDGL';
+    const assignedOrgName = data.orgName || 'TDGL';
+
     if (!docSnap.exists()) {
         const newUser: UserProfile = {
             uid,
             ...data,
-            displayName: `${data.firstName} ${data.lastName}`,
+            displayName: `${data.firstName} ${data.lastName}`.trim(),
             createdAt: Date.now(),
-            organizations: {}
+            orgId: assignedOrgId,
+            orgName: assignedOrgName,
+            organizations: {
+                [assignedOrgId]: {
+                    role: OrgRole.MEMBER,
+                    status: 'pending'
+                }
+            }
         };
         await setDoc(userRef, newUser);
+    } else {
+        if (data.orgId && !docSnap.data()?.orgId) {
+            await updateDoc(userRef, {
+                orgId: assignedOrgId,
+                orgName: assignedOrgName
+            });
+        }
     }
 }
 
@@ -121,7 +141,9 @@ export const getUserComptabilites = async (uid: string, userEmail?: string): Pro
     return result;
 };
 
-export const listAllRegisteredUsers = async (): Promise<Array<{ uid: string; email: string; displayName: string; firstName?: string; lastName?: string }>> => {
+export const listAllRegisteredUsers = async (
+    filterOrgId?: string
+): Promise<Array<{ uid: string; email: string; displayName: string; firstName?: string; lastName?: string; orgId?: string }>> => {
     try {
         const db = getDb();
         const snap = await getDocs(collection(db, 'users'));
@@ -129,15 +151,25 @@ export const listAllRegisteredUsers = async (): Promise<Array<{ uid: string; ema
             .map(d => {
                 const data = d.data();
                 const displayName = data.displayName || `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.email || 'Utilisateur';
+                const userOrgId = data.orgId || (data.organizations ? Object.keys(data.organizations)[0] : '');
                 return {
                     uid: d.id,
                     email: (data.email || '').trim().toLowerCase(),
                     displayName,
                     firstName: data.firstName || '',
-                    lastName: data.lastName || ''
+                    lastName: data.lastName || '',
+                    orgId: userOrgId
                 };
             })
-            .filter(u => !!u.email);
+            .filter(u => !!u.email)
+            .filter(u => {
+                if (!filterOrgId) return true; // SuperAdmin voit tout le monde
+                // L'admin d'une association ne voit que les utilisateurs ayant choisi son association
+                if (u.orgId === filterOrgId) return true;
+                const isTDGL = filterOrgId.toUpperCase().includes('TDGL');
+                if (isTDGL && (!u.orgId || u.orgId.toUpperCase().includes('TDGL'))) return true;
+                return false;
+            });
     } catch (e) {
         console.error("Error listing registered users:", e);
         return [];
