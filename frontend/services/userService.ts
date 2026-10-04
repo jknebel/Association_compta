@@ -1,4 +1,4 @@
-import { doc, setDoc, getDoc, updateDoc, collectionGroup, getDocs, query, where } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, collection, collectionGroup, getDocs, query, where } from 'firebase/firestore';
 import { getDb } from './organizationService';
 import { UserProfile, Comptabilite, ComptaRole } from '../types/rbac';
 
@@ -119,4 +119,27 @@ export const getUserComptabilites = async (uid: string, userEmail?: string): Pro
     }
     
     return result;
+};
+
+export const listAllRegisteredUsers = async (): Promise<Array<{ uid: string; email: string; displayName: string; firstName?: string; lastName?: string }>> => {
+    try {
+        const db = getDb();
+        const snap = await getDocs(collection(db, 'users'));
+        return snap.docs
+            .map(d => {
+                const data = d.data();
+                const displayName = data.displayName || `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.email || 'Utilisateur';
+                return {
+                    uid: d.id,
+                    email: (data.email || '').trim().toLowerCase(),
+                    displayName,
+                    firstName: data.firstName || '',
+                    lastName: data.lastName || ''
+                };
+            })
+            .filter(u => !!u.email);
+    } catch (e) {
+        console.error("Error listing registered users:", e);
+        return [];
+    }
 };

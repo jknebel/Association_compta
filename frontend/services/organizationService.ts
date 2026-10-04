@@ -124,6 +124,19 @@ export const createComptabilite = async (orgId: string, data: Omit<Comptabilite,
         joinedAt: Date.now()
     });
 
+    // Also update org member record if it exists
+    try {
+        const orgMemberRef = doc(db, 'organizations', orgId, 'members', creatorUid);
+        const orgMemberSnap = await getDoc(orgMemberRef);
+        if (orgMemberSnap.exists()) {
+            await updateDoc(orgMemberRef, {
+                [`comptaAccess.${comptaRef.id}`]: ComptaRole.COMPTABLE
+            });
+        }
+    } catch (e) {
+        console.warn("Could not update member comptaAccess:", e);
+    }
+
     return comptaRef.id;
 }
 

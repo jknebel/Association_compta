@@ -12,6 +12,36 @@ export interface LegacyDataSummary {
 }
 
 export const checkLegacyData = async (uid: string): Promise<LegacyDataSummary> => {
+    // 1. One-shot migration check: if already flagged as done, do not prompt again
+    if (localStorage.getItem('asso_compta_v1_migrated') === 'true') {
+        return {
+            hasData: false,
+            accountsCount: 0,
+            transactionsCount: 0,
+            receiptsCount: 0,
+            hasAiConfig: false,
+            source: 'none'
+        };
+    }
+
+    try {
+        const db = getDb();
+        const userDoc = await getDoc(doc(db, 'users', uid));
+        if (userDoc.exists() && userDoc.data().v1MigrationDone) {
+            localStorage.setItem('asso_compta_v1_migrated', 'true');
+            return {
+                hasData: false,
+                accountsCount: 0,
+                transactionsCount: 0,
+                receiptsCount: 0,
+                hasAiConfig: false,
+                source: 'none'
+            };
+        }
+    } catch (e) {
+        console.warn("Could not check user doc for migration status", e);
+    }
+
     let fsAccounts = 0;
     let fsTransactions = 0;
     let fsReceipts = 0;
@@ -193,7 +223,23 @@ export const migrateLegacyDataToOrg = async (uid: string, orgId: string, comptaN
         await setDoc(targetRef, docSnap.data());
     }
 
+    // Mark migration as completed (one-shot)
+    await markLegacyMigrationDone(uid);
+
     return comptaId;
+};
+
+export const markLegacyMigrationDone = async (uid: string): Promise<void> => {
+    localStorage.setItem('asso_compta_v1_migrated', 'true');
+    try {
+        const db = getDb();
+        await setDoc(doc(db, 'users', uid), {
+            v1MigrationDone: true,
+            v1MigratedAt: Date.now()
+        }, { merge: true });
+    } catch (e) {
+        console.warn("Could not save migration done to Firestore:", e);
+    }
 };
 
 export const connectCurrentCompta = async (
@@ -222,6 +268,8 @@ export const connectCurrentCompta = async (
     }
 
     const comptaId = await migrateLegacyDataToOrg(user.uid, finalOrgId, comptaName);
+    await markLegacyMigrationDone(user.uid);
+
     const compta: Comptabilite = {
         id: comptaId,
         name: comptaName,

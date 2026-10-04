@@ -5,7 +5,7 @@ import { listAllOrganizations, getUserOrganizations, listComptabilites } from '.
 import { getUserComptabilites } from '../services/userService';
 import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield } from 'lucide-react';
 import { logout } from '../services/authService';
-import { checkLegacyData, LegacyDataSummary, connectCurrentCompta } from '../services/migrationService';
+import { checkLegacyData, LegacyDataSummary, connectCurrentCompta, markLegacyMigrationDone } from '../services/migrationService';
 import { createComptabilite, deleteComptabilite, toggleArchiveComptabilite } from '../services/organizationService';
 import { UnauthorizedView } from './UnauthorizedView';
 
@@ -41,32 +41,45 @@ export const OrgSelector: React.FC = () => {
             }
             setOrganizations(orgs);
 
-            // Fetch Comptas
+            // Fetch Comptas and roles defined in Firebase
             const userComptas = await getUserComptabilites(user.uid, user.email || undefined);
             
+            const userRoleByComptaId: Record<string, any> = {};
+            userComptas.forEach(uc => {
+                userRoleByComptaId[uc.compta.id] = uc.role;
+            });
+
             const byOrg: Record<string, Array<{compta: Comptabilite, role: any}>> = {};
             
             if (isSuperAdmin) {
                 // SuperAdmin a accès à TOUTES les comptas
                 for (const org of orgs) {
                     const allComptas = await listComptabilites(org.id);
-                    byOrg[org.id] = allComptas.map(c => ({ compta: c, role: 'admin' }));
+                    byOrg[org.id] = allComptas.map(c => ({ 
+                        compta: c, 
+                        role: userRoleByComptaId[c.id] || 'caissier' 
+                    }));
                 }
             } else {
-                // Normal user
-                userComptas.forEach(uc => {
-                    if (!byOrg[uc.orgId]) byOrg[uc.orgId] = [];
-                    byOrg[uc.orgId].push({ compta: uc.compta, role: uc.role });
-                });
-                
                 // Admin d'une organisation a accès à toutes les comptabilités de son organisation
                 for (const org of orgs) {
                     const isOrgAdmin = org.createdBy === user.uid || (user.email && org.adminEmail && org.adminEmail.trim().toLowerCase() === user.email.trim().toLowerCase());
                     if (isOrgAdmin) {
                         const allComptas = await listComptabilites(org.id);
-                        byOrg[org.id] = allComptas.map(c => ({ compta: c, role: 'admin' }));
+                        byOrg[org.id] = allComptas.map(c => ({ 
+                            compta: c, 
+                            role: userRoleByComptaId[c.id] || 'caissier' 
+                        }));
                     }
                 }
+
+                // Pour les comptas où l'utilisateur est assigné dans Firebase
+                userComptas.forEach(uc => {
+                    if (!byOrg[uc.orgId]) byOrg[uc.orgId] = [];
+                    if (!byOrg[uc.orgId].some(item => item.compta.id === uc.compta.id)) {
+                        byOrg[uc.orgId].push({ compta: uc.compta, role: uc.role });
+                    }
+                });
             }
             
             setComptasByOrg(byOrg);
@@ -254,10 +267,10 @@ export const OrgSelector: React.FC = () => {
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <h3 className="text-base font-semibold text-white">
-                                            Comptabilité actuelle détectée
+                                            Comptabilité V1 détectée (Migration vers la V2)
                                         </h3>
                                         <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded border border-blue-400/30">
-                                            Prête à connecter
+                                            Usage unique
                                         </span>
                                     </div>
                                     <p className="text-sm text-slate-300 mt-1">
@@ -266,18 +279,33 @@ export const OrgSelector: React.FC = () => {
                                         {legacySummary.hasAiConfig ? ' et règles IA' : ''}.
                                     </p>
                                     <p className="text-xs text-slate-400 mt-1">
-                                        Connectez immédiatement votre comptabilité actuelle à une organisation pour l'utiliser avec les rôles (Caissier, Vérificateur, Lecteur) et le travail d'équipe.
+                                        Permet de migrer votre comptabilité V1 vers votre nouvelle organisation. Une fois migrée, cette option disparaît définitivement.
                                     </p>
                                 </div>
                             </div>
-                            <button
-                                onClick={() => handleAutoConnectLegacy()}
-                                disabled={isConnectingLegacy}
-                                className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg shadow-lg shadow-blue-600/30 transition-all shrink-0 w-full md:w-auto justify-center cursor-pointer"
-                            >
-                                {isConnectingLegacy ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                                Connecter ma compta actuelle
-                            </button>
+                            <div className="flex items-center gap-2 w-full md:w-auto shrink-0 justify-end">
+                                <button
+                                    onClick={async () => {
+                                        if (user) {
+                                            await markLegacyMigrationDone(user.uid);
+                                            setHasLegacyData(false);
+                                            setLegacySummary(null);
+                                        }
+                                    }}
+                                    className="px-3.5 py-2 text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition-colors border border-slate-700/60"
+                                    title="Masquer définitivement si déjà migrée"
+                                >
+                                    Déjà migrée (masquer)
+                                </button>
+                                <button
+                                    onClick={() => handleAutoConnectLegacy()}
+                                    disabled={isConnectingLegacy}
+                                    className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
+                                >
+                                    {isConnectingLegacy ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                                    Migrer ma compta V1
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -396,24 +424,33 @@ export const OrgSelector: React.FC = () => {
                                                             }`} />
                                                         </button>
                                                         
-                                                        {(isSuperAdmin || isOrgAdmin) && (
-                                                            <div className="flex flex-col gap-1">
-                                                                <button
-                                                                    onClick={(e) => handleToggleArchive(e, org.id, item.compta.id, !!item.compta.isArchived)}
-                                                                    className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-800 rounded transition-colors"
-                                                                    title={item.compta.isArchived ? "Désarchiver" : "Archiver"}
-                                                                >
-                                                                    {item.compta.isArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
-                                                                </button>
-                                                                <button
-                                                                    onClick={(e) => handleDelete(e, org.id, item.compta.id)}
-                                                                    className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
-                                                                    title="Supprimer définitivement"
-                                                                >
-                                                                    <Trash2 size={16} />
-                                                                </button>
-                                                            </div>
-                                                        )}
+                                                        {(() => {
+                                                            const isCaissierOrAdmin = isSuperAdmin || isOrgAdmin || item.role === 'caissier' || item.role === 'comptable' || item.role === 'admin';
+                                                            const canDelete = isSuperAdmin || isOrgAdmin;
+                                                            if (!isCaissierOrAdmin && !canDelete) return null;
+                                                            return (
+                                                                <div className="flex flex-col gap-1">
+                                                                    {isCaissierOrAdmin && (
+                                                                        <button
+                                                                            onClick={(e) => handleToggleArchive(e, org.id, item.compta.id, !!item.compta.isArchived)}
+                                                                            className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-800 rounded transition-colors"
+                                                                            title={item.compta.isArchived ? "Désarchiver" : "Archiver"}
+                                                                        >
+                                                                            {item.compta.isArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+                                                                        </button>
+                                                                    )}
+                                                                    {canDelete && (
+                                                                        <button
+                                                                            onClick={(e) => handleDelete(e, org.id, item.compta.id)}
+                                                                            className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
+                                                                            title="Supprimer définitivement"
+                                                                        >
+                                                                            <Trash2 size={16} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })()}
                                                     </div>
                                                 ))}
                                                 {archivedComptas.length > 0 && (
@@ -429,43 +466,52 @@ export const OrgSelector: React.FC = () => {
                                             </div>
                                         )}
                                         
-                                        {(isSuperAdmin || isOrgAdmin) && (
-                                            <div className="mt-4 pt-4 border-t border-slate-800/50 flex flex-col gap-2 px-2">
-                                                <button 
-                                                    onClick={() => handleCreateCompta(org.id)}
-                                                    disabled={isCreatingCompta === org.id}
-                                                    className="flex items-center justify-center gap-2 w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors"
-                                                >
-                                                    {isCreatingCompta === org.id ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                                                    Nouvelle Comptabilité
-                                                </button>
+                                        {(() => {
+                                            const hasCaissierAccess = isSuperAdmin || isOrgAdmin || allComptas.some(c => c.role === 'caissier' || c.role === 'comptable' || c.role === 'admin');
+                                            if (!hasCaissierAccess && !isSuperAdmin && !isOrgAdmin) return null;
 
-                                                <button 
-                                                    onClick={() => {
-                                                        setSelectedOrg(org);
-                                                        setOrgRole(isOrgAdmin ? 'admin' : 'member');
-                                                        const firstCompta = allComptas[0]?.compta || null;
-                                                        if (firstCompta) setSelectedCompta(firstCompta);
-                                                        window.location.hash = '#admin';
-                                                    }}
-                                                    className="flex items-center justify-center gap-2 w-full py-2 bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border border-purple-800/50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
-                                                >
-                                                    <Shield size={16} className="text-purple-400" />
-                                                    Gérer les membres & rôles
-                                                </button>
-                                                
-                                                {hasLegacyData && (
-                                                    <button 
-                                                        onClick={() => handleAutoConnectLegacy(org.id)}
-                                                        disabled={isConnectingLegacy}
-                                                        className="flex items-center justify-center gap-2 w-full py-2 bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
-                                                    >
-                                                        {isConnectingLegacy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                                                        Connecter ma compta actuelle ici
-                                                    </button>
-                                                )}
-                                            </div>
-                                        )}
+                                            return (
+                                                <div className="mt-4 pt-4 border-t border-slate-800/50 flex flex-col gap-2 px-2">
+                                                    {hasCaissierAccess && (
+                                                        <button 
+                                                            onClick={() => handleCreateCompta(org.id)}
+                                                            disabled={isCreatingCompta === org.id}
+                                                            className="flex items-center justify-center gap-2 w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors"
+                                                        >
+                                                            {isCreatingCompta === org.id ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                                                            Nouvelle Comptabilité
+                                                        </button>
+                                                    )}
+
+                                                    {(isSuperAdmin || isOrgAdmin) && (
+                                                        <button 
+                                                            onClick={() => {
+                                                                setSelectedOrg(org);
+                                                                setOrgRole(isOrgAdmin ? 'admin' : 'member');
+                                                                const firstCompta = allComptas[0]?.compta || null;
+                                                                if (firstCompta) setSelectedCompta(firstCompta);
+                                                                window.location.hash = '#admin';
+                                                            }}
+                                                            className="flex items-center justify-center gap-2 w-full py-2 bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border border-purple-800/50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                                                        >
+                                                            <Shield size={16} className="text-purple-400" />
+                                                            Gérer les membres & rôles
+                                                        </button>
+                                                    )}
+                                                    
+                                                    {hasLegacyData && (isSuperAdmin || isOrgAdmin) && (
+                                                        <button 
+                                                            onClick={() => handleAutoConnectLegacy(org.id)}
+                                                            disabled={isConnectingLegacy}
+                                                            className="flex items-center justify-center gap-2 w-full py-2 bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                                                        >
+                                                            {isConnectingLegacy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={18} />}
+                                                            Connecter ma compta V1 ici
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
                             );

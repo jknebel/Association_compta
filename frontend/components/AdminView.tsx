@@ -13,8 +13,9 @@ import {
     listOrganizationMembers,
     removeOrganizationMember
 } from '../services/organizationService';
+import { listAllRegisteredUsers } from '../services/userService';
 import { Comptabilite, Invitation, OrgRole, ComptaRole, OrganizationMember } from '../types/rbac';
-import { Settings, Users, Book, Link as LinkIcon, Plus, Trash2, Check, X, Loader2, UserPlus, Edit2, ShieldAlert, Eye, PenTool, CheckCircle, Search } from 'lucide-react';
+import { Settings, Users, Book, Link as LinkIcon, Plus, Trash2, Check, X, Loader2, UserPlus, Edit2, ShieldAlert, Eye, PenTool, CheckCircle, Search, UserCheck } from 'lucide-react';
 
 export const AdminView: React.FC = () => {
     const { user, isSuperAdmin } = useAuthContext();
@@ -24,6 +25,8 @@ export const AdminView: React.FC = () => {
     const [comptas, setComptas] = useState<Comptabilite[]>([]);
     const [invitations, setInvitations] = useState<Invitation[]>([]);
     const [members, setMembers] = useState<OrganizationMember[]>([]);
+    const [registeredUsers, setRegisteredUsers] = useState<Array<{ uid: string; email: string; displayName: string }>>([]);
+    const [selectedFirebaseUserUid, setSelectedFirebaseUserUid] = useState<string>('');
     const [loading, setLoading] = useState(false);
 
     // Form state pour nouvelle compta
@@ -33,6 +36,7 @@ export const AdminView: React.FC = () => {
     // Form state pour affectation membre par email
     const [memberEmail, setMemberEmail] = useState('');
     const [memberName, setMemberName] = useState('');
+    const [memberOrgRole, setMemberOrgRole] = useState<OrgRole>(OrgRole.MEMBER);
     const [memberComptaRoles, setMemberComptaRoles] = useState<Record<string, ComptaRole>>({});
     const [isSavingMember, setIsSavingMember] = useState(false);
 
@@ -51,14 +55,16 @@ export const AdminView: React.FC = () => {
         if (!selectedOrg) return;
         setLoading(true);
         try {
-            const [cList, iList, mList] = await Promise.all([
+            const [cList, iList, mList, uList] = await Promise.all([
                 listComptabilites(selectedOrg.id),
                 listInvitations(selectedOrg.id),
-                listOrganizationMembers(selectedOrg.id)
+                listOrganizationMembers(selectedOrg.id),
+                listAllRegisteredUsers()
             ]);
             setComptas(cList);
             setInvitations(iList);
             setMembers(mList);
+            setRegisteredUsers(uList);
         } catch (e) {
             console.error("Fetch admin data error", e);
         } finally {
@@ -108,14 +114,16 @@ export const AdminView: React.FC = () => {
                 selectedOrg.id,
                 memberEmail.trim(),
                 memberComptaRoles,
-                OrgRole.MEMBER,
+                memberOrgRole,
                 memberName.trim() || undefined
             );
             setMemberEmail('');
             setMemberName('');
+            setMemberOrgRole(OrgRole.MEMBER);
+            setSelectedFirebaseUserUid('');
             setMemberComptaRoles({});
             await fetchData();
-            alert("Accès du membre mis à jour avec succès !");
+            alert("Permissions du membre enregistrées avec succès !");
         } catch (error) {
             console.error("Failed to save member access:", error);
             alert("Erreur lors de l'enregistrement des accès.");
@@ -127,7 +135,14 @@ export const AdminView: React.FC = () => {
     const handleEditMember = (m: OrganizationMember) => {
         setMemberEmail(m.email);
         setMemberName(m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim());
+        setMemberOrgRole(m.role || OrgRole.MEMBER);
         setMemberComptaRoles(m.comptaAccess || {});
+        const matched = registeredUsers.find(u => u.email.toLowerCase() === m.email.toLowerCase());
+        if (matched) {
+            setSelectedFirebaseUserUid(matched.uid);
+        } else {
+            setSelectedFirebaseUserUid('');
+        }
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
@@ -287,18 +302,60 @@ export const AdminView: React.FC = () => {
                 </div>
             ) : (
                 <div className="space-y-8">
-                    {/* Formulaire d'affectation par email */}
+                    {/* Formulaire d'affectation */}
                     <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl shadow-sm">
                         <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
                             <UserPlus size={18} className="text-emerald-500" />
-                            Assigner / Mettre à jour un Membre par Email
+                            Assigner / Mettre à jour un Membre
                         </h3>
                         <p className="text-sm text-slate-400 mb-6">
-                            Définissez pour chaque comptabilité si le membre est <strong>Comptable</strong> (droits d'écriture et d'import) ou <strong>Lecteur</strong> (consultation et commentaires).
+                            Sélectionnez un utilisateur inscrit sur Firebase et configurez ses droits par unité comptable (<strong>Caissier</strong>, <strong>Vérificateur</strong> ou <strong>Lecteur</strong>).
                         </p>
 
                         <form onSubmit={handleSaveMemberAccess} className="space-y-6">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {/* Sélecteur des utilisateurs inscrits sur Firebase */}
+                            <div className="p-4 bg-slate-950 rounded-xl border border-slate-800">
+                                <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
+                                    <span className="flex items-center gap-1.5">
+                                        <UserCheck size={14} className="text-emerald-400" />
+                                        Choisir parmi les utilisateurs inscrits sur Firebase :
+                                    </span>
+                                    <span className="text-slate-500 font-normal">({registeredUsers.length} comptes trouvés)</span>
+                                </label>
+                                <select
+                                    value={selectedFirebaseUserUid}
+                                    onChange={(e) => {
+                                        const uid = e.target.value;
+                                        setSelectedFirebaseUserUid(uid);
+                                        const found = registeredUsers.find(u => u.uid === uid);
+                                        if (found) {
+                                            setMemberEmail(found.email);
+                                            setMemberName(found.displayName);
+                                            const existing = members.find(m => m.email.toLowerCase() === found.email.toLowerCase());
+                                            if (existing) {
+                                                setMemberOrgRole(existing.role || OrgRole.MEMBER);
+                                                if (existing.comptaAccess) {
+                                                    setMemberComptaRoles(existing.comptaAccess);
+                                                } else {
+                                                    setMemberComptaRoles({});
+                                                }
+                                            } else {
+                                                setMemberComptaRoles({});
+                                            }
+                                        }
+                                    }}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:outline-none focus:border-blue-500"
+                                >
+                                    <option value="">-- Sélectionner un utilisateur inscrit sur Firebase --</option>
+                                    {registeredUsers.map(u => (
+                                        <option key={u.uid} value={u.uid}>
+                                            {u.displayName} ({u.email})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                 <div>
                                     <label className="block text-xs font-semibold text-slate-400 mb-1">Email du membre *</label>
                                     <input 
@@ -319,6 +376,17 @@ export const AdminView: React.FC = () => {
                                         placeholder="Ex: Jean Dupont" 
                                         className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:outline-none focus:border-blue-500" 
                                     />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-slate-400 mb-1">Statut dans l'organisation</label>
+                                    <select
+                                        value={memberOrgRole}
+                                        onChange={e => setMemberOrgRole(e.target.value as OrgRole)}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:outline-none focus:border-blue-500"
+                                    >
+                                        <option value={OrgRole.MEMBER}>Membre de l'organisation</option>
+                                        <option value={OrgRole.ADMIN}>Administrateur de l'organisation</option>
+                                    </select>
                                 </div>
                             </div>
 
