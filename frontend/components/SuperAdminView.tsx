@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { listAllOrganizations, createOrganization, deleteOrganization } from '../services/organizationService';
+import { listAllOrganizations, createOrganization, deleteOrganization, changeOrganizationAdmin } from '../services/organizationService';
 import { Organization } from '../types/rbac';
-import { ShieldCheck, Building2, Trash2, Plus, Loader2, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, Building2, Trash2, Plus, Loader2, ArrowLeft, Edit2, Check, X } from 'lucide-react';
 import { useAuthContext } from '../contexts/AppContext';
 
 interface SuperAdminViewProps {
@@ -17,6 +17,10 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
     const [newOrgDesc, setNewOrgDesc] = useState('');
     const [newOrgAdminEmail, setNewOrgAdminEmail] = useState('');
     const [isCreating, setIsCreating] = useState(false);
+
+    const [editingOrgId, setEditingOrgId] = useState<string | null>(null);
+    const [editAdminEmail, setEditAdminEmail] = useState('');
+    const [isUpdatingAdmin, setIsUpdatingAdmin] = useState(false);
 
     const fetchOrgs = async () => {
         setLoading(true);
@@ -66,6 +70,23 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
         } catch (error) {
             console.error("Failed to delete org:", error);
             alert("Erreur lors de la suppression de l'organisation");
+        }
+    };
+
+    const handleUpdateAdmin = async (orgId: string) => {
+        if (!editAdminEmail.trim()) return;
+        setIsUpdatingAdmin(true);
+        try {
+            await changeOrganizationAdmin(orgId, editAdminEmail.trim());
+            setEditingOrgId(null);
+            setEditAdminEmail('');
+            await fetchOrgs();
+            alert("Administrateur de l'organisation mis à jour avec succès !");
+        } catch (error: any) {
+            console.error("Failed to update admin:", error);
+            alert("Erreur lors de la mise à jour de l'administrateur : " + (error.message || "Erreur inconnue"));
+        } finally {
+            setIsUpdatingAdmin(false);
         }
     };
 
@@ -184,12 +205,50 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
                                             <div>
                                                 <h4 className="font-semibold text-white">{org.name}</h4>
                                                 <p className="text-xs text-slate-400">{org.description}</p>
-                                                <div className="mt-1 flex items-center gap-2 text-xs">
+                                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
                                                     <span className="text-slate-500 font-mono text-[10px]">ID: {org.id}</span>
                                                     <span className="text-slate-600">•</span>
-                                                    <span className="text-purple-400 font-medium">
-                                                        Admin: {org.adminEmail || "Non assigné"}
-                                                    </span>
+                                                    {editingOrgId === org.id ? (
+                                                        <div className="flex items-center gap-1.5 mt-1 sm:mt-0">
+                                                            <input
+                                                                type="email"
+                                                                value={editAdminEmail}
+                                                                onChange={(e) => setEditAdminEmail(e.target.value)}
+                                                                placeholder="nouvel.admin@organisation.ch"
+                                                                className="bg-slate-950 border border-purple-500/60 rounded px-2 py-0.5 text-xs text-white focus:outline-none w-56"
+                                                                autoFocus
+                                                            />
+                                                            <button
+                                                                onClick={() => handleUpdateAdmin(org.id)}
+                                                                disabled={isUpdatingAdmin || !editAdminEmail.trim()}
+                                                                className="p-1 bg-purple-600 hover:bg-purple-500 text-white rounded transition-colors disabled:opacity-50"
+                                                                title="Enregistrer"
+                                                            >
+                                                                {isUpdatingAdmin ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setEditingOrgId(null)}
+                                                                className="p-1 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded transition-colors"
+                                                                title="Annuler"
+                                                            >
+                                                                <X size={12} />
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-purple-400 font-medium flex items-center gap-1.5">
+                                                            Admin: {org.adminEmail || "Non assigné"}
+                                                            <button
+                                                                onClick={() => {
+                                                                    setEditingOrgId(org.id);
+                                                                    setEditAdminEmail(org.adminEmail || '');
+                                                                }}
+                                                                className="text-slate-400 hover:text-purple-300 p-0.5 rounded transition-colors"
+                                                                title="Changer l'administrateur"
+                                                            >
+                                                                <Edit2 size={12} />
+                                                            </button>
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>

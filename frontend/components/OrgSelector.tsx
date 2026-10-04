@@ -3,7 +3,7 @@ import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/App
 import { Organization, Comptabilite } from '../types/rbac';
 import { listAllOrganizations, getUserOrganizations, listComptabilites } from '../services/organizationService';
 import { getUserComptabilites } from '../services/userService';
-import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles } from 'lucide-react';
+import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield } from 'lucide-react';
 import { logout } from '../services/authService';
 import { checkLegacyData, LegacyDataSummary, connectCurrentCompta } from '../services/migrationService';
 import { createComptabilite, deleteComptabilite, toggleArchiveComptabilite } from '../services/organizationService';
@@ -438,6 +438,20 @@ export const OrgSelector: React.FC = () => {
                                                 >
                                                     {isCreatingCompta === org.id ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
                                                     Nouvelle Comptabilité
+                                                </button>
+
+                                                <button 
+                                                    onClick={() => {
+                                                        setSelectedOrg(org);
+                                                        setOrgRole(isOrgAdmin ? 'admin' : 'member');
+                                                        const firstCompta = allComptas[0]?.compta || null;
+                                                        if (firstCompta) setSelectedCompta(firstCompta);
+                                                        window.location.hash = '#admin';
+                                                    }}
+                                                    className="flex items-center justify-center gap-2 w-full py-2 bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border border-purple-800/50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                                                >
+                                                    <Shield size={16} className="text-purple-400" />
+                                                    Gérer les membres & rôles
                                                 </button>
                                                 
                                                 {hasLegacyData && (

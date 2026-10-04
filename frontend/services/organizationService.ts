@@ -80,6 +80,30 @@ export const updateOrganization = async (orgId: string, data: Partial<Organizati
     await updateDoc(doc(db, 'organizations', orgId), data);
 }
 
+export const changeOrganizationAdmin = async (orgId: string, newAdminEmail: string): Promise<void> => {
+    const db = getDb();
+    const normalized = newAdminEmail.trim().toLowerCase();
+
+    // 1. Update org document
+    await updateDoc(doc(db, 'organizations', orgId), {
+        adminEmail: normalized
+    });
+
+    // 2. Link member as ADMIN in organization members
+    const usersSnap = await getDocs(query(collection(db, 'users'), where('email', '==', normalized)));
+    const targetDocId = !usersSnap.empty ? usersSnap.docs[0].id : normalized;
+    const targetUid = !usersSnap.empty ? usersSnap.docs[0].id : undefined;
+
+    const orgAdminMemberRef = doc(db, 'organizations', orgId, 'members', targetDocId);
+    await setDoc(orgAdminMemberRef, {
+        role: OrgRole.ADMIN,
+        status: 'approved',
+        joinedAt: Date.now(),
+        email: normalized,
+        uid: targetUid || null
+    }, { merge: true });
+};
+
 export const createComptabilite = async (orgId: string, data: Omit<Comptabilite, 'id' | 'createdAt'>, creatorUid: string): Promise<string> => {
     const db = getDb();
     const comptaRef = doc(collection(db, 'organizations', orgId, 'comptabilites'));

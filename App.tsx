@@ -35,7 +35,16 @@ function App() {
     const [currentHash, setCurrentHash] = useState(window.location.hash);
 
     useEffect(() => {
-        const handleHashChange = () => setCurrentHash(window.location.hash);
+        const handleHashChange = () => {
+            const h = window.location.hash;
+            setCurrentHash(h);
+            if (h === '#admin') {
+                setActiveTab('admin');
+            }
+        };
+        if (window.location.hash === '#admin') {
+            setActiveTab('admin');
+        }
         window.addEventListener('hashchange', handleHashChange);
         return () => window.removeEventListener('hashchange', handleHashChange);
     }, []);
