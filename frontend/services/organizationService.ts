@@ -375,21 +375,41 @@ export const setMemberComptaAccess = async (
     email: string,
     comptaAccess: Record<string, ComptaRole>,
     role: OrgRole = OrgRole.MEMBER,
-    displayName?: string
+    displayName?: string,
+    knownUid?: string
 ): Promise<void> => {
     const db = getDb();
     const normalizedEmail = email.trim().toLowerCase();
     
-    // Check if user already exists
-    const usersSnap = await getDocs(query(collection(db, 'users'), where('email', '==', normalizedEmail)));
-    let memberDocId = normalizedEmail;
-    let existingUid: string | undefined = undefined;
-    if (!usersSnap.empty) {
-        existingUid = usersSnap.docs[0].id;
-        memberDocId = existingUid;
+    // Check if user already exists in users collection
+    let existingUid: string | undefined = knownUid || undefined;
+    if (!existingUid) {
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const matchedUser = usersSnap.docs.find(
+            d => (d.data().email || '').trim().toLowerCase() === normalizedEmail
+        );
+        if (matchedUser) {
+            existingUid = matchedUser.id;
+        }
+    }
+
+    const memberDocId = existingUid || normalizedEmail;
+
+    // If a pre-invited doc existed under email ID and now we have a UID, clean up the old email-keyed doc
+    if (existingUid && existingUid !== normalizedEmail) {
+        try {
+            const legacyEmailRef = doc(db, 'organizations', orgId, 'members', normalizedEmail);
+            const legacySnap = await getDoc(legacyEmailRef);
+            if (legacySnap.exists()) {
+                await deleteDoc(legacyEmailRef);
+            }
+        } catch (e) {
+            console.warn("Could not clean up legacy email member doc:", e);
+        }
     }
 
     // Save in organizations/{orgId}/members/{memberDocId}
+    // First merge base fields, then explicitly overwrite comptaAccess so removed keys are not kept by deep-merge
     const memberRef = doc(db, 'organizations', orgId, 'members', memberDocId);
     await setDoc(memberRef, {
         email: normalizedEmail,
@@ -400,16 +420,29 @@ export const setMemberComptaAccess = async (
         displayName: displayName || normalizedEmail.split('@')[0],
         comptaAccess
     }, { merge: true });
+    await updateDoc(memberRef, { comptaAccess });
 
-    // Also update compta members in subcollections for direct access
-    for (const [comptaId, cRole] of Object.entries(comptaAccess)) {
-        if (existingUid) {
-            await setDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId, 'members', existingUid), {
-                uid: existingUid,
-                role: cRole,
-                email: normalizedEmail,
-                addedAt: Date.now()
-            });
+    // Sync compta members in subcollections (add active roles, remove revoked ones)
+    if (existingUid) {
+        const allComptasSnap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites'));
+        for (const cDoc of allComptasSnap.docs) {
+            const cId = cDoc.id;
+            const cRole = comptaAccess[cId];
+            const subMemberRef = doc(db, 'organizations', orgId, 'comptabilites', cId, 'members', existingUid);
+            if (cRole && (cRole as string) !== 'none') {
+                await setDoc(subMemberRef, {
+                    uid: existingUid,
+                    role: cRole,
+                    email: normalizedEmail,
+                    addedAt: Date.now()
+                });
+            } else {
+                try {
+                    await deleteDoc(subMemberRef);
+                } catch (e) {
+                    // Ignore if didn't exist
+                }
+            }
         }
     }
 };
@@ -425,7 +458,21 @@ export const listOrganizationMembers = async (orgId: string): Promise<Organizati
 
 export const removeOrganizationMember = async (orgId: string, memberId: string): Promise<void> => {
     const db = getDb();
-    await deleteDoc(doc(db, 'organizations', orgId, 'members', memberId));
+    const memberRef = doc(db, 'organizations', orgId, 'members', memberId);
+    const memberSnap = await getDoc(memberRef);
+    const uid = memberSnap.exists() ? (memberSnap.data().uid || memberId) : memberId;
+
+    await deleteDoc(memberRef);
+
+    // Also revoke access in all comptabilites subcollections of this org
+    try {
+        const comptasSnap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites'));
+        for (const cDoc of comptasSnap.docs) {
+            await deleteDoc(doc(db, 'organizations', orgId, 'comptabilites', cDoc.id, 'members', uid));
+        }
+    } catch (e) {
+        console.warn("Could not clean up compta subcollection members:", e);
+    }
 };
 
 export const getUserOrganizations = async (uid: string, userEmail?: string): Promise<Organization[]> => {
@@ -436,56 +483,47 @@ export const getUserOrganizations = async (uid: string, userEmail?: string): Pro
     const normalizedEmail = userEmail?.trim().toLowerCase();
 
     try {
-        // 1. Check organizations where user is designated admin by email or createdBy
-        if (normalizedEmail) {
-            const adminEmailQuery = query(collection(db, 'organizations'), where('adminEmail', '==', normalizedEmail));
-            const adminEmailSnap = await getDocs(adminEmailQuery);
-            for (const d of adminEmailSnap.docs) {
-                if (!seenOrgIds.has(d.id)) {
-                    seenOrgIds.add(d.id);
-                    result.push(d.data() as Organization);
-                }
-            }
-        }
+        const orgsSnap = await getDocs(collection(db, 'organizations'));
+        for (const orgDoc of orgsSnap.docs) {
+            const orgData = orgDoc.data() as Organization;
+            const orgId = orgDoc.id;
 
-        // 2. Query members collection group by uid
-        const membersQuery = query(collectionGroup(db, 'members'), where('uid', '==', uid));
-        const membersSnapshot = await getDocs(membersQuery);
-        
-        for (const memberDoc of membersSnapshot.docs) {
-            const pathSegments = memberDoc.ref.path.split('/');
-            // organizations/{orgId}/members/{uid}
-            if (pathSegments.length === 4 && pathSegments[0] === 'organizations' && pathSegments[2] === 'members') {
-                if (memberDoc.data().status === 'approved') {
-                    const orgId = pathSegments[1];
-                    if (!seenOrgIds.has(orgId)) {
-                        const orgSnap = await getDoc(doc(db, 'organizations', orgId));
-                        if (orgSnap.exists()) {
-                            seenOrgIds.add(orgId);
-                            result.push(orgSnap.data() as Organization);
-                        }
-                    }
-                }
+            // 1. User is creator or designated admin by email
+            const isCreator = orgData.createdBy === uid;
+            const isAdminByEmail = normalizedEmail && orgData.adminEmail && orgData.adminEmail.trim().toLowerCase() === normalizedEmail;
+            if (isCreator || isAdminByEmail) {
+                seenOrgIds.add(orgId);
+                result.push(orgData);
+                continue;
             }
-        }
 
-        // 3. Query members collection group by email (if user was pre-invited before account creation)
-        if (normalizedEmail) {
-            const emailMembersQuery = query(collectionGroup(db, 'members'), where('email', '==', normalizedEmail));
-            const emailMembersSnap = await getDocs(emailMembersQuery);
-            for (const memberDoc of emailMembersSnap.docs) {
-                const pathSegments = memberDoc.ref.path.split('/');
-                if (pathSegments.length === 4 && pathSegments[0] === 'organizations' && pathSegments[2] === 'members') {
-                    if (memberDoc.data().status === 'approved') {
-                        const orgId = pathSegments[1];
-                        if (!seenOrgIds.has(orgId)) {
-                            const orgSnap = await getDoc(doc(db, 'organizations', orgId));
-                            if (orgSnap.exists()) {
-                                seenOrgIds.add(orgId);
-                                result.push(orgSnap.data() as Organization);
-                            }
-                        }
-                    }
+            // 2. Check organizations/{orgId}/members collection directly (no collectionGroup index required)
+            const membersSnap = await getDocs(collection(db, 'organizations', orgId, 'members'));
+            const isApprovedMember = membersSnap.docs.some(mDoc => {
+                const m = mDoc.data();
+                if (m.status === 'rejected' || m.status === 'pending') return false;
+                const matchUid = mDoc.id === uid || m.uid === uid;
+                const matchEmail = normalizedEmail && (
+                    mDoc.id.toLowerCase() === normalizedEmail ||
+                    (m.email && m.email.trim().toLowerCase() === normalizedEmail)
+                );
+                return matchUid || matchEmail;
+            });
+
+            if (isApprovedMember) {
+                seenOrgIds.add(orgId);
+                result.push(orgData);
+                continue;
+            }
+
+            // 3. Check if user has direct access to at least one comptabilite in this org
+            const comptasSnap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites'));
+            for (const cDoc of comptasSnap.docs) {
+                const cMemberSnap = await getDoc(doc(db, 'organizations', orgId, 'comptabilites', cDoc.id, 'members', uid));
+                if (cMemberSnap.exists()) {
+                    seenOrgIds.add(orgId);
+                    result.push(orgData);
+                    break;
                 }
             }
         }

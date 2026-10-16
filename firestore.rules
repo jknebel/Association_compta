@@ -12,11 +12,13 @@ service cloud.firestore {
       return request.auth.uid == userId;
     }
 
-    // Allow users to read and write their own documents
+    // Allow all authenticated users to read user profiles (needed for member/role assignment),
+    // and only the owner to write their own profile.
     match /users/{userId} {
-      allow read, write: if isAuthenticated() && isOwner(userId);
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isOwner(userId);
       
-    // Allow access to subcollections (accounts, transactions, receipts)
+      // Allow access to personal subcollections (legacy accounts, transactions, receipts) only to owner
       match /{document=**} {
         allow read, write: if isAuthenticated() && isOwner(userId);
       }
@@ -24,15 +26,19 @@ service cloud.firestore {
 
     // Phase 2 : Organisations
     match /organizations/{orgId} {
-      allow read, write: if isAuthenticated();
+      allow read: if true;
+      allow write: if isAuthenticated();
       
       match /{document=**} {
         allow read, write: if isAuthenticated();
       }
     }
 
-    // Autoriser la recherche de tous les rôles d'un utilisateur (collectionGroup 'members')
+    // Autoriser la recherche de tous les rôles d'un utilisateur (collectionGroup 'members' & 'invitations')
     match /{path=**}/members/{memberId} {
+      allow read: if isAuthenticated();
+    }
+    match /{path=**}/invitations/{inviteId} {
       allow read: if isAuthenticated();
     }
   }

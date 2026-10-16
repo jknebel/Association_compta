@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User } from 'firebase/auth';
 import { useAuth as useFirebaseAuth } from '../services/authService';
-import { getUserProfile } from '../services/userService';
+import { getUserProfile, createUserProfile } from '../services/userService';
 import { UserProfile, Organization, Comptabilite, OrgRole, ComptaRole } from '../types/rbac';
 
 // --- Auth Context ---
@@ -72,8 +72,21 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     const refreshProfile = async () => {
         if (user) {
-            const profile = await getUserProfile(user.uid);
-            setUserProfile(profile);
+            try {
+                let profile = await getUserProfile(user.uid);
+                if (!profile && user.email) {
+                    const parts = (user.displayName || '').trim().split(' ');
+                    await createUserProfile(user.uid, {
+                        firstName: parts[0] || user.email.split('@')[0],
+                        lastName: parts.slice(1).join(' ') || '',
+                        email: user.email.trim().toLowerCase()
+                    });
+                    profile = await getUserProfile(user.uid);
+                }
+                setUserProfile(profile);
+            } catch (e) {
+                console.error("Failed to fetch/create user profile", e);
+            }
             
             try {
                 const idTokenResult = await user.getIdTokenResult();

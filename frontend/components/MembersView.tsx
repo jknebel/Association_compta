@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Account, Transaction } from '../../types';
 import { Edit2, Save, X, AlertTriangle, CheckCircle, XCircle, FileSpreadsheet, RefreshCw, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { useComptaContext } from '../contexts/AppContext';
 
 interface MembersViewProps {
     accounts: Account[];
@@ -10,6 +11,8 @@ interface MembersViewProps {
 }
 
 export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions, onUpdateTransaction }) => {
+    const { comptaRole } = useComptaContext();
+    const isCaissier = comptaRole !== 'viewer' && comptaRole !== 'verificateur';
     const [editingTxnId, setEditingTxnId] = useState<string | null>(null);
     const [tempName, setTempName] = useState("");
     const [reconciliationData, setReconciliationData] = useState<any[] | null>(null);
@@ -18,6 +21,7 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
     const membershipAccounts = accounts.filter(a => a.isMembership);
 
     const startEdit = (txn: Transaction) => {
+        if (!isCaissier) return;
         setEditingTxnId(txn.id);
         setTempName(txn.detectedMemberName || "");
     };
@@ -260,13 +264,17 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
                                                                 ) : (
                                                                     hasName ? (
                                                                         t.detectedMemberName
-                                                                    ) : (
+                                                                    ) : isCaissier ? (
                                                                         <span
                                                                             onClick={() => startEdit(t)}
                                                                             className="flex items-center gap-2 text-amber-400 cursor-pointer hover:underline"
                                                                         >
                                                                             <AlertTriangle size={14} />
                                                                             Assigner un nom
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="flex items-center gap-2 text-slate-500 italic">
+                                                                            Non renseigné
                                                                         </span>
                                                                     )
                                                                 )}
@@ -277,13 +285,15 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
                                                                 <span className="px-2 py-0.5 bg-green-900/30 text-green-400 border border-green-800 rounded-full text-xs font-bold">PAYÉ</span>
                                                             </td>
                                                             <td className="px-6 py-3 text-right">
-                                                                {isEditing ? (
-                                                                    <div className="flex justify-end gap-2">
-                                                                        <button onClick={() => saveEdit(t)} className="p-1 bg-blue-600 text-white rounded hover:bg-blue-500"><Save size={14} /></button>
-                                                                        <button onClick={cancelEdit} className="p-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600"><X size={14} /></button>
-                                                                    </div>
-                                                                ) : (
-                                                                    <button onClick={() => startEdit(t)} className="text-slate-500 hover:text-blue-400 transition-colors p-1"><Edit2 size={14} /></button>
+                                                                {isCaissier && (
+                                                                    isEditing ? (
+                                                                        <div className="flex justify-end gap-2">
+                                                                            <button onClick={() => saveEdit(t)} className="p-1 bg-blue-600 text-white rounded hover:bg-blue-500"><Save size={14} /></button>
+                                                                            <button onClick={cancelEdit} className="p-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600"><X size={14} /></button>
+                                                                        </div>
+                                                                    ) : (
+                                                                        <button onClick={() => startEdit(t)} className="text-slate-500 hover:text-blue-400 transition-colors p-1"><Edit2 size={14} /></button>
+                                                                    )
                                                                 )}
                                                             </td>
                                                         </tr>

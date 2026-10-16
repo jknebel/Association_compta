@@ -59,12 +59,24 @@ export const AdminView: React.FC = () => {
                 listComptabilites(selectedOrg.id),
                 listInvitations(selectedOrg.id),
                 listOrganizationMembers(selectedOrg.id),
-                listAllRegisteredUsers(selectedOrg.id)
+                listAllRegisteredUsers(selectedOrg.id, selectedOrg.name)
             ]);
             setComptas(cList);
             setInvitations(iList);
             setMembers(mList);
-            setRegisteredUsers(uList);
+
+            // S'assurer que les membres déjà présents dans l'organisation apparaissent aussi dans le sélecteur
+            const combinedUsers = [...uList];
+            for (const m of mList) {
+                if (m.email && !combinedUsers.some(u => u.email.toLowerCase() === m.email.toLowerCase())) {
+                    combinedUsers.push({
+                        uid: m.uid || m.id,
+                        email: m.email.toLowerCase(),
+                        displayName: m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email
+                    });
+                }
+            }
+            setRegisteredUsers(combinedUsers);
         } catch (e) {
             console.error("Fetch admin data error", e);
         } finally {
@@ -84,7 +96,7 @@ export const AdminView: React.FC = () => {
                 currency: 'CHF',
                 fiscalYearStart: '2026-01-01',
                 fiscalYearEnd: '2026-12-31'
-            });
+            }, user.uid);
             setNewComptaName('');
             setNewComptaDesc('');
             await fetchData();
@@ -115,7 +127,8 @@ export const AdminView: React.FC = () => {
                 memberEmail.trim(),
                 memberComptaRoles,
                 memberOrgRole,
-                memberName.trim() || undefined
+                memberName.trim() || undefined,
+                selectedFirebaseUserUid || undefined
             );
             setMemberEmail('');
             setMemberName('');

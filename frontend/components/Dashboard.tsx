@@ -2,6 +2,7 @@ import React from 'react';
 import { Account, Transaction, AccountType, TransactionStatus } from '../../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { Edit2, ChevronRight, ChevronDown, Layers, List } from 'lucide-react';
+import { useComptaContext } from '../contexts/AppContext';
 
 interface DashboardProps {
   transactions: Transaction[];
@@ -11,6 +12,9 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, onUpdateAccount, onNavigate }) => {
+  const { comptaRole } = useComptaContext();
+  const isCaissier = comptaRole !== 'viewer' && comptaRole !== 'verificateur';
+
   // --- CALCULATIONS ---
   
   // 1. Approved Totals
@@ -135,18 +139,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
           </td>
           <td className="px-6 py-3 text-right text-slate-500 font-mono text-xs italic">
             {(acc.type === AccountType.ASSET || acc.type === AccountType.LIABILITY) && (depth === 0 || !isGrouped) ? (
-               <div onClick={(e) => e.stopPropagation()}>
-                 <input 
-                   type="number" 
-                   step="0.01" 
-                   defaultValue={initial} 
-                   onBlur={(e) => {
-                     const val = parseFloat(e.target.value);
-                     if (!isNaN(val) && val !== initial) onUpdateAccount({ ...acc, initialBalance: val });
-                   }}
-                   className="bg-transparent border-b border-slate-800 hover:border-slate-600 focus:border-blue-500 text-right w-24 focus:outline-none transition-colors"
-                 />
-               </div>
+               isCaissier ? (
+                 <div onClick={(e) => e.stopPropagation()}>
+                   <input 
+                     type="number" 
+                     step="0.01" 
+                     defaultValue={initial} 
+                     onBlur={(e) => {
+                       const val = parseFloat(e.target.value);
+                       if (!isNaN(val) && val !== initial) onUpdateAccount({ ...acc, initialBalance: val });
+                     }}
+                     className="bg-transparent border-b border-slate-800 hover:border-slate-600 focus:border-blue-500 text-right w-24 focus:outline-none transition-colors"
+                   />
+                 </div>
+               ) : (
+                 <span>{formatAmount(initial)}</span>
+               )
             ) : ''}
           </td>
           <td className="px-6 py-3 text-right text-rose-400 font-mono">
@@ -204,18 +212,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
         <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-lg border-l-4 border-l-blue-500">
           <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Solde à l'ouverture</h3>
           {accounts.filter(a => a.type === AccountType.ASSET).slice(0, 1).map(acc => (
-            <div key={acc.id} className="mt-1 flex items-baseline group cursor-pointer" onClick={() => {
+            <div key={acc.id} className={`mt-1 flex items-baseline group ${isCaissier ? 'cursor-pointer' : ''}`} onClick={() => {
+                if (!isCaissier) return;
                 setEditingAccount(acc);
                 setTempBalance(acc.initialBalance || 0);
             }}>
               <span className="text-slate-500 text-xs mr-1">CHF</span>
-              <span className="text-xl font-black text-white group-hover:text-blue-400 transition-colors">
+              <span className={`text-xl font-black text-white ${isCaissier ? 'group-hover:text-blue-400' : ''} transition-colors`}>
                 {formatAmount(acc.initialBalance || 0)}
               </span>
-              <Edit2 size={12} className="ml-2 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+              {isCaissier && <Edit2 size={12} className="ml-2 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity" />}
             </div>
           ))}
-          {accounts.filter(a => a.type === AccountType.ASSET).length === 0 && (
+          {accounts.filter(a => a.type === AccountType.ASSET).length === 0 && isCaissier && (
             <div 
               className="mt-2 p-2 border border-dashed border-slate-700 rounded-lg hover:border-blue-500 hover:bg-blue-500/5 cursor-pointer transition-all"
               onClick={() => {

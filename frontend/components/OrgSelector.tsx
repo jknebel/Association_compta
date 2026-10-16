@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/AppContext';
 import { Organization, Comptabilite } from '../types/rbac';
-import { listAllOrganizations, getUserOrganizations, listComptabilites } from '../services/organizationService';
+import { listAllOrganizations, getUserOrganizations, listComptabilites, listOrganizationMembers } from '../services/organizationService';
 import { getUserComptabilites } from '../services/userService';
 import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield } from 'lucide-react';
 import { logout } from '../services/authService';
@@ -15,6 +15,7 @@ export const OrgSelector: React.FC = () => {
     const { setSelectedCompta, setComptaRole } = useComptaContext();
     
     const [organizations, setOrganizations] = useState<Organization[]>([]);
+    const [adminOrgIds, setAdminOrgIds] = useState<Record<string, boolean>>({});
     const [comptasByOrg, setComptasByOrg] = useState<Record<string, Array<{compta: Comptabilite, role: any}>>>({});
     const [loading, setLoading] = useState(true);
     const [legacySummary, setLegacySummary] = useState<LegacyDataSummary | null>(null);
@@ -50,10 +51,12 @@ export const OrgSelector: React.FC = () => {
             });
 
             const byOrg: Record<string, Array<{compta: Comptabilite, role: any}>> = {};
+            const orgAdminMap: Record<string, boolean> = {};
             
             if (isSuperAdmin) {
                 // SuperAdmin a accès à TOUTES les comptas
                 for (const org of orgs) {
+                    orgAdminMap[org.id] = true;
                     const allComptas = await listComptabilites(org.id);
                     byOrg[org.id] = allComptas.map(c => ({ 
                         compta: c, 
@@ -63,8 +66,16 @@ export const OrgSelector: React.FC = () => {
             } else {
                 // Admin d'une organisation a accès à toutes les comptabilités de son organisation
                 for (const org of orgs) {
-                    const isOrgAdmin = org.createdBy === user.uid || (user.email && org.adminEmail && org.adminEmail.trim().toLowerCase() === user.email.trim().toLowerCase());
+                    const orgMembers = await listOrganizationMembers(org.id);
+                    const normalizedUserEmail = user.email?.trim().toLowerCase();
+                    const isMemberAdmin = orgMembers.some(m => 
+                        m.role === 'admin' && 
+                        m.status !== 'rejected' && 
+                        (m.uid === user.uid || m.id === user.uid || (normalizedUserEmail && m.email?.trim().toLowerCase() === normalizedUserEmail))
+                    );
+                    const isOrgAdmin = isMemberAdmin || org.createdBy === user.uid || (normalizedUserEmail && org.adminEmail && org.adminEmail.trim().toLowerCase() === normalizedUserEmail);
                     if (isOrgAdmin) {
+                        orgAdminMap[org.id] = true;
                         const allComptas = await listComptabilites(org.id);
                         byOrg[org.id] = allComptas.map(c => ({ 
                             compta: c, 
@@ -82,6 +93,7 @@ export const OrgSelector: React.FC = () => {
                 });
             }
             
+            setAdminOrgIds(orgAdminMap);
             setComptasByOrg(byOrg);
         } catch (err) {
             console.error("Error fetching orgs/comptas:", err);
@@ -96,6 +108,7 @@ export const OrgSelector: React.FC = () => {
 
     const isOrgAdminOf = (org: Organization) => {
         if (isSuperAdmin) return true;
+        if (adminOrgIds[org.id]) return true;
         if (user && org.createdBy === user.uid) return true;
         if (user?.email && org.adminEmail && org.adminEmail.trim().toLowerCase() === user.email.trim().toLowerCase()) return true;
         return false;

@@ -4,6 +4,7 @@ import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon
 import { analyzeReceipt, processReceiptBackend } from '../services/geminiService';
 import { uploadReceipt } from '../services/storageService';
 import { formatDate } from '../services/formatUtils';
+import { useComptaContext } from '../contexts/AppContext';
 
 interface ReceiptsViewProps {
     receipts: Receipt[];
@@ -20,6 +21,8 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     onDeleteReceipt,
     onLinkReceipt
 }) => {
+    const { comptaRole } = useComptaContext();
+    const isViewer = comptaRole === 'viewer';
     const [isProcessing, setIsProcessing] = useState(false);
     const [dragActive, setDragActive] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -235,51 +238,55 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
             <header className="mb-8">
                 <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
                     <Upload className="text-blue-500" />
-                    Ajouter Pièces Comptables
+                    Pièces Comptables
                 </h2>
                 <p className="text-slate-400 mt-2">
-                    Déposez vos factures et reçus ici. L'IA tentera de les associer automatiquement à vos transactions existantes.
+                    {isViewer
+                        ? "Consultation des factures et justificatifs enregistrés."
+                        : "Déposez vos factures et reçus ici. L'IA tentera de les associer automatiquement à vos transactions existantes."}
                 </p>
             </header>
 
-            {/* UPLOAD AREA */}
-            <div
-                className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center transition-all mb-8 ${dragActive ? 'border-blue-500 bg-blue-900/20' : 'border-slate-700 bg-slate-900 hover:border-slate-500'
-                    }`}
-                onDragEnter={handleDrag}
-                onDragLeave={handleDrag}
-                onDragOver={handleDrag}
-                onDrop={handleDrop}
-            >
-                {isProcessing ? (
-                    <div className="flex flex-col items-center gap-3">
-                        <Loader2 className="animate-spin text-blue-500" size={32} />
-                        <p className="text-slate-300">Analyse par IA en cours...</p>
-                    </div>
-                ) : (
-                    <>
-                        <div className="bg-slate-800 p-4 rounded-full mb-4">
-                            <FileText size={32} className="text-slate-400" />
+            {/* UPLOAD AREA (Hidden for Viewer) */}
+            {!isViewer && (
+                <div
+                    className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center transition-all mb-8 ${dragActive ? 'border-blue-500 bg-blue-900/20' : 'border-slate-700 bg-slate-900 hover:border-slate-500'
+                        }`}
+                    onDragEnter={handleDrag}
+                    onDragLeave={handleDrag}
+                    onDragOver={handleDrag}
+                    onDrop={handleDrop}
+                >
+                    {isProcessing ? (
+                        <div className="flex flex-col items-center gap-3">
+                            <Loader2 className="animate-spin text-blue-500" size={32} />
+                            <p className="text-slate-300">Analyse par IA en cours...</p>
                         </div>
-                        <h3 className="text-lg font-medium text-slate-200 mb-2">Glissez-déposez vos fichiers ici</h3>
-                        <p className="text-sm text-slate-500 mb-4">PDF, JPG, PNG acceptés</p>
-                        <button
-                            onClick={() => fileInputRef.current?.click()}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors font-medium text-sm"
-                        >
-                            Sélectionner des fichiers
-                        </button>
-                        <input
-                            ref={fileInputRef}
-                            type="file"
-                            multiple
-                            accept="image/*,application/pdf"
-                            className="hidden"
-                            onChange={handleChange}
-                        />
-                    </>
-                )}
-            </div>
+                    ) : (
+                        <>
+                            <div className="bg-slate-800 p-4 rounded-full mb-4">
+                                <FileText size={32} className="text-slate-400" />
+                            </div>
+                            <h3 className="text-lg font-medium text-slate-200 mb-2">Glissez-déposez vos fichiers ici</h3>
+                            <p className="text-sm text-slate-500 mb-4">PDF, JPG, PNG acceptés</p>
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors font-medium text-sm"
+                            >
+                                Sélectionner des fichiers
+                            </button>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                multiple
+                                accept="image/*,application/pdf"
+                                className="hidden"
+                                onChange={handleChange}
+                            />
+                        </>
+                    )}
+                </div>
+            )}
 
             {/* LIST OF RECEIPTS */}
             <div className="flex-1 overflow-y-auto">
@@ -320,9 +327,11 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                         <span className="text-sm font-medium text-slate-200 truncate pr-2" title={receipt.fileName}>
                                             {receipt.fileName ? (receipt.fileName.includes('_') ? receipt.fileName.split('_').slice(1).join('_') : receipt.fileName) : "Sans nom"}
                                         </span>
-                                        <button onClick={() => onDeleteReceipt(receipt.id)} className="text-slate-600 hover:text-rose-500">
-                                            <Trash2 size={16} />
-                                        </button>
+                                        {!isViewer && (
+                                            <button onClick={() => onDeleteReceipt(receipt.id)} className="text-slate-600 hover:text-rose-500">
+                                                <Trash2 size={16} />
+                                            </button>
+                                        )}
                                     </div>
 
                                     <div className="flex gap-4 text-xs text-slate-400 mb-4">
@@ -370,12 +379,14 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                                 {matches.slice(0, 2).map(m => (
                                                     <button
                                                         key={m.id}
+                                                        disabled={isViewer}
                                                         onClick={() => {
+                                                            if (isViewer) return;
                                                             if (window.confirm(`Lier ce justificatif à la transaction :\n\n"${m.description}"\n${m.date} — CHF ${m.amount.toFixed(2)}\n\nConfirmer ?`)) {
                                                                 onLinkReceipt(receipt.id, m.id);
                                                             }
                                                         }}
-                                                        className="w-full text-left p-2 rounded bg-emerald-900/10 hover:bg-emerald-900/20 border border-emerald-900/30 text-xs transition-colors group block"
+                                                        className={`w-full text-left p-2 rounded bg-emerald-900/10 ${isViewer ? '' : 'hover:bg-emerald-900/20'} border border-emerald-900/30 text-xs transition-colors group block`}
                                                     >
                                                         <div className="text-slate-300 font-medium truncate" title={m.description}>{m.description}</div>
                                                         {m.notes && (

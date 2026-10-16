@@ -170,4 +170,4 @@ jobs:
         run: |
           echo "⚠️ ATTENTION: Les rules seront déployées sur le projet de PROD (même projet Firebase)."
           echo "Vérifiez que les nouvelles rules sont rétro-compatibles avec l'ancienne structure."
-          firebase deploy --only firestore:rules,storage --project ${{ secrets.GCP_PROJECT_ID }}
+          firebase deploy --only firestore:rules,firestore:indexes,storage --project ${{ secrets.GCP_PROJECT_ID }}

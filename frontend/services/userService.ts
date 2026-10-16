@@ -12,12 +12,14 @@ export const createUserProfile = async (
     
     const assignedOrgId = data.orgId || 'TDGL';
     const assignedOrgName = data.orgName || 'TDGL';
+    const normalizedEmail = (data.email || '').trim().toLowerCase();
 
     if (!docSnap.exists()) {
         const newUser: UserProfile = {
             uid,
             ...data,
-            displayName: `${data.firstName} ${data.lastName}`.trim(),
+            email: normalizedEmail,
+            displayName: `${data.firstName} ${data.lastName}`.trim() || normalizedEmail.split('@')[0],
             createdAt: Date.now(),
             orgId: assignedOrgId,
             orgName: assignedOrgName,
@@ -30,11 +32,17 @@ export const createUserProfile = async (
         };
         await setDoc(userRef, newUser);
     } else {
-        if (data.orgId && !docSnap.data()?.orgId) {
-            await updateDoc(userRef, {
-                orgId: assignedOrgId,
-                orgName: assignedOrgName
-            });
+        const existingData = docSnap.data();
+        const updates: Record<string, any> = {};
+        if (data.orgId && !existingData?.orgId) {
+            updates.orgId = assignedOrgId;
+            updates.orgName = assignedOrgName;
+        }
+        if (normalizedEmail && existingData?.email !== normalizedEmail) {
+            updates.email = normalizedEmail;
+        }
+        if (Object.keys(updates).length > 0) {
+            await updateDoc(userRef, updates);
         }
     }
 }
@@ -60,65 +68,25 @@ export const getUserComptabilites = async (uid: string, userEmail?: string): Pro
     const normalizedEmail = userEmail?.trim().toLowerCase();
 
     try {
-        // 1. Direct compta members by uid: organizations/{orgId}/comptabilites/{comptaId}/members/{uid}
-        const membersQuery = query(collectionGroup(db, 'members'), where('uid', '==', uid));
-        const membersSnapshot = await getDocs(membersQuery);
-        
-        for (const memberDoc of membersSnapshot.docs) {
-            const pathSegments = memberDoc.ref.path.split('/');
-            // Check direct compta member
-            if (pathSegments.length === 6 && pathSegments[0] === 'organizations' && pathSegments[2] === 'comptabilites' && pathSegments[4] === 'members') {
-                const orgId = pathSegments[1];
-                const comptaId = pathSegments[3];
-                const role = memberDoc.data().role as ComptaRole;
-                
-                if (!seenComptaIds.has(comptaId)) {
-                    const comptaSnap = await getDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId));
-                    if (comptaSnap.exists()) {
-                        seenComptaIds.add(comptaId);
-                        result.push({
-                            orgId,
-                            compta: comptaSnap.data() as Comptabilite,
-                            role
-                        });
-                    }
-                }
-            }
-            
-            // Check org member with comptaAccess map
-            if (pathSegments.length === 4 && pathSegments[0] === 'organizations' && pathSegments[2] === 'members') {
-                const orgId = pathSegments[1];
-                const comptaAccess = memberDoc.data().comptaAccess as Record<string, ComptaRole> | undefined;
-                if (comptaAccess) {
-                    for (const [comptaId, role] of Object.entries(comptaAccess)) {
-                        if (!seenComptaIds.has(comptaId)) {
-                            const comptaSnap = await getDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId));
-                            if (comptaSnap.exists()) {
-                                seenComptaIds.add(comptaId);
-                                result.push({
-                                    orgId,
-                                    compta: comptaSnap.data() as Comptabilite,
-                                    role
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // 1. Parcourir directement les organisations et leurs membres (ne dépend d'aucun index collectionGroup)
+        const orgsSnap = await getDocs(collection(db, 'organizations'));
+        for (const orgDoc of orgsSnap.docs) {
+            const orgId = orgDoc.id;
+            const membersSnap = await getDocs(collection(db, 'organizations', orgId, 'members'));
 
-        // 2. Org members by email if invited before user had uid
-        if (normalizedEmail) {
-            const emailMembersQuery = query(collectionGroup(db, 'members'), where('email', '==', normalizedEmail));
-            const emailSnap = await getDocs(emailMembersQuery);
-            for (const memberDoc of emailSnap.docs) {
-                const pathSegments = memberDoc.ref.path.split('/');
-                if (pathSegments.length === 4 && pathSegments[0] === 'organizations' && pathSegments[2] === 'members') {
-                    const orgId = pathSegments[1];
-                    const comptaAccess = memberDoc.data().comptaAccess as Record<string, ComptaRole> | undefined;
+            for (const memberDoc of membersSnap.docs) {
+                const mData = memberDoc.data();
+                const matchesUid = memberDoc.id === uid || mData.uid === uid;
+                const matchesEmail = normalizedEmail && (
+                    memberDoc.id.toLowerCase() === normalizedEmail ||
+                    (mData.email && mData.email.trim().toLowerCase() === normalizedEmail)
+                );
+
+                if ((matchesUid || matchesEmail) && mData.status !== 'rejected') {
+                    const comptaAccess = mData.comptaAccess as Record<string, ComptaRole> | undefined;
                     if (comptaAccess) {
                         for (const [comptaId, role] of Object.entries(comptaAccess)) {
-                            if (!seenComptaIds.has(comptaId)) {
+                            if (role && (role as string) !== 'none' && !seenComptaIds.has(comptaId)) {
                                 const comptaSnap = await getDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId));
                                 if (comptaSnap.exists()) {
                                     seenComptaIds.add(comptaId);
@@ -133,6 +101,25 @@ export const getUserComptabilites = async (uid: string, userEmail?: string): Pro
                     }
                 }
             }
+
+            // Vérifier aussi les sous-collections directes comptabilites/{comptaId}/members/{uid}
+            const comptasSnap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites'));
+            for (const cDoc of comptasSnap.docs) {
+                const comptaId = cDoc.id;
+                if (seenComptaIds.has(comptaId)) continue;
+                const directMemberSnap = await getDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId, 'members', uid));
+                if (directMemberSnap.exists()) {
+                    const role = directMemberSnap.data().role as ComptaRole;
+                    if (role && (role as string) !== 'none') {
+                        seenComptaIds.add(comptaId);
+                        result.push({
+                            orgId,
+                            compta: cDoc.data() as Comptabilite,
+                            role
+                        });
+                    }
+                }
+            }
         }
     } catch (error) {
         console.error("Error fetching user comptabilites: ", error);
@@ -142,8 +129,9 @@ export const getUserComptabilites = async (uid: string, userEmail?: string): Pro
 };
 
 export const listAllRegisteredUsers = async (
-    filterOrgId?: string
-): Promise<Array<{ uid: string; email: string; displayName: string; firstName?: string; lastName?: string; orgId?: string }>> => {
+    filterOrgId?: string,
+    filterOrgName?: string
+): Promise<Array<{ uid: string; email: string; displayName: string; firstName?: string; lastName?: string; orgId?: string; orgName?: string }>> => {
     try {
         const db = getDb();
         const snap = await getDocs(collection(db, 'users'));
@@ -152,22 +140,31 @@ export const listAllRegisteredUsers = async (
                 const data = d.data();
                 const displayName = data.displayName || `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.email || 'Utilisateur';
                 const userOrgId = data.orgId || (data.organizations ? Object.keys(data.organizations)[0] : '');
+                const userOrgName = data.orgName || '';
                 return {
                     uid: d.id,
                     email: (data.email || '').trim().toLowerCase(),
                     displayName,
                     firstName: data.firstName || '',
                     lastName: data.lastName || '',
-                    orgId: userOrgId
+                    orgId: userOrgId,
+                    orgName: userOrgName
                 };
             })
             .filter(u => !!u.email)
             .filter(u => {
                 if (!filterOrgId) return true; // SuperAdmin voit tout le monde
-                // L'admin d'une association ne voit que les utilisateurs ayant choisi son association
                 if (u.orgId === filterOrgId) return true;
-                const isTDGL = filterOrgId.toUpperCase().includes('TDGL');
-                if (isTDGL && (!u.orgId || u.orgId.toUpperCase().includes('TDGL'))) return true;
+                if (filterOrgName && (
+                    u.orgName?.toUpperCase() === filterOrgName.toUpperCase() ||
+                    u.orgId?.toUpperCase() === filterOrgName.toUpperCase()
+                )) {
+                    return true;
+                }
+                const isTDGL = filterOrgId.toUpperCase().includes('TDGL') || (filterOrgName || '').toUpperCase().includes('TDGL');
+                if (isTDGL && (!u.orgId || u.orgId.toUpperCase().includes('TDGL') || u.orgName?.toUpperCase().includes('TDGL'))) {
+                    return true;
+                }
                 return false;
             });
     } catch (e) {

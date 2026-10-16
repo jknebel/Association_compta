@@ -6,6 +6,7 @@ import {
   ChevronDown, AlertTriangle, Briefcase, Users, ArrowRight, X, Terminal, CheckCircle, Lock
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
+import { useComptaContext } from '../contexts/AppContext';
 
 interface SettingsViewProps {
   accounts: Account[];
@@ -37,6 +38,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   globalContext,
   onSaveContext
 }) => {
+  const { comptaRole } = useComptaContext();
+  const isCaissier = comptaRole !== 'viewer' && comptaRole !== 'verificateur';
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tempAccount, setTempAccount] = useState<Account | null>(null);
   const [showIconSelector, setShowIconSelector] = useState<string | null>(null);
@@ -459,19 +462,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleImportClick} className="flex items-center gap-2 px-3 py-2 bg-blue-900/30 text-blue-300 rounded border border-blue-900/50 hover:bg-blue-900/50 hover:text-white transition-colors text-sm font-medium">
-            <Upload size={16} /> Importer JSON
-          </button>
-          <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleFileChange} />
+          {isCaissier && (
+            <>
+              <button onClick={handleImportClick} className="flex items-center gap-2 px-3 py-2 bg-blue-900/30 text-blue-300 rounded border border-blue-900/50 hover:bg-blue-900/50 hover:text-white transition-colors text-sm font-medium">
+                <Upload size={16} /> Importer JSON
+              </button>
+              <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleFileChange} />
+            </>
+          )}
           <button onClick={handleExportConfig} className="flex items-center gap-2 px-3 py-2 bg-slate-800 text-slate-300 rounded border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors text-sm font-medium">
             <Download size={16} /> Exporter JSON
           </button>
-          <button 
-            onClick={() => setShowAiModal(true)} 
-            className="flex items-center gap-2 px-3 py-2 bg-indigo-900/30 text-indigo-300 rounded border border-indigo-500/30 hover:bg-indigo-900/50 hover:text-white transition-all text-sm font-bold shadow-lg shadow-indigo-950/20 ml-2"
-          >
-            <LucideIcons.Sparkles size={16} /> Informations IA
-          </button>
+          {isCaissier && (
+            <button 
+              onClick={() => setShowAiModal(true)} 
+              className="flex items-center gap-2 px-3 py-2 bg-indigo-900/30 text-indigo-300 rounded border border-indigo-500/30 hover:bg-indigo-900/50 hover:text-white transition-all text-sm font-bold shadow-lg shadow-indigo-950/20 ml-2"
+            >
+              <LucideIcons.Sparkles size={16} /> Informations IA
+            </button>
+          )}
         </div>
       </header>
 
@@ -802,7 +811,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
                     {/* ACTIONS */}
                     <td className="px-6 py-4 align-top text-right">
-                      {isEditing ? (
+                      {!isCaissier ? (
+                        <span className="text-xs text-slate-600 italic">Lecture seule</span>
+                      ) : isEditing ? (
                         <div className="flex flex-col gap-1">
                           <button onClick={handleSave} className="bg-blue-600 text-white px-2 py-1 rounded text-xs">Sauver</button>
                           <button onClick={handleCancelEdit} className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-xs">Annuler</button>
@@ -836,11 +847,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               }))}
           </tbody>
         </table>
-        <div className="p-4 bg-slate-900 border-t border-slate-800 flex justify-center">
-          <button onClick={handleAdd} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium transition-colors">
-            <Plus size={16} /> Ajouter Compte
-          </button>
-        </div>
+        {isCaissier && (
+          <div className="p-4 bg-slate-900 border-t border-slate-800 flex justify-center">
+            <button onClick={handleAdd} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full text-sm font-medium transition-colors">
+              <Plus size={16} /> Ajouter Compte
+            </button>
+          </div>
+        )}
       </div>
 
       {/* INDIVIDUAL ACCOUNT CONTEXT MODAL */}
