@@ -1,6 +1,7 @@
 // Enums for roles
 export enum OrgRole {
     ADMIN = 'admin',
+    CAISSIER = 'caissier',
     MEMBER = 'member'
 }
 

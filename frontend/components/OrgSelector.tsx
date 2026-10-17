@@ -16,6 +16,7 @@ export const OrgSelector: React.FC = () => {
     
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [adminOrgIds, setAdminOrgIds] = useState<Record<string, boolean>>({});
+    const [caissierOrgIds, setCaissierOrgIds] = useState<Record<string, boolean>>({});
     const [comptasByOrg, setComptasByOrg] = useState<Record<string, Array<{compta: Comptabilite, role: any}>>>({});
     const [loading, setLoading] = useState(true);
     const [legacySummary, setLegacySummary] = useState<LegacyDataSummary | null>(null);
@@ -52,6 +53,7 @@ export const OrgSelector: React.FC = () => {
 
             const byOrg: Record<string, Array<{compta: Comptabilite, role: any}>> = {};
             const orgAdminMap: Record<string, boolean> = {};
+            const orgCaissierMap: Record<string, boolean> = {};
             
             if (isSuperAdmin) {
                 // SuperAdmin a accès à TOUTES les comptas
@@ -73,6 +75,14 @@ export const OrgSelector: React.FC = () => {
                         m.status !== 'rejected' && 
                         (m.uid === user.uid || m.id === user.uid || (normalizedUserEmail && m.email?.trim().toLowerCase() === normalizedUserEmail))
                     );
+                    const isMemberCaissier = orgMembers.some(m => 
+                        (m.role === 'caissier' || (m.role as string) === 'comptable') && 
+                        m.status !== 'rejected' && 
+                        (m.uid === user.uid || m.id === user.uid || (normalizedUserEmail && m.email?.trim().toLowerCase() === normalizedUserEmail))
+                    );
+                    if (isMemberCaissier) {
+                        orgCaissierMap[org.id] = true;
+                    }
                     const isOrgAdmin = isMemberAdmin || org.createdBy === user.uid || (normalizedUserEmail && org.adminEmail && org.adminEmail.trim().toLowerCase() === normalizedUserEmail);
                     if (isOrgAdmin) {
                         orgAdminMap[org.id] = true;
@@ -94,6 +104,7 @@ export const OrgSelector: React.FC = () => {
             }
             
             setAdminOrgIds(orgAdminMap);
+            setCaissierOrgIds(orgCaissierMap);
             setComptasByOrg(byOrg);
         } catch (err) {
             console.error("Error fetching orgs/comptas:", err);
@@ -236,7 +247,7 @@ export const OrgSelector: React.FC = () => {
     }
 
     const hasAnyAccess = isSuperAdmin || 
-        organizations.some(org => isOrgAdminOf(org)) || 
+        organizations.some(org => isOrgAdminOf(org) || caissierOrgIds[org.id]) || 
         Object.values(comptasByOrg).some(list => list.length > 0) ||
         hasLegacyData;
 
@@ -491,7 +502,7 @@ export const OrgSelector: React.FC = () => {
                                         )}
                                         
                                         {(() => {
-                                            const hasCaissierAccess = isSuperAdmin || isOrgAdmin || allComptas.some(c => c.role === 'caissier' || c.role === 'comptable' || c.role === 'admin');
+                                            const hasCaissierAccess = isSuperAdmin || isOrgAdmin || caissierOrgIds[org.id] || allComptas.some(c => c.role === 'caissier' || c.role === 'comptable' || c.role === 'admin');
                                             if (!hasCaissierAccess && !isSuperAdmin && !isOrgAdmin) return null;
 
                                             return (

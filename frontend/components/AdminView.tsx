@@ -21,7 +21,7 @@ export const AdminView: React.FC = () => {
     const { user, isSuperAdmin } = useAuthContext();
     const { selectedOrg, orgRole } = useOrgContext();
 
-    const [activeTab, setActiveTab] = useState<'comptas' | 'members'>('comptas');
+    const [activeTab, setActiveTab] = useState<'comptas' | 'members'>('members');
     const [comptas, setComptas] = useState<Comptabilite[]>([]);
     const [invitations, setInvitations] = useState<Invitation[]>([]);
     const [members, setMembers] = useState<OrganizationMember[]>([]);
@@ -70,7 +70,7 @@ export const AdminView: React.FC = () => {
             for (const m of mList) {
                 if (m.email && !combinedUsers.some(u => u.email.toLowerCase() === m.email.toLowerCase())) {
                     combinedUsers.push({
-                        uid: m.uid || m.id,
+                        uid: m.uid || m.id || m.email,
                         email: m.email.toLowerCase(),
                         displayName: m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email
                     });
@@ -159,17 +159,6 @@ export const AdminView: React.FC = () => {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
-    const handleRemoveMember = async (memberId: string) => {
-        if (!selectedOrg || !window.confirm("Retirer ce membre de l'organisation et révoquer tous ses accès ?")) return;
-        try {
-            await removeOrganizationMember(selectedOrg.id, memberId);
-            await fetchData();
-        } catch (e) {
-            console.error("Failed to remove member:", e);
-            alert("Erreur lors de la suppression du membre.");
-        }
-    };
-
     const handleGenerateLink = async () => {
         if (!selectedOrg) return;
         try {
@@ -179,6 +168,17 @@ export const AdminView: React.FC = () => {
             alert("Lien d'invitation généré et copié dans le presse-papier !");
         } catch (e) {
             console.error(e);
+        }
+    };
+
+    const handleRemoveMember = async (memberId: string) => {
+        if (!selectedOrg || !window.confirm("Retirer ce membre de l'organisation et révoquer tous ses accès ?")) return;
+        try {
+            await removeOrganizationMember(selectedOrg.id, memberId);
+            await fetchData();
+        } catch (e) {
+            console.error("Failed to remove member:", e);
+            alert("Erreur lors de la suppression du membre.");
         }
     };
 
@@ -227,24 +227,24 @@ export const AdminView: React.FC = () => {
                     <Settings className="text-blue-500" size={28} />
                     Administration: {selectedOrg.name}
                 </h2>
-                <p className="text-slate-400 text-sm mt-1">Gérez les espaces comptables et les permissions de vos collaborateurs.</p>
+                <p className="text-slate-400 text-sm mt-1">Gérez les utilisateurs inscrits dans l'association, leurs rôles et vos espaces comptables.</p>
             </header>
 
             <div className="flex gap-4 border-b border-slate-800 mb-6">
+                <button 
+                    onClick={() => setActiveTab('members')}
+                    className={`px-4 py-2 font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'members' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                >
+                    <Users size={16} />
+                    Utilisateurs & Rôles ({registeredUsers.length})
+                    {invitations.length > 0 && <span className="bg-amber-600 text-white text-xs px-2 py-0.5 rounded-full">{invitations.length} en attente</span>}
+                </button>
                 <button 
                     onClick={() => setActiveTab('comptas')}
                     className={`px-4 py-2 font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'comptas' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
                 >
                     <Book size={16} />
                     Comptabilités / Catégories ({comptas.length})
-                </button>
-                <button 
-                    onClick={() => setActiveTab('members')}
-                    className={`px-4 py-2 font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'members' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
-                >
-                    <Users size={16} />
-                    Membres & Rôles ({members.length})
-                    {invitations.length > 0 && <span className="bg-amber-600 text-white text-xs px-2 py-0.5 rounded-full">{invitations.length} en attente</span>}
                 </button>
             </div>
 
@@ -392,15 +392,16 @@ export const AdminView: React.FC = () => {
                                 </div>
                                 <div>
                                     <label className="block text-xs font-semibold text-slate-400 mb-1">
-                                        <span className="text-blue-400 font-bold">Niveau 1 :</span> Rôle dans l'organisation
+                                        <span className="text-blue-400 font-bold">Niveau 1 :</span> Rôle dans l'association
                                     </label>
                                     <select
                                         value={memberOrgRole}
                                         onChange={e => setMemberOrgRole(e.target.value as OrgRole)}
                                         className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:outline-none focus:border-blue-500"
                                     >
-                                        <option value={OrgRole.MEMBER}>Membre de l'organisation</option>
-                                        <option value={OrgRole.ADMIN}>Administrateur de l'organisation</option>
+                                        <option value={OrgRole.MEMBER}>Membre (Accès selon comptabilités)</option>
+                                        <option value={OrgRole.CAISSIER}>💼 Caissier (Peut créer de nouvelles comptabilités)</option>
+                                        <option value={OrgRole.ADMIN}>🛡️ Administrateur de l'association</option>
                                     </select>
                                 </div>
                             </div>
@@ -413,7 +414,7 @@ export const AdminView: React.FC = () => {
                                     Définissez les droits du membre pour chaque comptabilité : <strong>Caissier</strong> (saisie & validation), <strong>Vérificateur</strong> (contrôle & notes) ou <strong>Lecteur</strong> (consultation).
                                 </p>
                                 {comptas.length === 0 ? (
-                                    <p className="text-sm text-slate-500 italic">Veuillez d'abord créer au moins une comptabilité dans l'onglet précédent.</p>
+                                    <p className="text-sm text-slate-500 italic">Aucune comptabilité créée pour le moment (un utilisateur avec le rôle "Caissier" de Niveau 1 pourra créer la sienne).</p>
                                 ) : (
                                     <div className="space-y-2">
                                         {comptas.map(c => {
@@ -473,45 +474,59 @@ export const AdminView: React.FC = () => {
                         </form>
                     </div>
 
-                    {/* Liste des membres actuels */}
+                    {/* Liste complète des utilisateurs inscrits dans l'association */}
                     <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
                         <div className="p-4 border-b border-slate-800 bg-slate-950 flex justify-between items-center">
                             <h3 className="font-semibold text-white flex items-center gap-2">
                                 <Users size={18} className="text-blue-500" />
-                                Membres de l'Organisation ({members.length})
+                                Utilisateurs inscrits dans l'Association ({registeredUsers.length})
                             </h3>
                         </div>
 
-                        {members.length === 0 ? (
-                            <div className="p-8 text-center text-slate-500 italic">Aucun membre enregistré pour le moment.</div>
+                        {registeredUsers.length === 0 ? (
+                            <div className="p-8 text-center text-slate-500 italic">Aucun utilisateur inscrit pour cette association pour le moment.</div>
                         ) : (
                             <div className="divide-y divide-slate-800">
-                                {members.map(m => {
-                                    const isAdmin = m.role === OrgRole.ADMIN;
-                                    const accessEntries = Object.entries(m.comptaAccess || {});
+                                {registeredUsers.map(regUser => {
+                                    const m = members.find(mem => mem.email?.toLowerCase() === regUser.email.toLowerCase() || mem.uid === regUser.uid || mem.id === regUser.uid);
+                                    const isAdmin = m?.role === OrgRole.ADMIN;
+                                    const isOrgCaissier = m?.role === OrgRole.CAISSIER || (m?.role as string) === 'comptable';
+                                    const accessEntries = Object.entries(m?.comptaAccess || {});
+                                    const isUnassigned = !m;
+
                                     return (
-                                        <div key={m.id || m.email} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-800/40 transition-colors">
+                                        <div key={regUser.uid || regUser.email} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-800/40 transition-colors">
                                             <div>
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex flex-wrap items-center gap-2">
                                                     <h4 className="font-semibold text-slate-200 text-sm">
-                                                        {m.displayName || m.email}
+                                                        {m?.displayName || regUser.displayName || regUser.email}
                                                     </h4>
                                                     {isAdmin && (
                                                         <span className="text-[10px] font-bold uppercase tracking-wider bg-purple-900/40 border border-purple-800 text-purple-300 px-2 py-0.5 rounded">
-                                                            Admin Organisation
+                                                            🛡️ Admin Association
+                                                        </span>
+                                                    )}
+                                                    {isOrgCaissier && (
+                                                        <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-900/40 border border-emerald-800 text-emerald-300 px-2 py-0.5 rounded">
+                                                            💼 Caissier Association (Peut créer une compta)
+                                                        </span>
+                                                    )}
+                                                    {isUnassigned && (
+                                                        <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-900/30 border border-amber-700/60 text-amber-300 px-2 py-0.5 rounded">
+                                                            ⏳ Inscrit sur Firebase (Sans rôle attribué)
                                                         </span>
                                                     )}
                                                 </div>
-                                                <p className="text-slate-400 text-xs mt-0.5">{m.email}</p>
+                                                <p className="text-slate-400 text-xs mt-0.5">{regUser.email}</p>
                                                 
                                                 {/* Badges d'accès par comptabilité */}
                                                 <div className="mt-2 flex flex-wrap gap-1.5">
                                                     {isAdmin ? (
                                                         <span className="text-xs bg-purple-950/60 border border-purple-800/60 text-purple-300 px-2 py-0.5 rounded flex items-center gap-1">
-                                                            Accès Admin à toutes les unités
+                                                            Accès Admin à toutes les comptabilités
                                                         </span>
                                                     ) : accessEntries.length === 0 ? (
-                                                        <span className="text-xs text-slate-500 italic">Aucune unité assignée</span>
+                                                        <span className="text-xs text-slate-500 italic">Aucune comptabilité assignée</span>
                                                     ) : (
                                                         accessEntries.map(([cId, r]) => {
                                                             const comptaObj = comptas.find(c => c.id === cId);
@@ -540,23 +555,33 @@ export const AdminView: React.FC = () => {
                                             </div>
 
                                             <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                                                {!isAdmin && (
-                                                    <>
-                                                        <button 
-                                                            onClick={() => handleEditMember(m)}
-                                                            className="p-1.5 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
-                                                            title="Modifier les accès"
-                                                        >
-                                                            <Edit2 size={16} />
-                                                        </button>
-                                                        <button 
-                                                            onClick={() => m.id && handleRemoveMember(m.id)}
-                                                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
-                                                            title="Retirer le membre"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
-                                                    </>
+                                                <button 
+                                                    onClick={() => {
+                                                        if (m) {
+                                                            handleEditMember(m);
+                                                        } else {
+                                                            setSelectedFirebaseUserUid(regUser.uid);
+                                                            setMemberEmail(regUser.email);
+                                                            setMemberName(regUser.displayName);
+                                                            setMemberOrgRole(OrgRole.MEMBER);
+                                                            setMemberComptaRoles({});
+                                                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                                                        }
+                                                    }}
+                                                    className="px-3 py-1.5 text-xs font-medium text-blue-300 bg-blue-950/50 hover:bg-blue-900/60 border border-blue-800/60 rounded-lg transition-colors flex items-center gap-1.5"
+                                                    title="Donner ou modifier le rôle"
+                                                >
+                                                    <Edit2 size={14} />
+                                                    {isUnassigned ? "Donner un rôle" : "Modifier le rôle"}
+                                                </button>
+                                                {m && !isAdmin && (
+                                                    <button 
+                                                        onClick={() => m.id && handleRemoveMember(m.id)}
+                                                        className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
+                                                        title="Retirer les accès"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
                                                 )}
                                             </div>
                                         </div>
