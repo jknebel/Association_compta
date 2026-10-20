@@ -61,9 +61,15 @@ export const OrgSelector: React.FC = () => {
     const [isLoadingClosingSummary, setIsLoadingClosingSummary] = useState(false);
     const [isSubmittingClose, setIsSubmittingClose] = useState(false);
 
-    const fetchData = async () => {
+    const [isRefreshingAccess, setIsRefreshingAccess] = useState(false);
+
+    const fetchData = async (silent = false) => {
         if (!user) return;
-        setLoading(true);
+        if (!silent) {
+            setLoading(true);
+        } else {
+            setIsRefreshingAccess(true);
+        }
         try {
             // Check legacy data summary (Firestore and localStorage)
             const summary = await checkLegacyData(user.uid);
@@ -77,7 +83,6 @@ export const OrgSelector: React.FC = () => {
             } else {
                 orgs = await getUserOrganizations(user.uid, user.email || undefined);
             }
-            setOrganizations(orgs);
 
             // Fetch Comptas and roles defined in Firebase
             const userComptas = await getUserComptabilites(user.uid, user.email || undefined);
@@ -139,6 +144,7 @@ export const OrgSelector: React.FC = () => {
                 });
             }
             
+            setOrganizations(orgs);
             setAdminOrgIds(orgAdminMap);
             setCaissierOrgIds(orgCaissierMap);
             setComptasByOrg(byOrg);
@@ -146,11 +152,12 @@ export const OrgSelector: React.FC = () => {
             console.error("Error fetching orgs/comptas:", err);
         } finally {
             setLoading(false);
+            setIsRefreshingAccess(false);
         }
     };
 
     useEffect(() => {
-        fetchData();
+        fetchData(false);
     }, [user, isSuperAdmin]);
 
     const isOrgAdminOf = (org: Organization) => {
@@ -402,8 +409,8 @@ export const OrgSelector: React.FC = () => {
         return (
             <UnauthorizedView 
                 email={user?.email || ''} 
-                onRefresh={fetchData} 
-                isRefreshing={loading} 
+                onRefresh={() => fetchData(true)} 
+                isRefreshing={isRefreshingAccess || loading} 
             />
         );
     }
@@ -530,7 +537,8 @@ export const OrgSelector: React.FC = () => {
                             const allComptas = comptasByOrg[org.id] || [];
                             const activeComptas = allComptas.filter(c => !c.compta.isArchived);
                             const archivedComptas = allComptas.filter(c => c.compta.isArchived);
-                            const comptasToShow = showArchived[org.id] ? allComptas : activeComptas;
+                            const onlyHasArchived = activeComptas.length === 0 && archivedComptas.length > 0;
+                            const comptasToShow = (showArchived[org.id] || onlyHasArchived) ? allComptas : activeComptas;
                             
                             return (
                                 <div key={org.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg shadow-black/20">

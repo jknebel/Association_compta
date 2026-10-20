@@ -92,7 +92,7 @@ export const getUserComptabilites = async (uid: string, userEmail?: string): Pro
                                     seenComptaIds.add(comptaId);
                                     result.push({
                                         orgId,
-                                        compta: comptaSnap.data() as Comptabilite,
+                                        compta: { ...(comptaSnap.data() as Comptabilite), id: comptaSnap.id },
                                         role
                                     });
                                 }
@@ -114,7 +114,7 @@ export const getUserComptabilites = async (uid: string, userEmail?: string): Pro
                         seenComptaIds.add(comptaId);
                         result.push({
                             orgId,
-                            compta: cDoc.data() as Comptabilite,
+                            compta: { ...(cDoc.data() as Comptabilite), id: cDoc.id },
                             role
                         });
                     }

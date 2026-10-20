@@ -506,12 +506,23 @@ export const AdminView: React.FC = () => {
                                     <p className="text-sm text-slate-500 italic">Aucune comptabilité créée pour le moment (un utilisateur avec le rôle "Caissier" de Niveau 1 pourra créer la sienne).</p>
                                 ) : (
                                     <div className="space-y-2">
-                                        {comptas.map(c => {
+                                        {[...comptas].sort((a, b) => Number(!!a.isArchived) - Number(!!b.isArchived)).map(c => {
                                             const currentRole = memberComptaRoles[c.id] || 'none';
                                             return (
-                                                <div key={c.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 bg-slate-950 rounded-lg border border-slate-800 gap-3">
+                                                <div key={c.id} className={`flex flex-col sm:flex-row sm:items-center justify-between p-3.5 bg-slate-950 rounded-lg border gap-3 ${c.isArchived ? 'border-slate-800/60 opacity-75' : 'border-slate-800'}`}>
                                                     <div>
-                                                        <span className="text-white text-sm font-semibold">{c.name}</span>
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <span className={`text-sm font-semibold ${c.isArchived ? 'text-slate-400 line-through' : 'text-white'}`}>{c.name}</span>
+                                                            {c.isArchived ? (
+                                                                <span className="text-[10px] uppercase tracking-wider font-bold bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">
+                                                                    Archivé (Lecture seule)
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-[10px] uppercase tracking-wider font-bold bg-emerald-950/60 text-emerald-400 border border-emerald-800/50 px-1.5 py-0.5 rounded">
+                                                                    Actif
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         {c.description && <span className="text-slate-500 text-xs block">{c.description}</span>}
                                                     </div>
                                                     <div className="flex items-center gap-2">

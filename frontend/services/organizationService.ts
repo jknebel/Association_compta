@@ -71,7 +71,7 @@ export const getOrganization = async (orgId: string): Promise<Organization | nul
     const db = getDb();
     const docSnap = await getDoc(doc(db, 'organizations', orgId));
     if (docSnap.exists()) {
-        return docSnap.data() as Organization;
+        return { ...(docSnap.data() as Organization), id: docSnap.id };
     }
     return null;
 }
@@ -430,7 +430,7 @@ export const toggleArchiveComptabilite = async (orgId: string, comptaId: string,
 export const listComptabilites = async (orgId: string): Promise<Comptabilite[]> => {
     const db = getDb();
     const snapshot = await getDocs(collection(db, 'organizations', orgId, 'comptabilites'));
-    return snapshot.docs.map(doc => doc.data() as Comptabilite);
+    return snapshot.docs.map(doc => ({ ...(doc.data() as Comptabilite), id: doc.id }));
 }
 
 export const generateInviteLink = async (orgId: string): Promise<string> => {
@@ -623,7 +623,7 @@ export const createInvitation = async (orgId: string, inviteData: Omit<Invitatio
 export const listAllOrganizations = async (): Promise<Organization[]> => {
     const db = getDb();
     const snapshot = await getDocs(collection(db, 'organizations'));
-    return snapshot.docs.map(doc => doc.data() as Organization);
+    return snapshot.docs.map(doc => ({ ...(doc.data() as Organization), id: doc.id }));
 }
 
 export const setMemberComptaAccess = async (
@@ -741,7 +741,7 @@ export const getUserOrganizations = async (uid: string, userEmail?: string): Pro
     try {
         const orgsSnap = await getDocs(collection(db, 'organizations'));
         for (const orgDoc of orgsSnap.docs) {
-            const orgData = orgDoc.data() as Organization;
+            const orgData = { ...(orgDoc.data() as Organization), id: orgDoc.id };
             const orgId = orgDoc.id;
 
             // 1. User is creator or designated admin by email
