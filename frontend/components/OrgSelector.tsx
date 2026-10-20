@@ -15,7 +15,7 @@ import {
     closeAndRolloverComptabilite
 } from '../services/organizationService';
 import { getUserComptabilites } from '../services/userService';
-import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield, Edit2, Calendar, X, CheckCircle } from 'lucide-react';
+import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield, Edit2, Calendar, X, CheckCircle, Users } from 'lucide-react';
 import { logout } from '../services/authService';
 import { checkLegacyData, LegacyDataSummary, connectCurrentCompta, markLegacyMigrationDone } from '../services/migrationService';
 import { UnauthorizedView } from './UnauthorizedView';
@@ -36,7 +36,9 @@ export const OrgSelector: React.FC = () => {
     const [isConnectingLegacy, setIsConnectingLegacy] = useState(false);
     const [isCreatingCompta, setIsCreatingCompta] = useState<string | null>(null); // orgId
     const [showArchived, setShowArchived] = useState<Record<string, boolean>>({});
-    const [managingOrgId, setManagingOrgId] = useState<string | null>(null);
+    const [activeTabByOrg, setActiveTabByOrg] = useState<Record<string, 'comptas' | 'members'>>({});
+    const [newComptaNameByOrg, setNewComptaNameByOrg] = useState<Record<string, string>>({});
+    const [newComptaDescByOrg, setNewComptaDescByOrg] = useState<Record<string, string>>({});
 
     // Rename Modal State
     const [renamingTarget, setRenamingTarget] = useState<{ orgId: string; compta: Comptabilite } | null>(null);
@@ -183,22 +185,26 @@ export const OrgSelector: React.FC = () => {
         }
     };
 
-    const handleCreateCompta = async (orgId: string) => {
+    const handleCreateCompta = async (e: React.FormEvent, orgId: string) => {
+        e.preventDefault();
         if (!user) return;
-        const name = prompt("Nom de la nouvelle comptabilité ? (ex: Exercice 2024)");
+        const name = (newComptaNameByOrg[orgId] || '').trim();
+        const description = (newComptaDescByOrg[orgId] || '').trim();
         if (!name) return;
 
         setIsCreatingCompta(orgId);
         try {
             await createComptabilite(orgId, { 
                 name,
-                description: '',
+                description,
                 createdBy: user.uid,
-                fiscalYearStart: '',
-                fiscalYearEnd: '',
+                fiscalYearStart: '2026-01-01',
+                fiscalYearEnd: '2026-12-31',
                 currency: 'CHF'
             }, user.uid);
-            window.location.reload();
+            setNewComptaNameByOrg(prev => ({ ...prev, [orgId]: '' }));
+            setNewComptaDescByOrg(prev => ({ ...prev, [orgId]: '' }));
+            await fetchData(true);
         } catch (e) {
             console.error(e);
             alert("Erreur lors de la création.");
@@ -212,7 +218,7 @@ export const OrgSelector: React.FC = () => {
         if (window.confirm("Êtes-vous sûr de vouloir supprimer DÉFINITIVEMENT cette comptabilité et toutes ses données (comptes, transactions, etc) ? Cette action est irréversible.")) {
             try {
                 await deleteComptabilite(orgId, comptaId);
-                window.location.reload();
+                await fetchData(true);
             } catch (err) {
                 console.error(err);
                 alert("Erreur lors de la suppression.");
@@ -417,17 +423,15 @@ export const OrgSelector: React.FC = () => {
         );
     }
 
-    const managingOrg = organizations.find(o => o.id === managingOrgId) || null;
-
     return (
         <div className="min-h-screen bg-slate-950 flex flex-col items-center p-4 md:p-8">
-            <div className={`w-full transition-all ${managingOrg ? 'max-w-7xl' : 'max-w-4xl'}`}>
+            <div className="w-full max-w-6xl transition-all">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 md:mb-8">
                     <div>
                         <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight mb-1 sm:mb-2">
                             <span className="text-blue-500">Asso</span>Compta AI
                         </h1>
-                        <p className="text-sm sm:text-base text-slate-400">Sélectionnez un espace de travail pour continuer</p>
+                        <p className="text-sm sm:text-base text-slate-400">Sélectionnez une comptabilité ou gérez votre association</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
                         {isSuperAdmin && (
@@ -535,8 +539,7 @@ export const OrgSelector: React.FC = () => {
                         </div>
                     </div>
                 ) : (
-                    <div className={`grid grid-cols-1 gap-6 items-start ${managingOrg ? 'lg:grid-cols-12' : 'md:grid-cols-2'}`}>
-                        <div className={managingOrg ? 'lg:col-span-5 space-y-6' : 'contents'}>
+                    <div className="space-y-8">
                         {organizations.map(org => {
                             const isOrgAdmin = isOrgAdminOf(org);
                             const allComptas = comptasByOrg[org.id] || [];
@@ -544,197 +547,273 @@ export const OrgSelector: React.FC = () => {
                             const archivedComptas = allComptas.filter(c => c.compta.isArchived);
                             const onlyHasArchived = activeComptas.length === 0 && archivedComptas.length > 0;
                             const comptasToShow = (showArchived[org.id] || onlyHasArchived) ? allComptas : activeComptas;
-                            const isManagingThisOrg = managingOrgId === org.id;
-                            
+                            const currentTab = activeTabByOrg[org.id] || 'comptas';
+                            const hasCaissierAccess = isSuperAdmin || isOrgAdmin || caissierOrgIds[org.id] || allComptas.some(c => c.role === 'caissier' || c.role === 'comptable' || c.role === 'admin');
+
                             return (
-                                <div key={org.id} className={`bg-slate-900 border rounded-xl overflow-hidden shadow-lg shadow-black/20 transition-colors ${isManagingThisOrg ? 'border-purple-600/70' : 'border-slate-800'}`}>
-                                    <div className="p-6 border-b border-slate-800 bg-slate-900/50">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                                                <Building2 size={20} className="text-blue-500" />
-                                                {org.name}
-                                            </h2>
-                                            {isSuperAdmin ? (
-                                                <span className="px-2 py-1 bg-purple-900/30 text-purple-400 border border-purple-800/50 rounded text-xs font-bold uppercase tracking-wider">Super Admin</span>
-                                            ) : isOrgAdmin ? (
-                                                <span className="px-2 py-1 bg-blue-900/30 text-blue-400 border border-blue-800/50 rounded text-xs font-bold uppercase tracking-wider">Admin Org</span>
-                                            ) : null}
-                                        </div>
-                                        <p className="text-sm text-slate-400">{org.description || "Aucune description"}</p>
-                                    </div>
-                                    
-                                    <div className="p-4 bg-slate-950">
-                                        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 px-2">Comptabilités accessibles</h3>
-                                        {allComptas.length === 0 ? (
-                                            <p className="text-sm text-slate-600 italic px-2 pb-2">Aucune comptabilité trouvée.</p>
-                                        ) : (
-                                            <div className="space-y-2">
-                                                {comptasToShow.map((item, idx) => (
-                                                    <div key={`${item.compta.id}-${idx}`} className="flex items-center gap-2">
-                                                        <button
-                                                            onClick={() => handleSelectCompta(org, item)}
-                                                            className={`flex-1 flex items-center justify-between p-3 rounded-lg border transition-all group ${
-                                                                item.compta.isArchived 
-                                                                    ? 'bg-slate-900/50 border-slate-800 hover:border-slate-700' 
-                                                                    : 'hover:bg-blue-900/20 hover:border-blue-800/50 border-transparent'
-                                                            }`}
-                                                        >
-                                                            <div className="flex items-center gap-3">
-                                                                <div className={`p-2 rounded-lg transition-colors ${
-                                                                    item.compta.isArchived 
-                                                                        ? 'bg-slate-800/50 text-slate-500' 
-                                                                        : 'bg-slate-800 group-hover:bg-blue-900/50 text-slate-400 group-hover:text-blue-400'
-                                                                }`}>
-                                                                    <Book size={16} />
-                                                                </div>
-                                                                <div className="text-left">
-                                                                    <div className={`font-medium transition-colors ${
-                                                                        item.compta.isArchived ? 'text-slate-500 line-through' : 'text-slate-200 group-hover:text-blue-300'
-                                                                    }`}>
-                                                                        {item.compta.name}
-                                                                        {item.compta.isArchived && <span className="ml-2 text-[10px] uppercase tracking-wider bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">Archivé</span>}
-                                                                    </div>
-                                                                    <div className="flex items-center gap-1.5 mt-1">
-                                                                        <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${
-                                                                            item.role === 'admin'
-                                                                                ? 'bg-purple-900/30 text-purple-300 border-purple-800/50'
-                                                                                : (item.role === 'caissier' || item.role === 'comptable')
-                                                                                    ? 'bg-emerald-900/30 text-emerald-300 border-emerald-800/50'
-                                                                                    : item.role === 'verificateur'
-                                                                                        ? 'bg-amber-900/30 text-amber-300 border-amber-800/50'
-                                                                                        : 'bg-blue-900/30 text-blue-300 border-blue-800/50'
-                                                                        }`}>
-                                                                            {item.role === 'admin' 
-                                                                                ? 'Admin' 
-                                                                                : (item.role === 'caissier' || item.role === 'comptable') 
-                                                                                    ? 'Caissier' 
-                                                                                    : item.role === 'verificateur'
-                                                                                        ? 'Vérificateur'
-                                                                                        : 'Lecteur'}
-                                                                        </span>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                            <ArrowRight size={16} className={`transform transition-all ${
-                                                                item.compta.isArchived ? 'text-slate-600' : 'text-slate-600 group-hover:text-blue-400 group-hover:translate-x-1'
-                                                            }`} />
-                                                        </button>
-                                                        
-                                                        {(() => {
-                                                            const isCaissierOrAdmin = isSuperAdmin || isOrgAdmin || item.role === 'caissier' || item.role === 'comptable' || item.role === 'admin';
-                                                            const canDelete = isSuperAdmin || isOrgAdmin;
-                                                            if (!isCaissierOrAdmin && !canDelete) return null;
-                                                            return (
-                                                                <div className="flex items-center sm:flex-col gap-1 shrink-0">
-                                                                    {isCaissierOrAdmin && (
-                                                                        <button
-                                                                            onClick={(e) => handleOpenRename(e, org.id, item.compta)}
-                                                                            className="p-1.5 text-slate-500 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
-                                                                            title="Renommer la comptabilité"
-                                                                        >
-                                                                            <Edit2 size={15} />
-                                                                        </button>
-                                                                    )}
-                                                                    {isCaissierOrAdmin && (
-                                                                        <button
-                                                                            onClick={(e) => handleOpenClosingModal(e, org, item.compta)}
-                                                                            className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-800 rounded transition-colors"
-                                                                            title={item.compta.isArchived ? "Désarchiver" : "Clôturer l'exercice / Archiver"}
-                                                                        >
-                                                                            {item.compta.isArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
-                                                                        </button>
-                                                                    )}
-                                                                    {canDelete && (
-                                                                        <button
-                                                                            onClick={(e) => handleDelete(e, org.id, item.compta.id)}
-                                                                            className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
-                                                                            title="Supprimer définitivement"
-                                                                        >
-                                                                            <Trash2 size={16} />
-                                                                        </button>
-                                                                    )}
-                                                                </div>
-                                                            );
-                                                        })()}
+                                <div key={org.id} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl shadow-black/30">
+                                    {/* En-tête de l'association + Onglets de navigation en haut */}
+                                    <div className="px-6 pt-5 pb-0 border-b border-slate-800 bg-slate-900/80">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4">
+                                            <div>
+                                                <div className="flex items-center gap-2.5">
+                                                    <div className="p-2 bg-blue-600/15 text-blue-400 rounded-lg border border-blue-500/20">
+                                                        <Building2 size={20} />
                                                     </div>
-                                                ))}
-                                                {archivedComptas.length > 0 && (
-                                                    <div className="mt-2 text-center">
-                                                        <button 
-                                                            onClick={() => setShowArchived(prev => ({...prev, [org.id]: !prev[org.id]}))}
-                                                            className="text-xs text-slate-500 hover:text-slate-400 underline transition-colors pt-2"
-                                                        >
-                                                            {showArchived[org.id] ? "Masquer les archives" : `Voir les archives (${archivedComptas.length})`}
-                                                        </button>
+                                                    <div>
+                                                        <div className="flex items-center gap-2.5">
+                                                            <h2 className="text-xl font-bold text-white">{org.name}</h2>
+                                                            {isSuperAdmin ? (
+                                                                <span className="px-2 py-0.5 bg-purple-900/30 text-purple-300 border border-purple-700/50 rounded text-[11px] font-bold uppercase tracking-wider">
+                                                                    Super Admin
+                                                                </span>
+                                                            ) : isOrgAdmin ? (
+                                                                <span className="px-2 py-0.5 bg-blue-900/30 text-blue-300 border border-blue-700/50 rounded text-[11px] font-bold uppercase tracking-wider">
+                                                                    Admin Groupe
+                                                                </span>
+                                                            ) : null}
+                                                        </div>
+                                                        <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
+                                                            {org.description || "Espace de comptabilité de l'association"}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {hasLegacyData && (isSuperAdmin || isOrgAdmin) && (
+                                                <button
+                                                    onClick={() => handleAutoConnectLegacy(org.id)}
+                                                    disabled={isConnectingLegacy}
+                                                    className="flex items-center gap-2 px-3.5 py-2 bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/50 rounded-lg text-xs font-semibold transition-colors cursor-pointer self-start sm:self-center"
+                                                >
+                                                    {isConnectingLegacy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                                                    Connecter ma compta V1 ici
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        {/* Barre d'onglets en haut */}
+                                        <div className="flex items-center gap-2 -mb-px overflow-x-auto">
+                                            <button
+                                                type="button"
+                                                onClick={() => setActiveTabByOrg(prev => ({ ...prev, [org.id]: 'comptas' }))}
+                                                className={`px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+                                                    currentTab === 'comptas'
+                                                        ? 'border-blue-500 text-blue-400 bg-blue-950/20 rounded-t-lg'
+                                                        : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 rounded-t-lg'
+                                                }`}
+                                            >
+                                                <Book size={16} />
+                                                <span>Gestion des Comptabilités ({activeComptas.length})</span>
+                                            </button>
+
+                                            {(isSuperAdmin || isOrgAdmin) && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setActiveTabByOrg(prev => ({ ...prev, [org.id]: 'members' }))}
+                                                    className={`px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+                                                        currentTab === 'members'
+                                                            ? 'border-purple-500 text-purple-300 bg-purple-950/25 rounded-t-lg'
+                                                            : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 rounded-t-lg'
+                                                    }`}
+                                                >
+                                                    <Users size={16} />
+                                                    <span>Gestion des Membres & Rôles</span>
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Contenu de l'onglet actif */}
+                                    <div className="p-5 sm:p-6 bg-slate-950">
+                                        {currentTab === 'members' && (isSuperAdmin || isOrgAdmin) ? (
+                                            <AdminView
+                                                orgOverride={org}
+                                                isOrgAdminOverride={true}
+                                                mode="org"
+                                                hideComptasTab={true}
+                                                onChanged={() => fetchData(true)}
+                                            />
+                                        ) : (
+                                            <div className={`grid grid-cols-1 gap-6 items-start ${hasCaissierAccess ? 'lg:grid-cols-12' : ''}`}>
+                                                {/* Colonne de gauche : Création rapide d'une comptabilité (pour Admin / Caissier) */}
+                                                {hasCaissierAccess && (
+                                                    <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-xl p-4 sm:p-5">
+                                                        <h3 className="font-semibold text-white text-sm sm:text-base mb-3 flex items-center gap-2">
+                                                            <Plus size={17} className="text-blue-400" />
+                                                            Nouvelle Comptabilité
+                                                        </h3>
+                                                        <form onSubmit={(e) => handleCreateCompta(e, org.id)} className="space-y-3">
+                                                            <div>
+                                                                <label className="block text-xs font-semibold text-slate-400 mb-1">
+                                                                    Nom (ex: Louveteaux 26-27, Groupe 25-26) *
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Ex: Mondisé 26-27"
+                                                                    value={newComptaNameByOrg[org.id] || ''}
+                                                                    onChange={e => setNewComptaNameByOrg(prev => ({ ...prev, [org.id]: e.target.value }))}
+                                                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                                                                    required
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label className="block text-xs font-semibold text-slate-400 mb-1">
+                                                                    Description (optionnelle)
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Description de la section..."
+                                                                    value={newComptaDescByOrg[org.id] || ''}
+                                                                    onChange={e => setNewComptaDescByOrg(prev => ({ ...prev, [org.id]: e.target.value }))}
+                                                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                                                                />
+                                                            </div>
+                                                            <button
+                                                                type="submit"
+                                                                disabled={isCreatingCompta === org.id || !(newComptaNameByOrg[org.id] || '').trim()}
+                                                                className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-2.5 rounded-lg flex justify-center items-center gap-2 text-xs sm:text-sm font-semibold transition-colors cursor-pointer shadow-md shadow-blue-950/40"
+                                                            >
+                                                                {isCreatingCompta === org.id ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                                                                Créer la comptabilité
+                                                            </button>
+                                                        </form>
                                                     </div>
                                                 )}
-                                            </div>
-                                        )}
-                                        
-                                        {(() => {
-                                            const hasCaissierAccess = isSuperAdmin || isOrgAdmin || caissierOrgIds[org.id] || allComptas.some(c => c.role === 'caissier' || c.role === 'comptable' || c.role === 'admin');
-                                            if (!hasCaissierAccess && !isSuperAdmin && !isOrgAdmin) return null;
 
-                                            return (
-                                                <div className="mt-4 pt-4 border-t border-slate-800/50 flex flex-col gap-2 px-2">
-                                                    {hasCaissierAccess && (
-                                                        <button 
-                                                            onClick={() => handleCreateCompta(org.id)}
-                                                            disabled={isCreatingCompta === org.id}
-                                                            className="flex items-center justify-center gap-2 w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors"
-                                                        >
-                                                            {isCreatingCompta === org.id ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                                                            Nouvelle Comptabilité
-                                                        </button>
-                                                    )}
+                                                {/* Colonne de droite : Navigation vers les comptabilités + Actions (Renommer, Archiver, Supprimer) */}
+                                                <div className={hasCaissierAccess ? 'lg:col-span-8 space-y-3' : 'space-y-3'}>
+                                                    <div className="flex items-center justify-between px-1">
+                                                        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                                                            Cliquez sur une comptabilité pour l'ouvrir ({comptasToShow.length})
+                                                        </h3>
+                                                        {archivedComptas.length > 0 && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setShowArchived(prev => ({ ...prev, [org.id]: !prev[org.id] }))}
+                                                                className="text-xs text-blue-400 hover:text-blue-300 underline transition-colors cursor-pointer"
+                                                            >
+                                                                {showArchived[org.id] ? "Masquer les archives" : `Voir les archives (${archivedComptas.length})`}
+                                                            </button>
+                                                        )}
+                                                    </div>
 
-                                                    {(isSuperAdmin || isOrgAdmin) && (
-                                                        <button 
-                                                            onClick={() => {
-                                                                setManagingOrgId(prev => prev === org.id ? null : org.id);
-                                                            }}
-                                                            className={`flex items-center justify-center gap-2 w-full py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer border ${
-                                                                isManagingThisOrg
-                                                                    ? 'bg-purple-700 text-white border-purple-500 shadow-lg shadow-purple-950/50'
-                                                                    : 'bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border-purple-800/50'
-                                                            }`}
-                                                        >
-                                                            <Shield size={16} className={isManagingThisOrg ? "text-white" : "text-purple-400"} />
-                                                            {isManagingThisOrg ? "Fermer la gestion des membres" : "Gérer les membres & rôles (Association)"}
-                                                        </button>
-                                                    )}
-                                                    
-                                                    {hasLegacyData && (isSuperAdmin || isOrgAdmin) && (
-                                                        <button 
-                                                            onClick={() => handleAutoConnectLegacy(org.id)}
-                                                            disabled={isConnectingLegacy}
-                                                            className="flex items-center justify-center gap-2 w-full py-2 bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
-                                                        >
-                                                            {isConnectingLegacy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={18} />}
-                                                            Connecter ma compta V1 ici
-                                                        </button>
+                                                    {allComptas.length === 0 ? (
+                                                        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-8 text-center text-sm text-slate-500 italic">
+                                                            Aucune comptabilité trouvée dans cette association.
+                                                        </div>
+                                                    ) : (
+                                                        <div className="grid grid-cols-1 gap-2.5">
+                                                            {comptasToShow.map((item, idx) => {
+                                                                const isCaissierOrAdmin = isSuperAdmin || isOrgAdmin || item.role === 'caissier' || item.role === 'comptable' || item.role === 'admin';
+                                                                const canDelete = isSuperAdmin || isOrgAdmin;
+
+                                                                return (
+                                                                    <div
+                                                                        key={`${item.compta.id}-${idx}`}
+                                                                        onClick={() => handleSelectCompta(org, item)}
+                                                                        className={`flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border transition-all cursor-pointer group ${
+                                                                            item.compta.isArchived
+                                                                                ? 'bg-slate-900/40 border-slate-800/80 hover:border-slate-700'
+                                                                                : 'bg-slate-900 border-slate-800 hover:bg-blue-950/25 hover:border-blue-700/60 shadow-sm'
+                                                                        }`}
+                                                                    >
+                                                                        <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                                                                            <div className={`p-2.5 rounded-lg transition-colors shrink-0 ${
+                                                                                item.compta.isArchived
+                                                                                    ? 'bg-slate-800/50 text-slate-500'
+                                                                                    : 'bg-blue-950/60 border border-blue-800/40 text-blue-400 group-hover:bg-blue-600 group-hover:text-white'
+                                                                            }`}>
+                                                                                <Book size={18} />
+                                                                            </div>
+
+                                                                            <div className="min-w-0 flex-1">
+                                                                                <div className="flex flex-wrap items-center gap-2">
+                                                                                    <span className={`font-bold text-sm sm:text-base transition-colors truncate ${
+                                                                                        item.compta.isArchived ? 'text-slate-500 line-through' : 'text-white group-hover:text-blue-300'
+                                                                                    }`}>
+                                                                                        {item.compta.name}
+                                                                                    </span>
+                                                                                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${
+                                                                                        item.role === 'admin'
+                                                                                            ? 'bg-purple-900/30 text-purple-300 border-purple-800/50'
+                                                                                            : (item.role === 'caissier' || item.role === 'comptable')
+                                                                                                ? 'bg-emerald-900/30 text-emerald-300 border-emerald-800/50'
+                                                                                                : item.role === 'verificateur'
+                                                                                                    ? 'bg-amber-900/30 text-amber-300 border-amber-800/50'
+                                                                                                    : 'bg-blue-900/30 text-blue-300 border-blue-800/50'
+                                                                                    }`}>
+                                                                                        {item.role === 'admin'
+                                                                                            ? 'Admin'
+                                                                                            : (item.role === 'caissier' || item.role === 'comptable')
+                                                                                                ? 'Caissier'
+                                                                                                : item.role === 'verificateur'
+                                                                                                    ? 'Vérificateur'
+                                                                                                    : 'Lecteur'}
+                                                                                    </span>
+                                                                                    {item.compta.isArchived && (
+                                                                                        <span className="text-[10px] uppercase tracking-wider bg-slate-800 text-slate-400 px-2 py-0.5 rounded">
+                                                                                            Archivé
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                                {item.compta.description && (
+                                                                                    <p className="text-xs text-slate-400 truncate mt-0.5">
+                                                                                        {item.compta.description}
+                                                                                    </p>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+
+                                                                        {/* Actions alignées horizontalement : Renommer, Archiver/Clôturer, Supprimer, Ouvrir */}
+                                                                        <div className="flex items-center gap-1 shrink-0">
+                                                                            {isCaissierOrAdmin && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={(e) => handleOpenRename(e, org.id, item.compta)}
+                                                                                    className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                                                                    title="Renommer la comptabilité"
+                                                                                >
+                                                                                    <Edit2 size={15} />
+                                                                                </button>
+                                                                            )}
+                                                                            {isCaissierOrAdmin && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={(e) => handleOpenClosingModal(e, org, item.compta)}
+                                                                                    className="p-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                                                                    title={item.compta.isArchived ? "Désarchiver" : "Clôturer l'exercice / Archiver"}
+                                                                                >
+                                                                                    {item.compta.isArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+                                                                                </button>
+                                                                            )}
+                                                                            {canDelete && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={(e) => handleDelete(e, org.id, item.compta.id)}
+                                                                                    className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                                                                    title="Supprimer définitivement"
+                                                                                >
+                                                                                    <Trash2 size={16} />
+                                                                                </button>
+                                                                            )}
+                                                                            <div className="pl-2 ml-1 border-l border-slate-800 flex items-center gap-1 text-xs font-semibold text-slate-400 group-hover:text-blue-400">
+                                                                                <span className="hidden sm:inline">Ouvrir</span>
+                                                                                <ArrowRight size={16} className="transform transition-transform group-hover:translate-x-1" />
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
                                                     )}
                                                 </div>
-                                            );
-                                        })()}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             );
                         })}
-                        </div>
-
-                        {/* Panneau de droite sur le Screen 2 : Administration globale de l'Association */}
-                        {managingOrg && (
-                            <div className="lg:col-span-7 bg-slate-950 border border-slate-800 rounded-xl p-5 sm:p-6 shadow-2xl animate-in fade-in slide-in-from-right-4 duration-200">
-                                <AdminView
-                                    orgOverride={managingOrg}
-                                    isOrgAdminOverride={true}
-                                    mode="org"
-                                    onClose={() => setManagingOrgId(null)}
-                                    onChanged={() => fetchData(true)}
-                                />
-                            </div>
-                        )}
                     </div>
                 )}
                 
