@@ -117,7 +117,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
             ]);
             setComptas(cList);
             setInvitations(iList);
-            setMembers(mList);
 
             const combinedUsers = [...uList];
             for (const m of mList) {
@@ -129,6 +128,58 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     });
                 }
             }
+
+            // S'assurer qu'il y a toujours au moins 1 administrateur dans l'organisation (jamais 0)
+            const hasExplicitAdmin = mList.some(m => m.role === OrgRole.ADMIN && m.status !== 'rejected');
+            if (!hasExplicitAdmin) {
+                const fallbackAdminUser =
+                    combinedUsers.find(
+                        u =>
+                            (activeOrg.adminEmail && u.email.toLowerCase() === activeOrg.adminEmail.trim().toLowerCase()) ||
+                            (activeOrg.createdBy && u.uid === activeOrg.createdBy)
+                    ) ||
+                    (user?.email
+                        ? {
+                              uid: user.uid,
+                              email: user.email.toLowerCase(),
+                              displayName: user.displayName || user.email
+                          }
+                        : null);
+
+                if (fallbackAdminUser) {
+                    const existingEntry = mList.find(
+                        m => m.email?.toLowerCase() === fallbackAdminUser.email.toLowerCase() || m.uid === fallbackAdminUser.uid
+                    );
+                    try {
+                        await setMemberComptaAccess(
+                            activeOrg.id,
+                            fallbackAdminUser.email,
+                            existingEntry?.comptaAccess || {},
+                            OrgRole.ADMIN,
+                            existingEntry?.displayName || fallbackAdminUser.displayName,
+                            fallbackAdminUser.uid
+                        );
+                        if (existingEntry) {
+                            existingEntry.role = OrgRole.ADMIN;
+                        } else {
+                            mList.push({
+                                id: fallbackAdminUser.uid,
+                                uid: fallbackAdminUser.uid,
+                                email: fallbackAdminUser.email,
+                                displayName: fallbackAdminUser.displayName,
+                                role: OrgRole.ADMIN,
+                                status: 'approved',
+                                joinedAt: Date.now(),
+                                comptaAccess: {}
+                            });
+                        }
+                    } catch (seedErr) {
+                        console.warn("Could not auto-seed initial admin:", seedErr);
+                    }
+                }
+            }
+
+            setMembers([...mList]);
             setRegisteredUsers(combinedUsers);
         } catch (e) {
             console.error("Fetch admin data error", e);
@@ -214,12 +265,20 @@ export const AdminView: React.FC<AdminViewProps> = ({
         e.preventDefault();
         if (!activeOrg || !memberEmail.trim()) return;
 
+        const otherAdmins = getUniqueAdminCount(memberEmail, selectedFirebaseUserUid);
+        const existingMember = members.find(
+            m => m.email?.toLowerCase() === memberEmail.trim().toLowerCase() || (selectedFirebaseUserUid && m.uid === selectedFirebaseUserUid)
+        );
+        const wasAdmin = existingMember?.role === OrgRole.ADMIN;
+
         if (memberOrgRole === OrgRole.ADMIN) {
-            const otherAdmins = getUniqueAdminCount(memberEmail, selectedFirebaseUserUid);
             if (otherAdmins >= 2) {
                 alert("Limite atteinte : il ne peut y avoir que 2 administrateurs maximum par association pour éviter les conflits.");
                 return;
             }
+        } else if (wasAdmin && otherAdmins === 0) {
+            alert("Action impossible : il doit toujours y avoir au moins 1 administrateur dans l'association (0 n'est pas possible). Nommez d'abord un second administrateur avant de retirer celui-ci.");
+            return;
         }
 
         setIsSavingMember(true);
@@ -308,16 +367,19 @@ export const AdminView: React.FC<AdminViewProps> = ({
             return;
         }
         const currentlyAdmin = existingMember?.role === OrgRole.ADMIN;
-        if (!currentlyAdmin) {
-            const otherAdmins = getUniqueAdminCount(regUser.email, regUser.uid);
-            if (otherAdmins >= 2) {
-                alert("Limite atteinte (2/2) : il ne peut y avoir que 2 administrateurs maximum par association. Retirez d'abord un administrateur actuel si vous souhaitez le remplacer.");
-                return;
-            }
+        const otherAdmins = getUniqueAdminCount(regUser.email, regUser.uid);
+
+        if (currentlyAdmin && otherAdmins === 0) {
+            alert("Action impossible (minimum 1 admin) : vous ne pouvez pas retirer le dernier administrateur du groupe. Nommez d'abord un second administrateur.");
+            return;
+        }
+        if (!currentlyAdmin && otherAdmins >= 2) {
+            alert("Limite atteinte (2/2) : il ne peut y avoir que 2 administrateurs maximum par association. Retirez d'abord un administrateur actuel si vous souhaitez le remplacer.");
+            return;
         }
         const confirmMsg = currentlyAdmin
             ? `Retirer les droits d'Administrateur du groupe « ${activeOrg.name} » à ${regUser.displayName || regUser.email} ?`
-            : `Donner les droits d'Administrateur du groupe « ${activeOrg.name} » à ${regUser.displayName || regUser.email} ?\n\nIl aura accès à toutes les comptabilités du groupe et pourra gérer les membres (Maximum 2 admins par groupe).`;
+            : `Donner les droits d'Administrateur du groupe « ${activeOrg.name} » à ${regUser.displayName || regUser.email} ?\n\nIl aura accès à toutes les comptabilités du groupe et pourra gérer les membres (1 à 2 admins par groupe).`;
         if (!window.confirm(confirmMsg)) return;
 
         setIsSavingMember(true);
@@ -862,7 +924,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                     const accessEntries = Object.entries(m?.comptaAccess || {});
                                     const isUnassigned = !m;
                                     const isSelectedForEdit = memberEmail.toLowerCase() === regUser.email.toLowerCase();
-                                    const maxAdminsReachedForThisUser = !isAdmin && getUniqueAdminCount(regUser.email, regUser.uid) >= 2;
+                                    const otherAdminsCount = getUniqueAdminCount(regUser.email, regUser.uid);
+                                    const maxAdminsReachedForThisUser = !isAdmin && otherAdminsCount >= 2;
+                                    const isOnlyAdminForThisUser = isAdmin && otherAdminsCount === 0;
 
                                     return (
                                         <div
@@ -928,30 +992,40 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                 )}
                                             </div>
 
-                                            {/* Colonne Droite : Actions compactes (Donner Admin réservé à l'Admin, max 2 + Modifier + Supprimer) */}
+                                            {/* Colonne Droite : Actions compactes (Donner Admin réservé à l'Admin, min 1 / max 2 + Modifier + Supprimer) */}
                                             <div className="flex flex-wrap items-center gap-1.5 self-end lg:self-center shrink-0">
                                                 {isOrgAdmin && (
                                                     <button
                                                         type="button"
-                                                        disabled={isSavingMember || maxAdminsReachedForThisUser}
+                                                        disabled={isSavingMember || maxAdminsReachedForThisUser || isOnlyAdminForThisUser}
                                                         onClick={() => handleToggleOrgAdmin(regUser, m)}
                                                         className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border ${
-                                                            isAdmin
+                                                            isOnlyAdminForThisUser
+                                                                ? 'text-purple-300/60 bg-purple-950/30 border-purple-800/40 opacity-60 cursor-not-allowed'
+                                                                : isAdmin
                                                                 ? 'text-purple-200 bg-purple-900/60 hover:bg-purple-800/70 border-purple-600/70 cursor-pointer'
                                                                 : maxAdminsReachedForThisUser
                                                                 ? 'text-slate-500 bg-slate-900/50 border-slate-800 opacity-50 cursor-not-allowed'
                                                                 : 'text-purple-300 bg-purple-950/30 hover:bg-purple-900/50 border-purple-800/50 cursor-pointer'
                                                         }`}
                                                         title={
-                                                            isAdmin
+                                                            isOnlyAdminForThisUser
+                                                                ? "Impossible de retirer le seul administrateur du groupe (minimum 1 requis)"
+                                                                : isAdmin
                                                                 ? "Retirer le rôle d'Administrateur du groupe"
                                                                 : maxAdminsReachedForThisUser
                                                                 ? "Limite de 2 administrateurs atteinte (2/2)"
-                                                                : "Nommer Administrateur du groupe (Max 2 admins)"
+                                                                : "Nommer Administrateur du groupe (1 à 2 admins)"
                                                         }
                                                     >
                                                         <Shield size={12} />
-                                                        {isAdmin ? "Retirer Admin" : maxAdminsReachedForThisUser ? "Max 2 Admins" : "Donner Admin"}
+                                                        {isOnlyAdminForThisUser
+                                                            ? "Admin (Min 1)"
+                                                            : isAdmin
+                                                            ? "Retirer Admin"
+                                                            : maxAdminsReachedForThisUser
+                                                            ? "Max 2 Admins"
+                                                            : "Donner Admin"}
                                                     </button>
                                                 )}
                                                 <button

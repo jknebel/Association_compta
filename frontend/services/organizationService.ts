@@ -693,27 +693,33 @@ export const setMemberComptaAccess = async (
 
     const memberDocId = existingUid || normalizedEmail;
 
-    // Enforce maximum 2 admins per organization
-    if (role === OrgRole.ADMIN || (role as string) === 'admin') {
-        const currentMembersSnap = await getDocs(collection(db, 'organizations', orgId, 'members'));
-        const otherAdminEmails = new Set<string>();
-        for (const mDoc of currentMembersSnap.docs) {
-            const mData = mDoc.data();
-            if (mData.role === OrgRole.ADMIN && mData.status !== 'rejected') {
-                const mEmail = (mData.email || '').trim().toLowerCase();
-                const mUid = mData.uid || mDoc.id;
-                const isSameUser =
-                    (mEmail && mEmail === normalizedEmail) ||
-                    (existingUid && mUid === existingUid) ||
-                    mDoc.id === memberDocId;
-                if (!isSameUser) {
-                    otherAdminEmails.add(mEmail || mUid);
-                }
+    // Enforce between 1 and 2 admins per organization (min 1, max 2)
+    const currentMembersSnap = await getDocs(collection(db, 'organizations', orgId, 'members'));
+    const otherAdminEmails = new Set<string>();
+    let wasCurrentUserAdmin = false;
+    for (const mDoc of currentMembersSnap.docs) {
+        const mData = mDoc.data();
+        if (mData.role === OrgRole.ADMIN && mData.status !== 'rejected') {
+            const mEmail = (mData.email || '').trim().toLowerCase();
+            const mUid = mData.uid || mDoc.id;
+            const isSameUser =
+                (mEmail && mEmail === normalizedEmail) ||
+                (existingUid && mUid === existingUid) ||
+                mDoc.id === memberDocId;
+            if (isSameUser) {
+                wasCurrentUserAdmin = true;
+            } else {
+                otherAdminEmails.add(mEmail || mUid);
             }
         }
+    }
+
+    if (role === OrgRole.ADMIN || (role as string) === 'admin') {
         if (otherAdminEmails.size >= 2) {
             throw new Error("Limite atteinte : il ne peut y avoir que 2 administrateurs maximum par association.");
         }
+    } else if (wasCurrentUserAdmin && otherAdminEmails.size === 0) {
+        throw new Error("Action impossible : il doit toujours y avoir au moins 1 administrateur dans l'association (0 admin n'est pas autorisé). Nommez d'abord un autre administrateur.");
     }
 
     // If a pre-invited doc existed under email ID and now we have a UID, clean up the old email-keyed doc
@@ -898,7 +904,20 @@ export const removeOrganizationMember = async (orgId: string, memberId: string):
     const db = getDb();
     const memberRef = doc(db, 'organizations', orgId, 'members', memberId);
     const memberSnap = await getDoc(memberRef);
-    const uid = memberSnap.exists() ? (memberSnap.data().uid || memberId) : memberId;
+    const memberData = memberSnap.exists() ? memberSnap.data() : null;
+    const uid = memberData ? (memberData.uid || memberId) : memberId;
+
+    if (memberData?.role === OrgRole.ADMIN) {
+        const currentMembersSnap = await getDocs(collection(db, 'organizations', orgId, 'members'));
+        const otherAdmins = currentMembersSnap.docs.filter(d => {
+            if (d.id === memberId) return false;
+            const data = d.data();
+            return data.role === OrgRole.ADMIN && data.status !== 'rejected';
+        });
+        if (otherAdmins.length === 0) {
+            throw new Error("Action impossible : il doit toujours rester au moins 1 administrateur dans l'association.");
+        }
+    }
 
     await deleteDoc(memberRef);
 
