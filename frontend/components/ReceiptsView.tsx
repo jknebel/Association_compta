@@ -234,13 +234,13 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     };
 
     return (
-        <div className="p-8 max-w-7xl mx-auto h-full flex flex-col">
-            <header className="mb-8">
-                <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+        <div className="p-4 md:p-8 max-w-7xl mx-auto md:h-full flex flex-col">
+            <header className="mb-6 md:mb-8">
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-100 flex items-center gap-2">
                     <Upload className="text-blue-500" />
                     Pièces Comptables
                 </h2>
-                <p className="text-slate-400 mt-2">
+                <p className="text-sm text-slate-400 mt-2">
                     {isViewer
                         ? "Consultation des factures et justificatifs enregistrés."
                         : "Déposez vos factures et reçus ici. L'IA tentera de les associer automatiquement à vos transactions existantes."}
@@ -250,7 +250,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
             {/* UPLOAD AREA (Hidden for Viewer) */}
             {!isViewer && (
                 <div
-                    className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center transition-all mb-8 ${dragActive ? 'border-blue-500 bg-blue-900/20' : 'border-slate-700 bg-slate-900 hover:border-slate-500'
+                    className={`border-2 border-dashed rounded-xl p-5 md:p-8 flex flex-col items-center justify-center transition-all mb-6 md:mb-8 ${dragActive ? 'border-blue-500 bg-blue-900/20' : 'border-slate-700 bg-slate-900 hover:border-slate-500'
                         }`}
                     onDragEnter={handleDrag}
                     onDragLeave={handleDrag}
@@ -264,11 +264,11 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                         </div>
                     ) : (
                         <>
-                            <div className="bg-slate-800 p-4 rounded-full mb-4">
-                                <FileText size={32} className="text-slate-400" />
+                            <div className="bg-slate-800 p-3 md:p-4 rounded-full mb-3 md:mb-4">
+                                <FileText size={28} className="text-slate-400" />
                             </div>
-                            <h3 className="text-lg font-medium text-slate-200 mb-2">Glissez-déposez vos fichiers ici</h3>
-                            <p className="text-sm text-slate-500 mb-4">PDF, JPG, PNG acceptés</p>
+                            <h3 className="text-base md:text-lg font-medium text-slate-200 mb-1 md:mb-2 text-center">Glissez-déposez vos fichiers ici</h3>
+                            <p className="text-xs md:text-sm text-slate-500 mb-4">PDF, JPG, PNG acceptés</p>
                             <button
                                 onClick={() => fileInputRef.current?.click()}
                                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors font-medium text-sm"
@@ -289,13 +289,13 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
             )}
 
             {/* LIST OF RECEIPTS */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="md:flex-1 md:overflow-y-auto">
                 <h3 className="text-lg font-bold text-slate-200 mb-4 flex items-center gap-2">
                     <Link2 size={20} />
                     Pièces à traiter ({unlinkedReceipts.length})
                 </h3>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                     {unlinkedReceipts.map(receipt => {
                         const matches = findPotentialMatches(receipt);
                         const hasMatch = matches.length > 0;

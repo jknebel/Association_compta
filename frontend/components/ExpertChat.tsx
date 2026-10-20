@@ -65,8 +65,8 @@ export const ExpertChat: React.FC<ExpertChatProps> = ({ transactions, accounts }
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-950">
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div className="flex flex-col h-[calc(100dvh-57px)] md:h-full bg-slate-950">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
         {messages.map((msg, idx) => (
           <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`flex gap-3 max-w-3xl ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>

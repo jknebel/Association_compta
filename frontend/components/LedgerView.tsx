@@ -411,13 +411,13 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   };
 
   return (
-    <div className="p-6 h-full flex flex-col">
-      <header className="flex justify-between items-center mb-6">
+    <div className="p-4 md:p-6 md:h-full flex flex-col">
+      <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Journal des Transactions</h2>
-          <p className="text-slate-400">Vérifiez, modifiez et classez vos transactions importées.</p>
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-100">Journal des Transactions</h2>
+          <p className="text-sm text-slate-400">Vérifiez, modifiez et classez vos transactions importées.</p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
           {isViewer && (
             <span className="px-3 py-2 bg-blue-900/30 text-blue-400 border border-blue-800/50 rounded-lg text-xs font-semibold flex items-center gap-1.5">
               <Eye size={14} /> Mode Lecteur (Consultation seule)
@@ -432,7 +432,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
           {isCaissier && (
             <button
-              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+              className="px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-xs sm:text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
               onClick={handleAddManualTransaction}
             >
               <Plus size={16} />
@@ -441,7 +441,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           )}
 
           <button
-            className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+            className="px-3 sm:px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-xs sm:text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
             onClick={() => generateAccountingReport(filteredTransactions, accounts)}
           >
             <FileSpreadsheet size={16} />
@@ -451,7 +451,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           {isCaissier && (
             <>
               <button
-                className={`px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
+                className={`px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs sm:text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
                 onClick={onAutoMatch}
                 disabled={!!autoMatchProgress}
               >
@@ -469,7 +469,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               </button>
 
               <button
-                className={`px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
+                className={`px-3 sm:px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-xs sm:text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ${autoMatchProgress ? 'opacity-80 cursor-wait' : ''}`}
                 onClick={onReanalyzeAll}
                 disabled={!!autoMatchProgress}
                 title="Relancer l'analyse IA sur toutes les transactions (écrase les catégories existantes)"
@@ -479,7 +479,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               </button>
 
               <button
-                className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors ml-2"
+                className="px-3 sm:px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 text-xs sm:text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
                 onClick={onArchiveAll}
                 disabled={!!autoMatchProgress}
                 title="Archiver toutes les transactions visibles"
@@ -489,7 +489,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               </button>
 
               <button
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
+                className="px-3 sm:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-xs sm:text-sm font-medium flex items-center gap-2 shadow-sm transition-colors"
                 onClick={() => {
                   const ids = filteredTransactions.map(t => t.id);
                   console.log(`[LedgerView] Tout Effacer cliqué. Nombre filtré: ${ids.length}`, ids);
@@ -502,10 +502,10 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                 Tout Effacer
               </button>
 
-              <div className="w-px h-8 bg-slate-700 mx-2"></div>
+              <div className="hidden sm:block w-px h-8 bg-slate-700 mx-1"></div>
 
               <button
-                className={`px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-lg hover:from-amber-600 hover:to-orange-700 text-sm font-bold flex items-center gap-2 shadow-lg shadow-orange-900/20 transition-all ${!allApproved ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
+                className={`px-3 sm:px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-lg hover:from-amber-600 hover:to-orange-700 text-xs sm:text-sm font-bold flex items-center gap-2 shadow-lg shadow-orange-900/20 transition-all ${!allApproved ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
                 onClick={allApproved ? handleRunAudit : undefined}
                 title={allApproved ? "Générer le rapport de clôture" : "Validez toutes les transactions pour auditer"}
               >
@@ -518,9 +518,9 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       </header>
 
       {/* Filters Container */}
-      <div className="mb-6 bg-slate-900 p-5 rounded-xl shadow-sm border border-slate-800 space-y-4">
+      <div className="mb-6 bg-slate-900 p-4 md:p-5 rounded-xl shadow-sm border border-slate-800 space-y-4">
         {/* Top Row: Search & Status */}
-        <div className="flex flex-col md:flex-row gap-4">
+        <div className="flex flex-col md:flex-row gap-3 md:gap-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-2.5 text-slate-500" size={18} />
             <input
@@ -528,15 +528,15 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               placeholder="Rechercher libellé, montant ou membre..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-slate-950 border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-200 placeholder-slate-600"
+              className="w-full pl-10 pr-4 py-2 bg-slate-950 border border-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-200 placeholder-slate-600 text-sm"
             />
           </div>
           <div className="flex items-center gap-2">
-            <Filter size={18} className="text-slate-500" />
+            <Filter size={18} className="text-slate-500 shrink-0" />
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-slate-950 text-slate-200 min-w-[150px]"
+              className="w-full md:w-auto border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-slate-950 text-slate-200 min-w-[150px] text-sm"
             >
               <option value="ALL">Tous les statuts</option>
               <option value="UNCATEGORIZED">⚠️ Non Catégorisé</option>
@@ -548,12 +548,12 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               <option value={TransactionStatus.ARCHIVED}>📦 Archives</option>
             </select>
           </div>
-        </div >
+        </div>
 
         {/* Bottom Row: Date & Amount Range */}
-        < div className="flex flex-wrap items-center gap-6 pt-4 border-t border-slate-800" >
+        <div className="flex flex-wrap items-center gap-4 md:gap-6 pt-4 border-t border-slate-800">
           {/* Date Range */}
-          < div className="flex items-center gap-2" >
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <div className="flex items-center gap-2 text-slate-500 min-w-fit">
               <Calendar size={16} />
               <span className="text-sm font-medium">Date:</span>
@@ -562,21 +562,21 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
+              className="flex-1 sm:flex-initial bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
             />
             <span className="text-slate-600">-</span>
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
+              className="flex-1 sm:flex-initial bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
             />
-          </div >
+          </div>
 
           <div className="hidden md:block w-px h-6 bg-slate-800"></div>
 
           {/* Account Filter */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <div className="flex items-center gap-2 text-slate-500 min-w-fit">
               <Filter size={16} />
               <span className="text-sm font-medium">Compte:</span>
@@ -584,7 +584,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             <select
               value={accountFilter}
               onChange={(e) => setAccountFilter(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200 w-48"
+              className="flex-1 sm:w-48 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
             >
               <option value="">Tous les comptes</option>
               {accounts
@@ -602,7 +602,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
           <div className="hidden md:block w-px h-6 bg-slate-800"></div>
 
           {/* Amount Range */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <div className="flex items-center gap-2 text-slate-500 min-w-fit">
               <Coins size={16} />
               <span className="text-sm font-medium">Montant:</span>
@@ -612,7 +612,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               placeholder="Min"
               value={minAmount}
               onChange={(e) => setMinAmount(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
+              className="flex-1 sm:w-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
             />
             <span className="text-slate-600">-</span>
             <input
@@ -620,14 +620,14 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               placeholder="Max"
               value={maxAmount}
               onChange={(e) => setMaxAmount(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
+              className="flex-1 sm:w-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-blue-500 outline-none text-slate-200"
             />
           </div>
 
           {/* Active Filters Clear Button */}
           {
             (startDate || endDate || minAmount || maxAmount || search || filter !== 'ALL' || accountFilter) && (
-              <div className="ml-auto flex items-center gap-2">
+              <div className="sm:ml-auto flex flex-wrap items-center gap-2 w-full sm:w-auto">
                 <button
                   onClick={clearFilters}
                   className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-300 font-medium px-3 py-1.5 bg-slate-800/50 hover:bg-slate-800 rounded-lg transition-colors"
@@ -652,11 +652,11 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               </div>
             )
           }
-        </div >
-      </div >
+        </div>
+      </div>
 
       {/* Hidden File Input for Receipt Upload */}
-      < input
+      <input
         type="file"
         ref={fileInputRef}
         className="hidden"
@@ -665,8 +665,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       />
 
       {/* Table Section */}
-      < div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-hidden flex-1 overflow-y-auto" >
-        <table className="w-full text-left text-sm">
+      <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-x-auto md:flex-1 md:overflow-y-auto">
+        <table className="w-full text-left text-sm min-w-[850px]">
           <thead className="bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
             <tr>
               <th className="px-6 py-3 font-semibold text-slate-400 w-32">Date</th>

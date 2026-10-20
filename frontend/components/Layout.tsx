@@ -1,6 +1,6 @@
 
-import React from 'react';
-import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, Receipt, Shield, ArrowLeft } from 'lucide-react';
+import React, { useState } from 'react';
+import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, Receipt, Shield, ArrowLeft, Menu, X } from 'lucide-react';
 import { useDataService } from '../services/dataService';
 import { logout } from '../services/authService';
 import { User } from 'firebase/auth';
@@ -19,6 +19,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
   const { isSuperAdmin } = useAuthContext();
   const { selectedOrg, orgRole, setSelectedOrg } = useOrgContext();
   const { selectedCompta, setSelectedCompta, comptaRole } = useComptaContext();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const isCaissier = comptaRole === 'caissier' || comptaRole === 'comptable' || comptaRole === 'admin' || orgRole === 'admin' || isSuperAdmin;
   const isVerif = comptaRole === 'verificateur';
@@ -53,19 +54,85 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
   };
 
   const handleSwitchOrg = () => {
-      setSelectedOrg(null);
-      setSelectedCompta(null);
+    setMobileMenuOpen(false);
+    setSelectedOrg(null);
+    setSelectedCompta(null);
   };
 
+  const handleSelectTab = (tabId: string) => {
+    if (disabled) return;
+    onTabChange(tabId);
+    setMobileMenuOpen(false);
+  };
+
+  const activeNavLabel = navItems.find(item => item.id === activeTab)?.label || 'AssoCompta';
+
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100">
-      {/* Sidebar */}
-      <aside className={`w-64 bg-slate-900 border-r border-slate-800 flex flex-col shadow-lg z-10 ${disabled ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+    <div className="flex flex-col md:flex-row min-h-screen md:h-screen bg-slate-950 text-slate-100">
+      {/* Mobile Header */}
+      <header className="md:hidden sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            onClick={() => setMobileMenuOpen(true)}
+            disabled={disabled}
+            className="p-2 -ml-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+            aria-label="Ouvrir le menu"
+          >
+            <Menu size={22} />
+          </button>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-base font-bold leading-none">
+                <span className="text-blue-500">Asso</span>Compta
+              </span>
+              <span className="text-slate-600">•</span>
+              <span className="text-xs font-medium text-slate-300 truncate">{activeNavLabel}</span>
+            </div>
+            {selectedOrg && (
+              <p className="text-[11px] text-blue-400 truncate mt-0.5">
+                {selectedOrg.name} {selectedCompta ? `— ${selectedCompta.name}` : ''}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {selectedOrg && (
+          <button
+            onClick={handleSwitchOrg}
+            className="p-2 text-slate-400 hover:text-blue-400 rounded-lg hover:bg-slate-800 transition-colors shrink-0"
+            title="Changer d'organisation"
+          >
+            <ArrowLeft size={18} />
+          </button>
+        )}
+      </header>
+
+      {/* Mobile Drawer Backdrop */}
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Sidebar (Desktop permanent + Mobile slide-over drawer) */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-72 md:w-64 md:static md:z-10 bg-slate-900 border-r border-slate-800 flex flex-col shadow-2xl md:shadow-lg transform transition-transform duration-200 ease-in-out ${
+          mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        } ${disabled ? 'opacity-50 pointer-events-none grayscale' : ''}`}
+      >
         <div className="p-4 border-b border-slate-800">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-xl font-bold flex items-center gap-2">
               <span className="text-blue-500">Asso</span>Compta
             </h1>
+            <button
+              onClick={() => setMobileMenuOpen(false)}
+              className="md:hidden p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
+              aria-label="Fermer le menu"
+            >
+              <X size={20} />
+            </button>
           </div>
           
           {selectedOrg && (
@@ -106,7 +173,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
           {navItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => !disabled && onTabChange(item.id)}
+              onClick={() => handleSelectTab(item.id)}
               disabled={disabled}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${activeTab === item.id
                 ? 'bg-blue-600 text-white shadow-md'
@@ -124,7 +191,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
           {user && (
             <div className="p-4 border-b border-slate-800">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold">
+                <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">
                   {user.email ? user.email[0].toUpperCase() : 'U'}
                 </div>
                 <div className="overflow-hidden">
@@ -164,7 +231,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto bg-slate-900 relative text-slate-100">
+      <main className="flex-1 md:overflow-y-auto overflow-x-hidden bg-slate-900 relative text-slate-100">
         {children}
       </main>
     </div>

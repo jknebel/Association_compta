@@ -120,17 +120,17 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
     };
 
     return (
-        <div className="p-8">
+        <div className="p-4 md:p-8">
             <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                 <div>
-                    <h2 className="text-2xl font-bold text-slate-100">Suivi des Cotisations</h2>
-                    <p className="text-slate-400 mt-1">Gérez les paiements membres et identifiez les retards.</p>
+                    <h2 className="text-xl sm:text-2xl font-bold text-slate-100">Suivi des Cotisations</h2>
+                    <p className="text-sm text-slate-400 mt-1">Gérez les paiements membres et identifiez les retards.</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 w-full md:w-auto">
                     {reconciliationData ? (
                         <button
                             onClick={() => setReconciliationData(null)}
-                            className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-colors text-sm font-medium"
+                            className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-colors text-xs sm:text-sm font-medium"
                         >
                             <RefreshCw size={16} />
                             Retour liste standard
@@ -139,14 +139,14 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
                         <>
                             <button
                                 onClick={handleExport}
-                                className="flex items-center gap-2 px-4 py-2 bg-emerald-900/30 text-emerald-400 border border-emerald-800/50 rounded-lg hover:bg-emerald-900/50 transition-colors text-sm font-medium"
+                                className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-emerald-900/30 text-emerald-400 border border-emerald-800/50 rounded-lg hover:bg-emerald-900/50 transition-colors text-xs sm:text-sm font-medium"
                             >
                                 <Download size={16} />
                                 Exporter Liste (Excel)
                             </button>
                             <button
                                 onClick={() => fileInputRef.current?.click()}
-                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors text-sm font-medium shadow-lg shadow-blue-900/20"
+                                className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors text-xs sm:text-sm font-medium shadow-lg shadow-blue-900/20"
                             >
                                 <FileSpreadsheet size={16} />
                                 Vérifier Impayés (Import Excel)
@@ -165,7 +165,7 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
 
             {reconciliationData ? (
                 <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300">
-                    <div className="p-4 bg-slate-950 border-b border-slate-800 flex justify-between items-center">
+                    <div className="p-4 bg-slate-950 border-b border-slate-800 flex flex-wrap justify-between items-center gap-2">
                         <h3 className="font-bold text-slate-200 flex items-center gap-2">
                             <CheckCircle className="text-blue-500" size={18} />
                             Rapport de Réconciliation
@@ -179,7 +179,8 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
                             </span>
                         </div>
                     </div>
-                    <table className="w-full text-left text-sm">
+                    <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm min-w-[600px]">
                         <thead className="bg-slate-900 border-b border-slate-800 text-xs uppercase text-slate-500">
                             <tr>
                                 <th className="px-6 py-3 font-semibold">Membre (Fichier Importé)</th>
@@ -213,28 +214,30 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             ) : (
                 <>
                     {membershipAccounts.length === 0 ? (
-                        <div className="p-12 text-center bg-slate-900 rounded-xl border border-slate-800 text-slate-500">
+                        <div className="p-8 md:p-12 text-center bg-slate-900 rounded-xl border border-slate-800 text-slate-500">
                             Aucun compte n'est configuré pour le suivi des payeurs. Allez dans l'onglet <b>Plan Comptable</b> pour l'activer sur les comptes de recettes (ex: Cotisations).
                         </div>
                     ) : (
-                        <div className="space-y-8">
+                        <div className="space-y-6 md:space-y-8">
                             {membershipAccounts.map(account => {
                                 const accountTxns = transactions.filter(t => t.accountId === account.id && t.amount > 0);
                                 return (
                                     <div key={account.id} className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-hidden">
-                                        <div className="p-4 bg-slate-950 border-b border-slate-800 flex justify-between items-center">
-                                            <h3 className="font-bold text-slate-200 flex items-center gap-2">
-                                                <span className="bg-blue-900/30 text-blue-400 text-xs px-2 py-1 rounded-md font-mono border border-blue-800/50">{account.code}</span>
-                                                {account.label}
+                                        <div className="p-4 bg-slate-950 border-b border-slate-800 flex justify-between items-center gap-2">
+                                            <h3 className="font-bold text-slate-200 flex items-center gap-2 truncate">
+                                                <span className="bg-blue-900/30 text-blue-400 text-xs px-2 py-1 rounded-md font-mono border border-blue-800/50 shrink-0">{account.code}</span>
+                                                <span className="truncate">{account.label}</span>
                                             </h3>
-                                            <span className="text-xs text-slate-500">{accountTxns.length} paiements reçus</span>
+                                            <span className="text-xs text-slate-500 shrink-0">{accountTxns.length} paiements reçus</span>
                                         </div>
 
-                                        <table className="w-full text-left text-sm">
+                                        <div className="overflow-x-auto">
+                                        <table className="w-full text-left text-sm min-w-[560px]">
                                             <thead className="bg-slate-900 border-b border-slate-800 text-xs uppercase text-slate-500">
                                                 <tr>
                                                     <th className="px-6 py-3 font-semibold">Nom du Membre (Détecté)</th>
@@ -303,6 +306,7 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
                                                 )}
                                             </tbody>
                                         </table>
+                                        </div>
                                     </div>
                                 );
                             })}

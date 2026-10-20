@@ -453,30 +453,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto relative">
-      <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto relative">
+      <header className="mb-6 md:mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Plan Comptable</h2>
-          <p className="text-slate-400 mt-2">
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-100">Plan Comptable</h2>
+          <p className="text-sm text-slate-400 mt-1 md:mt-2">
             Gérez vos comptes et catégories.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 w-full md:w-auto">
           {isCaissier && (
             <>
-              <button onClick={handleImportClick} className="flex items-center gap-2 px-3 py-2 bg-blue-900/30 text-blue-300 rounded border border-blue-900/50 hover:bg-blue-900/50 hover:text-white transition-colors text-sm font-medium">
+              <button onClick={handleImportClick} className="flex items-center gap-2 px-3 py-2 bg-blue-900/30 text-blue-300 rounded border border-blue-900/50 hover:bg-blue-900/50 hover:text-white transition-colors text-xs sm:text-sm font-medium">
                 <Upload size={16} /> Importer JSON
               </button>
               <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleFileChange} />
             </>
           )}
-          <button onClick={handleExportConfig} className="flex items-center gap-2 px-3 py-2 bg-slate-800 text-slate-300 rounded border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors text-sm font-medium">
+          <button onClick={handleExportConfig} className="flex items-center gap-2 px-3 py-2 bg-slate-800 text-slate-300 rounded border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors text-xs sm:text-sm font-medium">
             <Download size={16} /> Exporter JSON
           </button>
           {isCaissier && (
             <button 
               onClick={() => setShowAiModal(true)} 
-              className="flex items-center gap-2 px-3 py-2 bg-indigo-900/30 text-indigo-300 rounded border border-indigo-500/30 hover:bg-indigo-900/50 hover:text-white transition-all text-sm font-bold shadow-lg shadow-indigo-950/20 ml-2"
+              className="flex items-center gap-2 px-3 py-2 bg-indigo-900/30 text-indigo-300 rounded border border-indigo-500/30 hover:bg-indigo-900/50 hover:text-white transition-all text-xs sm:text-sm font-bold shadow-lg shadow-indigo-950/20"
             >
               <LucideIcons.Sparkles size={16} /> Informations IA
             </button>
@@ -629,8 +629,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       )}
 
-      <div className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 overflow-visible">
-        <table className="w-full text-left text-sm">
+      <div className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 overflow-x-auto">
+        <table className="w-full text-left text-sm min-w-[650px]">
           <thead className="bg-slate-950 border-b border-slate-800 uppercase text-xs tracking-wider sticky top-0 z-10">
             <tr>
               <th className="px-6 py-4 font-bold text-slate-400 w-16">Icone</th>

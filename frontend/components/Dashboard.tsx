@@ -176,16 +176,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 text-slate-200">
-      <header className="flex justify-between items-end mb-8">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 text-slate-200">
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3 mb-4 md:mb-8">
         <div>
           <div className="flex items-center gap-3">
-            <h2 className="text-3xl font-bold text-white">Vue d'ensemble financière</h2>
+            <h2 className="text-xl sm:text-3xl font-bold text-white">Vue d'ensemble financière</h2>
             <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-[10px] font-bold rounded border border-blue-500/30">v2.1</span>
           </div>
-          <p className="text-slate-400">Analyse en temps réel de la santé de votre association.</p>
+          <p className="text-sm text-slate-400">Analyse en temps réel de la santé de votre association.</p>
         </div>
-        <div className="text-right">
+        <div className="sm:text-right">
           <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Exercice en cours</div>
           <div className="text-slate-200 font-mono">{new Date().getFullYear()}</div>
         </div>
@@ -268,8 +268,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
 
       {/* Main Hierarchical Table */}
       <div className="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 overflow-hidden">
-        <div className="px-6 py-4 bg-slate-950/50 border-b border-slate-800 flex justify-between items-center">
-          <div className="flex items-center gap-4">
+        <div className="px-4 md:px-6 py-4 bg-slate-950/50 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3 md:gap-4">
             <h3 className="font-bold text-slate-100">Détail des Comptes</h3>
             <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
               <button 
@@ -293,7 +293,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
               </div>
             )}
           </div>
-          <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[10px] text-emerald-500 font-bold uppercase tracking-tighter">
+          <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[10px] text-emerald-500 font-bold uppercase tracking-tighter shrink-0">
             Données Approuvées
           </div>
         </div>
@@ -341,65 +341,67 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, accounts, on
       </div>
 
       {/* Charts Section */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl h-[450px]">
-          <h3 className="text-sm font-bold text-rose-400 uppercase tracking-widest mb-6 border-b border-rose-900/30 pb-2">Charges par Catégorie (Niveau 1)</h3>
-          {expenseChartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={expenseChartData} margin={{ top: 20, right: 30, left: 40, bottom: 60 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <XAxis 
-                  dataKey="name" 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  angle={-45} 
-                  textAnchor="end" 
-                  interval={0}
-                  height={60}
-                />
-                <YAxis 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  label={{ value: 'CHF', angle: -90, position: 'insideLeft', offset: -10, fill: '#64748b', fontSize: 12, fontWeight: 'bold' }} 
-                />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}
-                  itemStyle={{ color: '#f1f5f9' }}
-                />
-                <Bar dataKey="value" fill="#ef4444" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : <div className="h-full flex items-center justify-center text-slate-600 italic">Aucune dépense enregistrée</div>}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+        <div className="bg-slate-900 p-4 md:p-6 rounded-2xl border border-slate-800 shadow-xl h-[380px] md:h-[450px] flex flex-col">
+          <h3 className="text-xs md:text-sm font-bold text-rose-400 uppercase tracking-widest mb-4 border-b border-rose-900/30 pb-2 shrink-0">Charges par Catégorie (Niveau 1)</h3>
+          <div className="flex-1 min-h-0">
+            {expenseChartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={expenseChartData} margin={{ top: 10, right: 10, left: 10, bottom: 55 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis 
+                    dataKey="name" 
+                    stroke="#64748b" 
+                    fontSize={10} 
+                    angle={-45} 
+                    textAnchor="end" 
+                    interval={0}
+                    height={60}
+                  />
+                  <YAxis 
+                    stroke="#64748b" 
+                    fontSize={10} 
+                  />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}
+                    itemStyle={{ color: '#f1f5f9' }}
+                  />
+                  <Bar dataKey="value" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <div className="h-full flex items-center justify-center text-slate-600 italic">Aucune dépense enregistrée</div>}
+          </div>
         </div>
 
-        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl h-[450px]">
-          <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-widest mb-6 border-b border-emerald-900/30 pb-2">Produits par Catégorie (Niveau 1)</h3>
-          {incomeChartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={incomeChartData} margin={{ top: 20, right: 30, left: 40, bottom: 60 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <XAxis 
-                  dataKey="name" 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  angle={-45} 
-                  textAnchor="end" 
-                  interval={0}
-                  height={60}
-                />
-                <YAxis 
-                  stroke="#64748b" 
-                  fontSize={10} 
-                  label={{ value: 'CHF', angle: -90, position: 'insideLeft', offset: -10, fill: '#64748b', fontSize: 12, fontWeight: 'bold' }} 
-                />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}
-                  itemStyle={{ color: '#f1f5f9' }}
-                />
-                <Bar dataKey="value" fill="#10b981" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : <div className="h-full flex items-center justify-center text-slate-600 italic">Aucun revenu enregistré</div>}
+        <div className="bg-slate-900 p-4 md:p-6 rounded-2xl border border-slate-800 shadow-xl h-[380px] md:h-[450px] flex flex-col">
+          <h3 className="text-xs md:text-sm font-bold text-emerald-400 uppercase tracking-widest mb-4 border-b border-emerald-900/30 pb-2 shrink-0">Produits par Catégorie (Niveau 1)</h3>
+          <div className="flex-1 min-h-0">
+            {incomeChartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={incomeChartData} margin={{ top: 10, right: 10, left: 10, bottom: 55 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis 
+                    dataKey="name" 
+                    stroke="#64748b" 
+                    fontSize={10} 
+                    angle={-45} 
+                    textAnchor="end" 
+                    interval={0}
+                    height={60}
+                  />
+                  <YAxis 
+                    stroke="#64748b" 
+                    fontSize={10} 
+                  />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}
+                    itemStyle={{ color: '#f1f5f9' }}
+                  />
+                  <Bar dataKey="value" fill="#10b981" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <div className="h-full flex items-center justify-center text-slate-600 italic">Aucun revenu enregistré</div>}
+          </div>
         </div>
       </div>
 

@@ -221,19 +221,19 @@ export const AdminView: React.FC = () => {
     }
 
     return (
-        <div className="p-8 max-w-5xl mx-auto">
-            <header className="mb-8">
-                <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
-                    <Settings className="text-blue-500" size={28} />
-                    Administration: {selectedOrg.name}
+        <div className="p-4 md:p-8 max-w-5xl mx-auto">
+            <header className="mb-6 md:mb-8">
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-100 flex items-center gap-2">
+                    <Settings className="text-blue-500 shrink-0" size={26} />
+                    <span className="truncate">Administration: {selectedOrg.name}</span>
                 </h2>
                 <p className="text-slate-400 text-sm mt-1">Gérez les utilisateurs inscrits dans l'association, leurs rôles et vos espaces comptables.</p>
             </header>
 
-            <div className="flex gap-4 border-b border-slate-800 mb-6">
+            <div className="flex gap-2 sm:gap-4 border-b border-slate-800 mb-6 overflow-x-auto">
                 <button 
                     onClick={() => setActiveTab('members')}
-                    className={`px-4 py-2 font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'members' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                    className={`px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'members' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
                 >
                     <Users size={16} />
                     Utilisateurs & Rôles ({registeredUsers.length})
@@ -241,7 +241,7 @@ export const AdminView: React.FC = () => {
                 </button>
                 <button 
                     onClick={() => setActiveTab('comptas')}
-                    className={`px-4 py-2 font-medium border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'comptas' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                    className={`px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'comptas' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
                 >
                     <Book size={16} />
                     Comptabilités / Catégories ({comptas.length})
@@ -593,12 +593,12 @@ export const AdminView: React.FC = () => {
 
                     {/* Section lien d'invitation générique & demandes */}
                     <div className="pt-4 border-t border-slate-800/80 space-y-4">
-                        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between">
+                        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div>
                                 <h4 className="font-medium text-slate-200 text-sm">Lien d'invitation public de l'association</h4>
                                 <p className="text-slate-500 text-xs">Permet aux membres de s'inscrire directement avec rattachement automatique à votre association.</p>
                             </div>
-                            <button onClick={handleGenerateLink} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 border border-slate-700 transition-colors">
+                            <button onClick={handleGenerateLink} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3.5 py-2 rounded-lg text-xs font-medium flex items-center justify-center gap-2 border border-slate-700 transition-colors shrink-0">
                                 <LinkIcon size={14} />
                                 Copier le lien d'invitation
                             </button>

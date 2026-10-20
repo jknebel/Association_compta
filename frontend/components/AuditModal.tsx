@@ -61,37 +61,45 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, report,
     const sortedTransactions = [...transactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto print:p-0 print:bg-white print:static print:block">
-            <div className="bg-white text-slate-900 rounded-xl shadow-2xl w-full max-w-5xl md:h-[90vh] flex flex-col overflow-hidden print:shadow-none print:h-auto print:w-full print:max-w-none print:rounded-none">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto print:p-0 print:bg-white print:static print:block">
+            <div className="bg-white text-slate-900 rounded-xl shadow-2xl w-full max-w-5xl max-h-[92vh] md:h-[90vh] flex flex-col overflow-hidden print:shadow-none print:h-auto print:w-full print:max-w-none print:rounded-none">
 
                 {/* Header (Écran uniquement) */}
-                <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-center print:hidden">
-                    <div>
-                        <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                            <CheckCircle className="text-emerald-600" />
-                            Clôture & Audit
-                        </h2>
-                        <p className="text-slate-500 text-sm mt-1">Générez votre rapport officiel ou consultez l'avis de l'IA.</p>
+                <div className="p-4 md:p-6 bg-slate-50 border-b border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 print:hidden">
+                    <div className="flex items-center justify-between w-full md:w-auto">
+                        <div>
+                            <h2 className="text-lg sm:text-2xl font-bold text-slate-800 flex items-center gap-2">
+                                <CheckCircle className="text-emerald-600" />
+                                Clôture & Audit
+                            </h2>
+                            <p className="text-slate-500 text-xs sm:text-sm mt-1">Générez votre rapport officiel ou consultez l'avis de l'IA.</p>
+                        </div>
+                        <button
+                            onClick={onClose}
+                            className="md:hidden p-2 hover:bg-slate-200 rounded-full transition-colors"
+                        >
+                            <X size={22} className="text-slate-500" />
+                        </button>
                     </div>
 
-                    <div className="flex bg-slate-200 p-1 rounded-lg">
+                    <div className="flex bg-slate-200 p-1 rounded-lg w-full md:w-auto overflow-x-auto">
                         <button
                             onClick={() => setActiveTab('REPORT')}
-                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'REPORT' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                            className={`flex-1 md:flex-initial justify-center px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'REPORT' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                         >
                             <FileText size={16} />
                             Rapport Comptable
                         </button>
                         <button
                             onClick={() => setActiveTab('AUDIT')}
-                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'AUDIT' ? 'bg-white text-purple-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                            className={`flex-1 md:flex-initial justify-center px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'AUDIT' ? 'bg-white text-purple-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                         >
                             <Bot size={16} />
                             Audit IA
                         </button>
                         <button
                             onClick={() => setActiveTab('CLOSING')}
-                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'CLOSING' ? 'bg-white text-orange-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                            className={`flex-1 md:flex-initial justify-center px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'CLOSING' ? 'bg-white text-orange-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                         >
                             <Archive size={16} />
                             Clôture & Archivage
@@ -100,7 +108,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, report,
 
                     <button
                         onClick={onClose}
-                        className="p-2 hover:bg-slate-200 rounded-full transition-colors"
+                        className="hidden md:block p-2 hover:bg-slate-200 rounded-full transition-colors"
                     >
                         <X size={24} className="text-slate-500" />
                     </button>
@@ -111,17 +119,17 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, report,
 
                     {/* TAB: RAPPORT COMPTABLE (Ce qui sera imprimé) */}
                     <div className={`${activeTab === 'REPORT' ? 'block' : 'hidden'} print:block`}>
-                        <div className="p-8 max-w-4xl mx-auto print:p-0 print:max-w-none">
+                        <div className="p-4 sm:p-8 max-w-4xl mx-auto print:p-0 print:max-w-none">
 
                             {/* PAGE 1: BILAN / COMPTE DE RÉSULTAT */}
-                            <div className="print-section mb-12">
-                                <header className="text-center mb-12 border-b-2 border-slate-900 pb-6">
-                                    <h1 className="text-3xl font-bold uppercase tracking-wide mb-2">Rapport de Clôture</h1>
-                                    <p className="text-slate-500 text-lg">Exercice Comptable {new Date().getFullYear()}</p>
+                            <div className="print-section mb-8 sm:mb-12">
+                                <header className="text-center mb-8 sm:mb-12 border-b-2 border-slate-900 pb-6">
+                                    <h1 className="text-2xl sm:text-3xl font-bold uppercase tracking-wide mb-2">Rapport de Clôture</h1>
+                                    <p className="text-slate-500 text-base sm:text-lg">Exercice Comptable {new Date().getFullYear()}</p>
                                     <p className="text-sm text-slate-400 mt-2">Généré le {new Date().toLocaleDateString()}</p>
                                 </header>
 
-                                <div className="grid grid-cols-2 gap-12 print:grid-cols-2">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 print:grid-cols-2">
                                     {/* CHARGES */}
                                     <div>
                                         <h3 className="text-xl font-bold border-b border-rose-500 text-rose-700 mb-4 pb-2">CHARGES (Dépenses)</h3>

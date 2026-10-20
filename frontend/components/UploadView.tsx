@@ -66,39 +66,39 @@ export const UploadView: React.FC<UploadViewProps> = ({
   };
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
+    <div className="p-4 md:p-8 max-w-4xl mx-auto">
       <div className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 overflow-hidden">
         {/* Header with Tabs */}
         <div className="border-b border-slate-800">
-          <div className="p-8 pb-4">
-            <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+          <div className="p-5 md:p-8 pb-4">
+            <h2 className="text-xl sm:text-2xl font-bold text-slate-100 flex items-center gap-2">
               <Upload className="text-blue-500" />
               Importer des Données
             </h2>
-            <p className="text-slate-400 mt-2">
+            <p className="text-sm text-slate-400 mt-2">
               Ajoutez des transactions à votre comptabilité. L'IA utilisera votre historique pour mieux catégoriser.
             </p>
           </div>
-          <div className="flex px-8 gap-6">
+          <div className="flex px-5 md:px-8 gap-4 md:gap-6 overflow-x-auto">
             <button
               onClick={() => setActiveMode('PDF')}
-              className={`pb-4 text-sm font-medium border-b-2 transition-colors ${activeMode === 'PDF' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+              className={`pb-4 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeMode === 'PDF' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
             >
               Relevé Bancaire (PDF)
             </button>
             <button
               onClick={() => setActiveMode('EXCEL')}
-              className={`pb-4 text-sm font-medium border-b-2 transition-colors ${activeMode === 'EXCEL' ? 'border-green-500 text-green-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+              className={`pb-4 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeMode === 'EXCEL' ? 'border-green-500 text-green-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
             >
               Journal Existant (Excel)
             </button>
           </div>
         </div>
 
-        <div className="p-12 flex flex-col items-center justify-center bg-slate-900/50">
+        <div className="p-6 md:p-12 flex flex-col items-center justify-center bg-slate-900/50">
           {!isUploading ? (
             <div
-              className={`w-full max-w-lg border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center cursor-pointer transition-all group ${
+              className={`w-full max-w-lg border-2 border-dashed rounded-2xl p-6 md:p-10 flex flex-col items-center justify-center cursor-pointer transition-all text-center group ${
                 isDragging 
                   ? 'border-blue-400 bg-blue-900/20 scale-[1.02]'
                   : activeMode === 'PDF' ? 'border-blue-800 hover:border-blue-600 hover:bg-slate-800' : 'border-green-800 hover:border-green-600 hover:bg-slate-800'
@@ -108,14 +108,14 @@ export const UploadView: React.FC<UploadViewProps> = ({
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
-              <div className={`h-16 w-16 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform ${activeMode === 'PDF' ? 'bg-blue-900/50 text-blue-400' : 'bg-green-900/50 text-green-400'
+              <div className={`h-14 w-14 md:h-16 md:w-16 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform ${activeMode === 'PDF' ? 'bg-blue-900/50 text-blue-400' : 'bg-green-900/50 text-green-400'
                 }`}>
                 {activeMode === 'PDF' ? <FileText size={32} /> : <FileSpreadsheet size={32} />}
               </div>
-              <h3 className="text-lg font-semibold text-slate-200">
+              <h3 className="text-base md:text-lg font-semibold text-slate-200">
                 Cliquez pour importer {activeMode === 'PDF' ? 'PDF' : 'Excel'}
               </h3>
-              <p className="text-sm text-slate-500 mt-1">ou glissez-déposez le fichier ici</p>
+              <p className="text-xs md:text-sm text-slate-500 mt-1">ou glissez-déposez le fichier ici</p>
               <input
                 type="file"
                 ref={fileInputRef}

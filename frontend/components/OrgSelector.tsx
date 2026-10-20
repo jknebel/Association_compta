@@ -262,28 +262,28 @@ export const OrgSelector: React.FC = () => {
     }
 
     return (
-        <div className="min-h-screen bg-slate-950 flex flex-col items-center p-8">
+        <div className="min-h-screen bg-slate-950 flex flex-col items-center p-4 md:p-8">
             <div className="w-full max-w-4xl">
-                <div className="flex justify-between items-center mb-8">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 md:mb-8">
                     <div>
-                        <h1 className="text-3xl font-bold text-white tracking-tight mb-2">
+                        <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight mb-1 sm:mb-2">
                             <span className="text-blue-500">Asso</span>Compta AI
                         </h1>
-                        <p className="text-slate-400">Sélectionnez un espace de travail pour continuer</p>
+                        <p className="text-sm sm:text-base text-slate-400">Sélectionnez un espace de travail pour continuer</p>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
                         {isSuperAdmin && (
                             <button 
                                 onClick={() => { window.location.hash = '#superadmin'; }}
-                                className="flex items-center gap-2 px-3.5 py-2 bg-purple-950/60 hover:bg-purple-900/80 text-purple-200 border border-purple-800/60 rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-md shadow-purple-950/40"
+                                className="flex items-center gap-2 px-3 py-2 bg-purple-950/60 hover:bg-purple-900/80 text-purple-200 border border-purple-800/60 rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-md shadow-purple-950/40"
                             >
-                                <Shield size={14} className="text-purple-400" />
-                                Panneau Super Admin (Créer des associations)
+                                <Shield size={14} className="text-purple-400 shrink-0" />
+                                <span>Super Admin</span>
                             </button>
                         )}
                         <button 
                             onClick={async () => { await logout(); window.location.href = '/'; }}
-                            className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg transition-colors border border-slate-800"
+                            className="flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg text-xs sm:text-sm transition-colors border border-slate-800"
                         >
                             <LogOut size={16} />
                             Déconnexion

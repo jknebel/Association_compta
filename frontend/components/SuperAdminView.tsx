@@ -105,14 +105,14 @@ export const SuperAdminView: React.FC<SuperAdminViewProps> = ({ onBack }) => {
     }
 
     return (
-        <div className="p-8 max-w-5xl mx-auto">
-            <header className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="p-4 md:p-8 max-w-5xl mx-auto">
+            <header className="mb-6 md:mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                    <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+                    <h2 className="text-xl sm:text-2xl font-bold text-slate-100 flex items-center gap-2">
                         <ShieldCheck className="text-purple-500" size={28} />
                         Panneau Super Admin
                     </h2>
-                    <p className="text-slate-400 mt-1">Gérez toutes les organisations de la plateforme.</p>
+                    <p className="text-sm text-slate-400 mt-1">Gérez toutes les organisations de la plateforme.</p>
                 </div>
                 <button 
                     onClick={() => { 
