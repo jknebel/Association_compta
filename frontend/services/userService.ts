@@ -1,10 +1,29 @@
-import { doc, setDoc, getDoc, updateDoc, collection, collectionGroup, getDocs, query, where } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, collectionGroup, getDocs, query, where } from 'firebase/firestore';
 import { getDb } from './organizationService';
 import { UserProfile, Comptabilite, ComptaRole, OrgRole } from '../types/rbac';
 
+export const UNVERIFIED_EXPIRATION_MS = 10 * 24 * 60 * 60 * 1000; // 10 jours
+
+export const isExemptFromEmailVerification = (email?: string | null): boolean => {
+    const normalized = (email || '').trim().toLowerCase();
+    return (
+        normalized === 'jean.francois.knebel@gmail.com' ||
+        normalized === 'jean-francois@knebel.ch' ||
+        normalized === 'quokka@tdgl.ch'
+    );
+};
+
 export const createUserProfile = async (
     uid: string, 
-    data: { firstName: string; lastName: string; email: string; orgId?: string; orgName?: string }
+    data: {
+        firstName: string;
+        lastName: string;
+        email: string;
+        orgId?: string;
+        orgName?: string;
+        emailVerified?: boolean;
+        emailVerificationRequired?: boolean;
+    }
 ): Promise<void> => {
     const db = getDb();
     const userRef = doc(db, 'users', uid);
@@ -23,6 +42,8 @@ export const createUserProfile = async (
             createdAt: Date.now(),
             orgId: assignedOrgId,
             orgName: assignedOrgName,
+            emailVerified: data.emailVerified ?? true,
+            emailVerificationRequired: data.emailVerificationRequired ?? false,
             organizations: {
                 [assignedOrgId]: {
                     role: OrgRole.MEMBER,
@@ -135,7 +156,33 @@ export const listAllRegisteredUsers = async (
     try {
         const db = getDb();
         const snap = await getDocs(collection(db, 'users'));
-        return snap.docs
+        const now = Date.now();
+        const validDocs = [];
+
+        for (const d of snap.docs) {
+            const data = d.data();
+            const email = (data.email || '').trim().toLowerCase();
+            if (isExemptFromEmailVerification(email)) {
+                validDocs.push(d);
+                continue;
+            }
+            if (data.emailVerificationRequired === true && data.emailVerified === false) {
+                const createdAt = Number(data.createdAt || 0);
+                if (createdAt > 0 && now - createdAt > UNVERIFIED_EXPIRATION_MS) {
+                    // Compte non vérifié après 10 jours -> suppression automatique (anti-robot)
+                    try {
+                        await deleteDoc(d.ref);
+                    } catch (err) {
+                        console.warn("Could not delete expired unverified user doc:", err);
+                    }
+                }
+                // Tant que le mail n'est pas vérifié, ne pas l'afficher dans la liste d'attribution des rôles
+                continue;
+            }
+            validDocs.push(d);
+        }
+
+        return validDocs
             .map(d => {
                 const data = d.data();
                 const displayName = data.displayName || `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.email || 'Utilisateur';

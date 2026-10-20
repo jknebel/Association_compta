@@ -13,10 +13,14 @@ service cloud.firestore {
     }
 
     // Allow all authenticated users to read user profiles (needed for member/role assignment),
-    // and only the owner to write their own profile.
+    // and only the owner to write their own profile (or auto-purge of unverified robot accounts).
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && isOwner(userId);
+      allow create, update: if isAuthenticated() && isOwner(userId);
+      allow delete: if isAuthenticated() && (
+        isOwner(userId) ||
+        (resource.data.emailVerificationRequired == true && resource.data.emailVerified == false)
+      );
       
       // Allow access to personal subcollections (legacy accounts, transactions, receipts) only to owner
       match /{document=**} {

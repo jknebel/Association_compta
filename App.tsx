@@ -15,9 +15,12 @@ import { LoginView } from './frontend/components/LoginView';
 import { ReceiptsView } from './frontend/components/ReceiptsView';
 
 import { Account, Transaction, AccountType, Receipt, TransactionStatus } from './types';
-import { Edit2, Save, X, AlertTriangle, CloudOff, Loader2, Download, Upload, CheckCircle, XCircle, FileSpreadsheet, RefreshCw } from 'lucide-react';
+import { Edit2, Save, X, AlertTriangle, CloudOff, Loader2, Download, Upload, CheckCircle, XCircle, FileSpreadsheet, RefreshCw, Mail, LogOut } from 'lucide-react';
 import { useDataService } from './frontend/services/dataService';
 import { useAuthContext, useOrgContext, useComptaContext } from './frontend/contexts/AppContext';
+import { isExemptFromEmailVerification, updateUserProfile } from './frontend/services/userService';
+import { logout } from './frontend/services/authService';
+import { sendEmailVerification } from 'firebase/auth';
 import * as XLSX from 'xlsx';
 import { matchTransactionsWithReceipts } from './frontend/services/matchingService';
 import { suggestCategory, parseBankStatementPDF } from './frontend/services/geminiService';
@@ -27,6 +30,9 @@ import { parseExcelLedger } from './frontend/services/excelService';
 function App() {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [guestMode, setGuestMode] = useState(false);
+    const [resendingEmail, setResendingEmail] = useState(false);
+    const [resendMessage, setResendMessage] = useState<string | null>(null);
+    const [checkingVerification, setCheckingVerification] = useState(false);
     
     // Background upload states
     const [isUploading, setIsUploading] = useState(false);
@@ -50,7 +56,7 @@ function App() {
     }, []);
 
     // 1. Check Authentication Status from Context
-    const { user, loading: authLoading, isSuperAdmin } = useAuthContext();
+    const { user, userProfile, loading: authLoading, isSuperAdmin, refreshProfile } = useAuthContext();
     const { selectedOrg, orgRole, setSelectedOrg } = useOrgContext();
     const { selectedCompta, setSelectedCompta } = useComptaContext();
 
@@ -487,6 +493,23 @@ function App() {
         }
     };
 
+    const needsEmailVerification = Boolean(
+        user &&
+        !guestMode &&
+        userProfile?.emailVerificationRequired === true &&
+        userProfile?.emailVerified === false &&
+        !user.emailVerified &&
+        !isExemptFromEmailVerification(user.email)
+    );
+
+    useEffect(() => {
+        if (!needsEmailVerification) return;
+        const interval = setInterval(() => {
+            refreshProfile();
+        }, 4000);
+        return () => clearInterval(interval);
+    }, [needsEmailVerification, refreshProfile]);
+
     // LOADING STATE
     if (authLoading || (user && selectedOrg && selectedCompta && dataLoading)) {
         return (
@@ -505,9 +528,91 @@ function App() {
     if (user && !guestMode) {
         const params = new URLSearchParams(window.location.search);
         const joinOrgId = params.get('org');
-        const inviteCode = params.get('code');
-        if (joinOrgId && inviteCode) {
-            return <JoinOrgPage orgId={joinOrgId} inviteCode={inviteCode} onSuccess={() => window.location.href = '/'} />;
+        if (joinOrgId) {
+            if (userProfile && !userProfile.orgId) {
+                updateUserProfile(user.uid, { orgId: joinOrgId }).catch(console.error);
+            }
+            window.history.replaceState({}, '', window.location.pathname);
+        }
+
+        if (needsEmailVerification) {
+            return (
+                <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-slate-200">
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 md:p-8 text-center shadow-xl">
+                        <div className="w-16 h-16 bg-blue-900/30 text-blue-400 rounded-full flex items-center justify-center mx-auto mb-5 border border-blue-800/50">
+                            <Mail size={32} />
+                        </div>
+
+                        <h1 className="text-xl font-bold text-white mb-2">Vérifiez votre adresse e-mail</h1>
+                        <p className="text-xs text-slate-400 mb-5">
+                            Compte : <span className="text-slate-200 font-semibold">{user.email}</span>
+                        </p>
+
+                        <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 mb-5 text-sm text-slate-300 leading-relaxed text-left space-y-2">
+                            <p>
+                                Un e-mail de confirmation vient d'être envoyé à <strong className="text-white">{user.email}</strong>.
+                            </p>
+                            <p className="text-xs text-slate-400">
+                                Cliquez sur le lien reçu par e-mail pour activer votre compte et permettre à votre administrateur ou caissier de vous attribuer un rôle.
+                            </p>
+                            <p className="text-[11px] text-amber-400/90 pt-1">
+                                ⚠️ Pour éviter les comptes robots, tout compte dont l'adresse e-mail n'est pas vérifiée sous 10 jours est automatiquement supprimé.
+                            </p>
+                        </div>
+
+                        {resendMessage && (
+                            <div className="mb-4 p-2.5 bg-emerald-950/50 border border-emerald-800/60 rounded-lg text-xs text-emerald-300">
+                                {resendMessage}
+                            </div>
+                        )}
+
+                        <div className="flex flex-col gap-3">
+                            <button
+                                onClick={async () => {
+                                    setCheckingVerification(true);
+                                    await refreshProfile();
+                                    setCheckingVerification(false);
+                                }}
+                                disabled={checkingVerification}
+                                className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-blue-900/30 cursor-pointer"
+                            >
+                                <RefreshCw size={16} className={checkingVerification ? "animate-spin" : ""} />
+                                {checkingVerification ? "Vérification..." : "J'ai vérifié mon e-mail (Continuer)"}
+                            </button>
+
+                            <button
+                                onClick={async () => {
+                                    setResendingEmail(true);
+                                    setResendMessage(null);
+                                    try {
+                                        await sendEmailVerification(user);
+                                        setResendMessage("Un nouvel e-mail de vérification a été envoyé.");
+                                    } catch (e: any) {
+                                        setResendMessage("Veuillez patienter quelques instants avant de renvoyer un e-mail.");
+                                    } finally {
+                                        setResendingEmail(false);
+                                    }
+                                }}
+                                disabled={resendingEmail}
+                                className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                                {resendingEmail ? "Envoi en cours..." : "Renvoyer l'e-mail de vérification"}
+                            </button>
+
+                            <button
+                                onClick={async () => {
+                                    await logout();
+                                    window.location.href = '/';
+                                }}
+                                className="w-full py-2.5 bg-slate-950 hover:bg-red-950/30 text-slate-400 hover:text-red-400 border border-slate-800 hover:border-red-900/50 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                            >
+                                <LogOut size={16} />
+                                Se déconnecter
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
         }
 
         if (isSuperAdmin && currentHash === '#superadmin') {

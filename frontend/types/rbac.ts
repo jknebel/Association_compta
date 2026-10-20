@@ -31,6 +31,8 @@ export interface UserProfile {
     createdAt: number;
     orgId?: string;
     orgName?: string;
+    emailVerified?: boolean;
+    emailVerificationRequired?: boolean;
     organizations: Record<string, {
         role: OrgRole;
         status: 'pending' | 'approved' | 'rejected';

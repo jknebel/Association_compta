@@ -30,11 +30,17 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
   useEffect(() => {
     const fetchOrgs = async () => {
       try {
+        const params = new URLSearchParams(window.location.search);
+        const urlOrgId = params.get('org');
         const orgs = await listAllOrganizations();
         if (orgs.length > 0) {
           setOrganizations(orgs);
-          const tdglOrg = orgs.find(o => o.name?.toLowerCase().includes('tdgl') || o.id === 'TDGL');
-          setSelectedOrgId(tdglOrg ? tdglOrg.id : orgs[0].id);
+          if (urlOrgId && orgs.some(o => o.id === urlOrgId)) {
+            setSelectedOrgId(urlOrgId);
+          } else {
+            const tdglOrg = orgs.find(o => o.name?.toLowerCase().includes('tdgl') || o.id === 'TDGL');
+            setSelectedOrgId(tdglOrg ? tdglOrg.id : orgs[0].id);
+          }
         } else {
           setOrganizations([{
             id: 'TDGL',
@@ -42,6 +48,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
             description: 'Association TDGL',
             createdAt: Date.now(),
             createdBy: 'system',
+            inviteCode: '',
             customFields: []
           }]);
           setSelectedOrgId('TDGL');
@@ -53,13 +60,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
     fetchOrgs();
   }, []);
 
-  // Détection des paramètres d'invitation (redirigera vers JoinOrgPage plus tard si géré par App.tsx, 
-  // mais on peut aussi afficher un message ici)
+  // Détection des paramètres d'invitation
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('org') && params.get('code')) {
+    const urlOrgId = params.get('org');
+    if (urlOrgId) {
+      setSelectedOrgId(urlOrgId);
       setIsSignUp(true);
-      setMessage("Vous avez été invité à rejoindre une organisation. Veuillez créer un compte ou vous connecter.");
+      setMessage("Inscrivez-vous ci-dessous (Prénom, Nom, Email). Un e-mail de vérification vous sera envoyé pour valider votre compte.");
     }
   }, []);
 
@@ -80,23 +88,30 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
         const selectedOrg = organizations.find(o => o.id === selectedOrgId);
         const orgName = selectedOrg ? selectedOrg.name : selectedOrgId;
 
-        // Créer le profil avec l'association choisie
+        // Créer le profil avec obligation de vérifier l'adresse e-mail (anti-robot, expiration 10 jours)
         await createUserProfile(user.uid, {
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           email: user.email || email,
           orgId: selectedOrgId,
           orgName: orgName,
+          emailVerified: false,
+          emailVerificationRequired: true,
         });
 
         // Envoyer l'email de vérification
         await sendEmailVerification(user);
-        setMessage("Compte créé avec succès ! Un email de vérification vous a été envoyé.");
-        
-        // S'il y a des paramètres d'invitation, on pourrait rediriger.
-        // Mais App.tsx gérera le flow via JoinOrgPage si l'URL contient /join
+        setMessage("Compte créé ! Un e-mail de vérification vous a été envoyé.");
+
+        // Nettoyer les paramètres ?org=&code= pour aller directement à l'écran de vérification du mail
+        if (window.location.search) {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
       } else {
         await loginWithEmail(email, password);
+        if (window.location.search) {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
       }
     } catch (err: any) {
       console.error("Auth Error:", err);
