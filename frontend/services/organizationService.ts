@@ -433,8 +433,14 @@ export const listComptabilites = async (orgId: string): Promise<Comptabilite[]> 
     return snapshot.docs.map(doc => ({ ...(doc.data() as Comptabilite), id: doc.id }));
 }
 
-export const generateInviteLink = async (orgId: string): Promise<string> => {
+export const generateInviteLink = async (orgId: string, forceNew = false): Promise<string> => {
     const db = getDb();
+    if (!forceNew) {
+        const org = await getOrganization(orgId);
+        if (org?.inviteCode) {
+            return org.inviteCode;
+        }
+    }
     const newCode = Math.random().toString(36).substring(2, 10);
     await updateDoc(doc(db, 'organizations', orgId), { inviteCode: newCode });
     return newCode;
@@ -452,8 +458,44 @@ export const updateCustomFields = async (orgId: string, fields: CustomField[]): 
 
 export const listInvitations = async (orgId: string): Promise<Invitation[]> => {
     const db = getDb();
-    const snapshot = await getDocs(query(collection(db, 'organizations', orgId, 'invitations'), where('status', '==', 'pending')));
-    return snapshot.docs.map(doc => doc.data() as Invitation);
+    const [invSnap, membersSnap] = await Promise.all([
+        getDocs(query(collection(db, 'organizations', orgId, 'invitations'), where('status', '==', 'pending'))),
+        getDocs(collection(db, 'organizations', orgId, 'members'))
+    ]);
+
+    const approvedEmails = new Set<string>();
+    const approvedUids = new Set<string>();
+    membersSnap.docs.forEach(mDoc => {
+        const m = mDoc.data();
+        if (m.status !== 'rejected' && m.status !== 'pending') {
+            if (m.email) approvedEmails.add(String(m.email).trim().toLowerCase());
+            if (m.uid) approvedUids.add(String(m.uid));
+            approvedUids.add(mDoc.id);
+            approvedEmails.add(mDoc.id.toLowerCase());
+        }
+    });
+
+    const pendingInvites: Invitation[] = [];
+    for (const invDoc of invSnap.docs) {
+        const inv = { ...(invDoc.data() as Invitation), id: invDoc.id };
+        const invEmail = (inv.email || '').trim().toLowerCase();
+        const isAlreadyApproved =
+            (invEmail && approvedEmails.has(invEmail)) ||
+            (inv.uid && approvedUids.has(inv.uid));
+
+        if (isAlreadyApproved) {
+            // Auto-clean stale pending invitation for a member who was already validated via direct role assignment
+            try {
+                await updateDoc(invDoc.ref, { status: 'approved' });
+            } catch (e) {
+                console.warn("Could not auto-approve stale invitation:", e);
+            }
+        } else {
+            pendingInvites.push(inv);
+        }
+    }
+
+    return pendingInvites;
 }
 
 export const approveInvitation = async (orgId: string, inviteId: string, uid: string): Promise<void> => {
@@ -700,6 +742,123 @@ export const setMemberComptaAccess = async (
                 }
             }
         }
+    }
+
+    // Auto-approve any pending invitation for this user so 'en attente' badge disappears immediately
+    try {
+        const pendingSnap = await getDocs(query(collection(db, 'organizations', orgId, 'invitations'), where('status', '==', 'pending')));
+        for (const invDoc of pendingSnap.docs) {
+            const invData = invDoc.data();
+            const matchEmail = (invData.email || '').trim().toLowerCase() === normalizedEmail;
+            const matchUid = existingUid && invData.uid === existingUid;
+            if (matchEmail || matchUid) {
+                await updateDoc(invDoc.ref, { status: 'approved' });
+            }
+        }
+    } catch (e) {
+        console.warn("Could not auto-approve pending invitations:", e);
+    }
+};
+
+export const setSingleComptaMemberAccess = async (
+    orgId: string,
+    comptaId: string,
+    email: string,
+    comptaRole: ComptaRole | 'none',
+    displayName?: string,
+    knownUid?: string
+): Promise<void> => {
+    const db = getDb();
+    const normalizedEmail = email.trim().toLowerCase();
+
+    let existingUid: string | undefined = knownUid || undefined;
+    if (!existingUid) {
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const matchedUser = usersSnap.docs.find(
+            d => (d.data().email || '').trim().toLowerCase() === normalizedEmail
+        );
+        if (matchedUser) {
+            existingUid = matchedUser.id;
+        }
+    }
+
+    const memberDocId = existingUid || normalizedEmail;
+    const memberRef = doc(db, 'organizations', orgId, 'members', memberDocId);
+    const existingMemberSnap = await getDoc(memberRef);
+
+    let currentComptaAccess: Record<string, ComptaRole> = {};
+    let existingOrgRole: OrgRole = OrgRole.MEMBER;
+    let existingDisplayName = displayName || normalizedEmail.split('@')[0];
+
+    if (existingMemberSnap.exists()) {
+        const data = existingMemberSnap.data();
+        currentComptaAccess = { ...(data.comptaAccess || {}) };
+        existingOrgRole = data.role || OrgRole.MEMBER;
+        existingDisplayName = displayName || data.displayName || existingDisplayName;
+    } else if (existingUid && existingUid !== normalizedEmail) {
+        const legacyEmailRef = doc(db, 'organizations', orgId, 'members', normalizedEmail);
+        const legacySnap = await getDoc(legacyEmailRef);
+        if (legacySnap.exists()) {
+            const data = legacySnap.data();
+            currentComptaAccess = { ...(data.comptaAccess || {}) };
+            existingOrgRole = data.role || OrgRole.MEMBER;
+            existingDisplayName = displayName || data.displayName || existingDisplayName;
+            try {
+                await deleteDoc(legacyEmailRef);
+            } catch (e) {
+                // ignore
+            }
+        }
+    }
+
+    if (comptaRole === 'none') {
+        delete currentComptaAccess[comptaId];
+    } else {
+        currentComptaAccess[comptaId] = comptaRole;
+    }
+
+    await setDoc(memberRef, {
+        email: normalizedEmail,
+        uid: existingUid || null,
+        role: existingOrgRole,
+        status: 'approved',
+        joinedAt: existingMemberSnap.exists() ? (existingMemberSnap.data().joinedAt || Date.now()) : Date.now(),
+        displayName: existingDisplayName,
+        comptaAccess: currentComptaAccess
+    }, { merge: true });
+    await updateDoc(memberRef, { comptaAccess: currentComptaAccess });
+
+    if (existingUid) {
+        const subMemberRef = doc(db, 'organizations', orgId, 'comptabilites', comptaId, 'members', existingUid);
+        if (comptaRole !== 'none') {
+            await setDoc(subMemberRef, {
+                uid: existingUid,
+                role: comptaRole,
+                email: normalizedEmail,
+                addedAt: Date.now()
+            });
+        } else {
+            try {
+                await deleteDoc(subMemberRef);
+            } catch (e) {
+                // ignore
+            }
+        }
+    }
+
+    // Auto-approve any pending invitation for this user
+    try {
+        const pendingSnap = await getDocs(query(collection(db, 'organizations', orgId, 'invitations'), where('status', '==', 'pending')));
+        for (const invDoc of pendingSnap.docs) {
+            const invData = invDoc.data();
+            const matchEmail = (invData.email || '').trim().toLowerCase() === normalizedEmail;
+            const matchUid = existingUid && invData.uid === existingUid;
+            if (matchEmail || matchUid) {
+                await updateDoc(invDoc.ref, { status: 'approved' });
+            }
+        }
+    } catch (e) {
+        console.warn("Could not auto-approve pending invitations:", e);
     }
 };
 

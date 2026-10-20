@@ -54,7 +54,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
     { id: 'settings', label: 'Plan Comptable', icon: Settings },
   ];
 
-  if (orgRole === 'admin' || isSuperAdmin) {
+  if (isCaissier || orgRole === 'admin' || isSuperAdmin) {
     navItems.push({ id: 'admin', label: 'Administration', icon: Shield });
   }
 
@@ -69,6 +69,9 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
 
   const handleSwitchOrg = () => {
     setMobileMenuOpen(false);
+    if (window.location.hash === '#admin') {
+      window.location.hash = '';
+    }
     setSelectedOrg(null);
     setSelectedCompta(null);
   };

@@ -19,6 +19,7 @@ import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, Ar
 import { logout } from '../services/authService';
 import { checkLegacyData, LegacyDataSummary, connectCurrentCompta, markLegacyMigrationDone } from '../services/migrationService';
 import { UnauthorizedView } from './UnauthorizedView';
+import { AdminView } from './AdminView';
 
 export const OrgSelector: React.FC = () => {
     const { user, isSuperAdmin } = useAuthContext();
@@ -35,6 +36,7 @@ export const OrgSelector: React.FC = () => {
     const [isConnectingLegacy, setIsConnectingLegacy] = useState(false);
     const [isCreatingCompta, setIsCreatingCompta] = useState<string | null>(null); // orgId
     const [showArchived, setShowArchived] = useState<Record<string, boolean>>({});
+    const [managingOrgId, setManagingOrgId] = useState<string | null>(null);
 
     // Rename Modal State
     const [renamingTarget, setRenamingTarget] = useState<{ orgId: string; compta: Comptabilite } | null>(null);
@@ -415,9 +417,11 @@ export const OrgSelector: React.FC = () => {
         );
     }
 
+    const managingOrg = organizations.find(o => o.id === managingOrgId) || null;
+
     return (
         <div className="min-h-screen bg-slate-950 flex flex-col items-center p-4 md:p-8">
-            <div className="w-full max-w-4xl">
+            <div className={`w-full transition-all ${managingOrg ? 'max-w-7xl' : 'max-w-4xl'}`}>
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 md:mb-8">
                     <div>
                         <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight mb-1 sm:mb-2">
@@ -531,7 +535,8 @@ export const OrgSelector: React.FC = () => {
                         </div>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className={`grid grid-cols-1 gap-6 items-start ${managingOrg ? 'lg:grid-cols-12' : 'md:grid-cols-2'}`}>
+                        <div className={managingOrg ? 'lg:col-span-5 space-y-6' : 'contents'}>
                         {organizations.map(org => {
                             const isOrgAdmin = isOrgAdminOf(org);
                             const allComptas = comptasByOrg[org.id] || [];
@@ -539,9 +544,10 @@ export const OrgSelector: React.FC = () => {
                             const archivedComptas = allComptas.filter(c => c.compta.isArchived);
                             const onlyHasArchived = activeComptas.length === 0 && archivedComptas.length > 0;
                             const comptasToShow = (showArchived[org.id] || onlyHasArchived) ? allComptas : activeComptas;
+                            const isManagingThisOrg = managingOrgId === org.id;
                             
                             return (
-                                <div key={org.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg shadow-black/20">
+                                <div key={org.id} className={`bg-slate-900 border rounded-xl overflow-hidden shadow-lg shadow-black/20 transition-colors ${isManagingThisOrg ? 'border-purple-600/70' : 'border-slate-800'}`}>
                                     <div className="p-6 border-b border-slate-800 bg-slate-900/50">
                                         <div className="flex items-center justify-between mb-2">
                                             <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -685,16 +691,16 @@ export const OrgSelector: React.FC = () => {
                                                     {(isSuperAdmin || isOrgAdmin) && (
                                                         <button 
                                                             onClick={() => {
-                                                                setSelectedOrg(org);
-                                                                setOrgRole(isOrgAdmin ? 'admin' : 'member');
-                                                                const firstCompta = allComptas[0]?.compta || null;
-                                                                if (firstCompta) setSelectedCompta(firstCompta);
-                                                                window.location.hash = '#admin';
+                                                                setManagingOrgId(prev => prev === org.id ? null : org.id);
                                                             }}
-                                                            className="flex items-center justify-center gap-2 w-full py-2 bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border border-purple-800/50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                                                            className={`flex items-center justify-center gap-2 w-full py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer border ${
+                                                                isManagingThisOrg
+                                                                    ? 'bg-purple-700 text-white border-purple-500 shadow-lg shadow-purple-950/50'
+                                                                    : 'bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border-purple-800/50'
+                                                            }`}
                                                         >
-                                                            <Shield size={16} className="text-purple-400" />
-                                                            Gérer les membres & rôles
+                                                            <Shield size={16} className={isManagingThisOrg ? "text-white" : "text-purple-400"} />
+                                                            {isManagingThisOrg ? "Fermer la gestion des membres" : "Gérer les membres & rôles (Association)"}
                                                         </button>
                                                     )}
                                                     
@@ -715,6 +721,20 @@ export const OrgSelector: React.FC = () => {
                                 </div>
                             );
                         })}
+                        </div>
+
+                        {/* Panneau de droite sur le Screen 2 : Administration globale de l'Association */}
+                        {managingOrg && (
+                            <div className="lg:col-span-7 bg-slate-950 border border-slate-800 rounded-xl p-5 sm:p-6 shadow-2xl animate-in fade-in slide-in-from-right-4 duration-200">
+                                <AdminView
+                                    orgOverride={managingOrg}
+                                    isOrgAdminOverride={true}
+                                    mode="org"
+                                    onClose={() => setManagingOrgId(null)}
+                                    onChanged={() => fetchData(true)}
+                                />
+                            </div>
+                        )}
                     </div>
                 )}
                 
