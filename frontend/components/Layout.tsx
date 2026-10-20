@@ -1,8 +1,9 @@
 
 import React, { useState } from 'react';
-import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, Receipt, Shield, ArrowLeft, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, Receipt, Shield, ArrowLeft, Menu, X, Edit2 } from 'lucide-react';
 import { useDataService } from '../services/dataService';
 import { logout } from '../services/authService';
+import { renameComptabilite } from '../services/organizationService';
 import { User } from 'firebase/auth';
 import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/AppContext';
 
@@ -23,6 +24,19 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
 
   const isCaissier = comptaRole === 'caissier' || comptaRole === 'comptable' || comptaRole === 'admin' || orgRole === 'admin' || isSuperAdmin;
   const isVerif = comptaRole === 'verificateur';
+
+  const handleQuickRenameCompta = async () => {
+    if (!selectedOrg || !selectedCompta || !isCaissier) return;
+    const newName = window.prompt("Nouveau nom de la comptabilité :", selectedCompta.name);
+    if (!newName || !newName.trim() || newName.trim() === selectedCompta.name) return;
+    try {
+      await renameComptabilite(selectedOrg.id, selectedCompta.id, newName.trim());
+      setSelectedCompta({ ...selectedCompta, name: newName.trim() });
+    } catch (e) {
+      console.error("Erreur lors du renommage:", e);
+      alert("Erreur lors du renommage de la comptabilité.");
+    }
+  };
 
   React.useEffect(() => {
     if (!isCaissier && activeTab === 'upload') {
@@ -139,12 +153,23 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
             <div className="bg-slate-950 rounded-lg p-3 border border-slate-800">
               <div className="flex justify-between items-start mb-1">
                 <p className="text-sm font-semibold text-white truncate pr-2" title={selectedOrg.name}>{selectedOrg.name}</p>
-                <button onClick={handleSwitchOrg} className="text-slate-500 hover:text-blue-400" title="Changer d'organisation">
+                <button onClick={handleSwitchOrg} className="text-slate-500 hover:text-blue-400" title="Changer d'organisation / comptabilité">
                     <ArrowLeft size={16} />
                 </button>
               </div>
               <div className="flex items-center justify-between gap-1 mt-1">
-                <p className="text-xs text-blue-400 truncate font-medium">{selectedCompta?.name || "Aucune compta"}</p>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <p className="text-xs text-blue-400 truncate font-medium" title={selectedCompta?.name}>{selectedCompta?.name || "Aucune compta"}</p>
+                  {selectedCompta && isCaissier && !selectedCompta.isArchived && (
+                    <button
+                      onClick={handleQuickRenameCompta}
+                      className="text-slate-500 hover:text-blue-300 transition-colors shrink-0"
+                      title="Renommer cette comptabilité"
+                    >
+                      <Edit2 size={11} />
+                    </button>
+                  )}
+                </div>
                 {comptaRole && (
                   <span className={`text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border shrink-0 ${
                     comptaRole === 'admin'

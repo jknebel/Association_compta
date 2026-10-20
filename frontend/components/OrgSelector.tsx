@@ -1,12 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/AppContext';
 import { Organization, Comptabilite } from '../types/rbac';
-import { listAllOrganizations, getUserOrganizations, listComptabilites, listOrganizationMembers } from '../services/organizationService';
+import {
+    listAllOrganizations,
+    getUserOrganizations,
+    listComptabilites,
+    listOrganizationMembers,
+    createComptabilite,
+    deleteComptabilite,
+    toggleArchiveComptabilite,
+    renameComptabilite,
+    suggestNextComptaName,
+    getComptaBalanceSummary,
+    closeAndRolloverComptabilite
+} from '../services/organizationService';
 import { getUserComptabilites } from '../services/userService';
-import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield } from 'lucide-react';
+import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield, Edit2, Calendar, X, CheckCircle } from 'lucide-react';
 import { logout } from '../services/authService';
 import { checkLegacyData, LegacyDataSummary, connectCurrentCompta, markLegacyMigrationDone } from '../services/migrationService';
-import { createComptabilite, deleteComptabilite, toggleArchiveComptabilite } from '../services/organizationService';
 import { UnauthorizedView } from './UnauthorizedView';
 
 export const OrgSelector: React.FC = () => {
@@ -24,6 +35,31 @@ export const OrgSelector: React.FC = () => {
     const [isConnectingLegacy, setIsConnectingLegacy] = useState(false);
     const [isCreatingCompta, setIsCreatingCompta] = useState<string | null>(null); // orgId
     const [showArchived, setShowArchived] = useState<Record<string, boolean>>({});
+
+    // Rename Modal State
+    const [renamingTarget, setRenamingTarget] = useState<{ orgId: string; compta: Comptabilite } | null>(null);
+    const [renameNameInput, setRenameNameInput] = useState('');
+    const [renameDescInput, setRenameDescInput] = useState('');
+    const [isSavingRename, setIsSavingRename] = useState(false);
+
+    // Close & Rollover Modal State
+    const [closingTarget, setClosingTarget] = useState<{ org: Organization; compta: Comptabilite } | null>(null);
+    const [closingDateInput, setClosingDateInput] = useState(() => new Date().toISOString().split('T')[0]);
+    const [closingBaseName, setClosingBaseName] = useState('');
+    const [closingPeriodInput, setClosingPeriodInput] = useState('');
+    const [closingNewNameInput, setClosingNewNameInput] = useState('');
+    const [closingCustomNameEdited, setClosingCustomNameEdited] = useState(false);
+    const [closingCarryOverBalance, setClosingCarryOverBalance] = useState<number>(0);
+    const [closingSummary, setClosingSummary] = useState<{
+        openingBalance: number;
+        totalIncome: number;
+        totalExpense: number;
+        totalMovements: number;
+        closingBalance: number;
+        transactionsCount: number;
+    } | null>(null);
+    const [isLoadingClosingSummary, setIsLoadingClosingSummary] = useState(false);
+    const [isSubmittingClose, setIsSubmittingClose] = useState(false);
 
     const fetchData = async () => {
         if (!user) return;
@@ -175,14 +211,125 @@ export const OrgSelector: React.FC = () => {
         }
     };
 
-    const handleToggleArchive = async (e: React.MouseEvent, orgId: string, comptaId: string, isArchived: boolean) => {
+    const handleOpenRename = (e: React.MouseEvent, orgId: string, compta: Comptabilite) => {
         e.stopPropagation();
+        setRenamingTarget({ orgId, compta });
+        setRenameNameInput(compta.name);
+        setRenameDescInput(compta.description || '');
+    };
+
+    const handleSaveRename = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!renamingTarget || !renameNameInput.trim()) return;
+        setIsSavingRename(true);
         try {
-            await toggleArchiveComptabilite(orgId, comptaId, !isArchived);
-            window.location.reload();
+            const newName = renameNameInput.trim();
+            const newDesc = renameDescInput.trim();
+            await renameComptabilite(renamingTarget.orgId, renamingTarget.compta.id, newName, newDesc);
+            setComptasByOrg(prev => {
+                const orgList = prev[renamingTarget.orgId] || [];
+                return {
+                    ...prev,
+                    [renamingTarget.orgId]: orgList.map(item =>
+                        item.compta.id === renamingTarget.compta.id
+                            ? { ...item, compta: { ...item.compta, name: newName, description: newDesc } }
+                            : item
+                    )
+                };
+            });
+            setRenamingTarget(null);
         } catch (err) {
             console.error(err);
-            alert("Erreur lors de l'archivage/désarchivage.");
+            alert("Erreur lors du renommage de la comptabilité.");
+        } finally {
+            setIsSavingRename(false);
+        }
+    };
+
+    const handleOpenClosingModal = async (e: React.MouseEvent, org: Organization, compta: Comptabilite) => {
+        e.stopPropagation();
+        if (compta.isArchived) {
+            // Unarchive directly if already archived
+            try {
+                await toggleArchiveComptabilite(org.id, compta.id, false);
+                await fetchData();
+            } catch (err) {
+                console.error(err);
+                alert("Erreur lors de la restauration de l'archive.");
+            }
+            return;
+        }
+
+        const suggestion = suggestNextComptaName(compta.name);
+        setClosingTarget({ org, compta });
+        setClosingDateInput(new Date().toISOString().split('T')[0]);
+        setClosingBaseName(suggestion.baseName);
+        setClosingPeriodInput(suggestion.suggestedNextPeriod);
+        setClosingNewNameInput(suggestion.suggestedFullName);
+        setClosingCustomNameEdited(false);
+        setClosingSummary(null);
+        setClosingCarryOverBalance(0);
+        setIsLoadingClosingSummary(true);
+
+        try {
+            const summary = await getComptaBalanceSummary(org.id, compta.id);
+            setClosingSummary(summary);
+            setClosingCarryOverBalance(summary.closingBalance);
+        } catch (err) {
+            console.error("Erreur lors du calcul du solde de clôture:", err);
+        } finally {
+            setIsLoadingClosingSummary(false);
+        }
+    };
+
+    const handlePeriodChangeInModal = (periodVal: string) => {
+        setClosingPeriodInput(periodVal);
+        if (!closingCustomNameEdited) {
+            const nextName = periodVal.trim()
+                ? `${closingBaseName} ${periodVal.trim()}`.trim()
+                : closingBaseName;
+            setClosingNewNameInput(nextName);
+        }
+    };
+
+    const handleConfirmRollover = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!closingTarget || !user || !closingNewNameInput.trim()) return;
+        setIsSubmittingClose(true);
+        try {
+            const newCompta = await closeAndRolloverComptabilite({
+                orgId: closingTarget.org.id,
+                oldComptaId: closingTarget.compta.id,
+                newComptaName: closingNewNameInput.trim(),
+                closingDate: closingDateInput || new Date().toISOString().split('T')[0],
+                carryOverBalance: Number(closingCarryOverBalance || 0),
+                creatorUid: user.uid
+            });
+            const targetOrg = closingTarget.org;
+            setClosingTarget(null);
+            await fetchData();
+            // Open the newly created comptabilité directly
+            handleSelectCompta(targetOrg, { compta: newCompta, role: 'caissier' });
+        } catch (err) {
+            console.error("Erreur lors de la clôture et itération:", err);
+            alert("Erreur lors de la clôture et création du nouvel exercice.");
+        } finally {
+            setIsSubmittingClose(false);
+        }
+    };
+
+    const handleArchiveOnly = async () => {
+        if (!closingTarget) return;
+        setIsSubmittingClose(true);
+        try {
+            await toggleArchiveComptabilite(closingTarget.org.id, closingTarget.compta.id, true);
+            setClosingTarget(null);
+            await fetchData();
+        } catch (err) {
+            console.error(err);
+            alert("Erreur lors de l'archivage.");
+        } finally {
+            setIsSubmittingClose(false);
         }
     };
 
@@ -464,12 +611,21 @@ export const OrgSelector: React.FC = () => {
                                                             const canDelete = isSuperAdmin || isOrgAdmin;
                                                             if (!isCaissierOrAdmin && !canDelete) return null;
                                                             return (
-                                                                <div className="flex flex-col gap-1">
+                                                                <div className="flex items-center sm:flex-col gap-1 shrink-0">
                                                                     {isCaissierOrAdmin && (
                                                                         <button
-                                                                            onClick={(e) => handleToggleArchive(e, org.id, item.compta.id, !!item.compta.isArchived)}
+                                                                            onClick={(e) => handleOpenRename(e, org.id, item.compta)}
+                                                                            className="p-1.5 text-slate-500 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
+                                                                            title="Renommer la comptabilité"
+                                                                        >
+                                                                            <Edit2 size={15} />
+                                                                        </button>
+                                                                    )}
+                                                                    {isCaissierOrAdmin && (
+                                                                        <button
+                                                                            onClick={(e) => handleOpenClosingModal(e, org, item.compta)}
                                                                             className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-800 rounded transition-colors"
-                                                                            title={item.compta.isArchived ? "Désarchiver" : "Archiver"}
+                                                                            title={item.compta.isArchived ? "Désarchiver" : "Clôturer l'exercice / Archiver"}
                                                                         >
                                                                             {item.compta.isArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
                                                                         </button>
@@ -565,6 +721,222 @@ export const OrgSelector: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* MODAL: RENOMMER UNE COMPTABILITÉ */}
+            {renamingTarget && (
+                <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+                        <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-800">
+                            <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                                <Edit2 size={18} className="text-blue-400" />
+                                Renommer la comptabilité
+                            </h3>
+                            <button
+                                onClick={() => setRenamingTarget(null)}
+                                className="text-slate-500 hover:text-white p-1"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleSaveRename} className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                                    Nom de la comptabilité *
+                                </label>
+                                <input
+                                    type="text"
+                                    value={renameNameInput}
+                                    onChange={(e) => setRenameNameInput(e.target.value)}
+                                    placeholder="Ex: Groupe 25/26"
+                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:outline-none focus:border-blue-500"
+                                    autoFocus
+                                    required
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-400 mb-1.5">
+                                    Description (optionnelle)
+                                </label>
+                                <textarea
+                                    value={renameDescInput}
+                                    onChange={(e) => setRenameDescInput(e.target.value)}
+                                    placeholder="Description de la section ou de l'exercice..."
+                                    rows={2}
+                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:outline-none focus:border-blue-500 resize-none"
+                                />
+                            </div>
+
+                            <div className="flex justify-end gap-2 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setRenamingTarget(null)}
+                                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors"
+                                >
+                                    Annuler
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isSavingRename || !renameNameInput.trim()}
+                                    className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                                >
+                                    {isSavingRename ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+                                    Enregistrer
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL: CLÔTURE D'EXERCICE & ITÉRATION VERS LA NOUVELLE ANNÉE */}
+            {closingTarget && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-200 my-auto">
+                        <div className="flex justify-between items-start mb-4 pb-3 border-b border-slate-800">
+                            <div>
+                                <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                                    <Archive size={20} className="text-amber-400 shrink-0" />
+                                    Clôturer « {closingTarget.compta.name} »
+                                </h3>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    Archive l'exercice actuel et crée automatiquement le nouvel exercice avec report du solde final.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setClosingTarget(null)}
+                                className="text-slate-500 hover:text-white p-1"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleConfirmRollover} className="space-y-4">
+                            {/* Résumé des soldes */}
+                            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+                                <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                                    Bilan de fin d'exercice ({closingTarget.compta.name})
+                                </div>
+                                {isLoadingClosingSummary ? (
+                                    <div className="flex items-center gap-2 text-xs text-slate-400 py-2">
+                                        <Loader2 size={16} className="animate-spin text-blue-500" />
+                                        Calcul du solde final en cours...
+                                    </div>
+                                ) : closingSummary ? (
+                                    <div className="space-y-1.5 text-xs">
+                                        <div className="flex justify-between text-slate-400">
+                                            <span>Solde d'ouverture initial :</span>
+                                            <span className="font-mono text-slate-200">CHF {closingSummary.openingBalance.toFixed(2)}</span>
+                                        </div>
+                                        <div className="flex justify-between text-slate-400">
+                                            <span>Mouvements ({closingSummary.transactionsCount} écritures) :</span>
+                                            <span className={`font-mono ${closingSummary.totalMovements >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                {closingSummary.totalMovements >= 0 ? '+' : ''}CHF {closingSummary.totalMovements.toFixed(2)}
+                                            </span>
+                                        </div>
+                                        <div className="pt-2 border-t border-slate-800 flex justify-between items-center font-bold text-sm">
+                                            <span className="text-amber-400">Solde final à reporter :</span>
+                                            <span className="font-mono text-white">CHF {closingSummary.closingBalance.toFixed(2)}</span>
+                                        </div>
+                                    </div>
+                                ) : null}
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
+                                        <Calendar size={13} className="text-blue-400" />
+                                        Date de clôture *
+                                    </label>
+                                    <input
+                                        type="date"
+                                        value={closingDateInput}
+                                        onChange={(e) => setClosingDateInput(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:outline-none focus:border-blue-500"
+                                        required
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                                        Nouvelles années (ex: 26/27) *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={closingPeriodInput}
+                                        onChange={(e) => handlePeriodChangeInModal(e.target.value)}
+                                        placeholder="Ex: 26/27"
+                                        className="w-full bg-slate-950 border border-blue-500/60 rounded-lg p-2.5 text-white text-sm font-semibold focus:outline-none focus:border-blue-400"
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                                        Nom de la nouvelle comptabilité *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={closingNewNameInput}
+                                        onChange={(e) => {
+                                            setClosingNewNameInput(e.target.value);
+                                            setClosingCustomNameEdited(true);
+                                        }}
+                                        placeholder="Ex: Groupe 26/27"
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:outline-none focus:border-blue-500"
+                                        required
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                                        Solde d'ouverture reporté (CHF)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={closingCarryOverBalance}
+                                        onChange={(e) => setClosingCarryOverBalance(parseFloat(e.target.value) || 0)}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-emerald-400 font-mono text-sm focus:outline-none focus:border-emerald-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="pt-2 space-y-2.5">
+                                <button
+                                    type="submit"
+                                    disabled={isSubmittingClose || isLoadingClosingSummary || !closingNewNameInput.trim()}
+                                    className="w-full py-2.5 px-4 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg shadow-amber-900/30 flex items-center justify-center gap-2 text-sm transition-all cursor-pointer"
+                                >
+                                    {isSubmittingClose ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />}
+                                    Clôturer & Créer « {closingNewNameInput || 'Nouvel Exercice'} »
+                                </button>
+
+                                <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleArchiveOnly}
+                                        disabled={isSubmittingClose}
+                                        className="text-xs text-slate-400 hover:text-amber-300 underline transition-colors"
+                                    >
+                                        Archiver simplement sans créer de nouvelle année
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setClosingTarget(null)}
+                                        className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition-colors"
+                                    >
+                                        Annuler
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

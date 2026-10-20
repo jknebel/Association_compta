@@ -1,7 +1,8 @@
-import { collection, collectionGroup, doc, setDoc, getDoc, updateDoc, deleteDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, collectionGroup, doc, setDoc, getDoc, updateDoc, deleteDoc, getDocs, query, where, writeBatch } from 'firebase/firestore';
 import { getFirestore } from 'firebase/firestore';
 import { app } from './dataService';
 import { Organization, Comptabilite, CustomField, Invitation, OrgRole, ComptaRole, OrganizationMember } from '../types/rbac';
+import { Account, AccountType, Transaction, TransactionStatus } from '../../types';
 
 export const getDb = () => {
     if (!app) throw new Error("Firebase app not initialized");
@@ -140,6 +141,261 @@ export const createComptabilite = async (orgId: string, data: Omit<Comptabilite,
     return comptaRef.id;
 }
 
+export const renameComptabilite = async (
+    orgId: string,
+    comptaId: string,
+    newName: string,
+    newDescription?: string
+): Promise<void> => {
+    const db = getDb();
+    const updates: Record<string, any> = { name: newName.trim() };
+    if (newDescription !== undefined) {
+        updates.description = newDescription.trim();
+    }
+    await updateDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId), updates);
+};
+
+export const suggestNextComptaName = (currentName: string): {
+    baseName: string;
+    detectedPeriod: string;
+    suggestedNextPeriod: string;
+    suggestedFullName: string;
+} => {
+    const trimmed = (currentName || '').trim();
+    // Match trailing pattern like "25/26", "25-26", "2025/2026", "2025-2026"
+    const dualYearMatch = trimmed.match(/^(.*?)\s*(\d{2,4})\s*([\/\-])\s*(\d{2,4})$/);
+    if (dualYearMatch) {
+        const baseName = dualYearMatch[1].trim() || trimmed;
+        const y1Str = dualYearMatch[2];
+        const sep = dualYearMatch[3];
+        const y2Str = dualYearMatch[4];
+        const y1 = parseInt(y1Str, 10);
+        const y2 = parseInt(y2Str, 10);
+        const nextY1 = (y1 + 1).toString().padStart(y1Str.length, '0');
+        const nextY2 = (y2 + 1).toString().padStart(y2Str.length, '0');
+        const detectedPeriod = `${y1Str}${sep}${y2Str}`;
+        const suggestedNextPeriod = `${nextY1}/${nextY2}`;
+        return {
+            baseName,
+            detectedPeriod,
+            suggestedNextPeriod,
+            suggestedFullName: `${baseName} ${suggestedNextPeriod}`.trim()
+        };
+    }
+
+    // Match trailing single year like "2025" or "25"
+    const singleYearMatch = trimmed.match(/^(.*?)\s+(\d{4}|\d{2})$/);
+    if (singleYearMatch && singleYearMatch[1].trim()) {
+        const baseName = singleYearMatch[1].trim();
+        const yStr = singleYearMatch[2];
+        const y = parseInt(yStr, 10);
+        const nextY1 = yStr.length === 4 ? (y % 100) : y;
+        const nextY2 = nextY1 + 1;
+        const suggestedNextPeriod = `${String(nextY1).padStart(2, '0')}/${String(nextY2).padStart(2, '0')}`;
+        return {
+            baseName,
+            detectedPeriod: yStr,
+            suggestedNextPeriod,
+            suggestedFullName: `${baseName} ${suggestedNextPeriod}`.trim()
+        };
+    }
+
+    // No year in current name (e.g. "Groupe", "Louveteaux")
+    const nowYear = new Date().getFullYear() % 100;
+    const suggestedNextPeriod = `${String(nowYear).padStart(2, '0')}/${String(nowYear + 1).padStart(2, '0')}`;
+    return {
+        baseName: trimmed || 'Comptabilité',
+        detectedPeriod: '',
+        suggestedNextPeriod,
+        suggestedFullName: `${trimmed || 'Comptabilité'} ${suggestedNextPeriod}`.trim()
+    };
+};
+
+export const getComptaBalanceSummary = async (orgId: string, comptaId: string): Promise<{
+    openingBalance: number;
+    totalIncome: number;
+    totalExpense: number;
+    totalMovements: number;
+    closingBalance: number;
+    transactionsCount: number;
+    accountsCount: number;
+}> => {
+    const db = getDb();
+    const accountsSnap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites', comptaId, 'accounts'));
+    const txnsSnap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites', comptaId, 'transactions'));
+
+    const accounts = accountsSnap.docs.map(d => d.data() as Account);
+    const transactions = txnsSnap.docs.map(d => d.data() as Transaction);
+    const activeTxns = transactions.filter(t => t.status !== TransactionStatus.ARCHIVED);
+
+    const assetAcc = accounts.find(a => a.type === AccountType.ASSET);
+    const openingBalance = Number(assetAcc?.initialBalance || 0);
+
+    const totalIncome = activeTxns.filter(t => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
+    const totalExpense = activeTxns.filter(t => Number(t.amount) < 0).reduce((s, t) => s + Number(t.amount), 0);
+    const totalMovements = totalIncome + totalExpense;
+
+    const rawClosing = assetAcc?.closingBalance !== undefined
+        ? Number(assetAcc.closingBalance)
+        : openingBalance + totalMovements;
+    const closingBalance = Math.round(rawClosing * 100) / 100;
+
+    return {
+        openingBalance: Math.round(openingBalance * 100) / 100,
+        totalIncome: Math.round(totalIncome * 100) / 100,
+        totalExpense: Math.round(totalExpense * 100) / 100,
+        totalMovements: Math.round(totalMovements * 100) / 100,
+        closingBalance,
+        transactionsCount: activeTxns.length,
+        accountsCount: accounts.length
+    };
+};
+
+export const closeAndRolloverComptabilite = async (options: {
+    orgId: string;
+    oldComptaId: string;
+    newComptaName: string;
+    closingDate: string;
+    carryOverBalance: number;
+    creatorUid: string;
+    overrideAccounts?: Account[];
+}): Promise<Comptabilite> => {
+    const { orgId, oldComptaId, newComptaName, closingDate, carryOverBalance, creatorUid, overrideAccounts } = options;
+    const db = getDb();
+
+    const oldComptaRef = doc(db, 'organizations', orgId, 'comptabilites', oldComptaId);
+    const oldComptaSnap = await getDoc(oldComptaRef);
+    const oldComptaData = oldComptaSnap.exists() ? (oldComptaSnap.data() as Comptabilite) : null;
+
+    // 1. Archive the old comptabilité with closing date
+    await updateDoc(oldComptaRef, {
+        isArchived: true,
+        archivedAt: Date.now(),
+        fiscalYearEnd: closingDate
+    });
+
+    // 2. Create the new comptabilité
+    const newComptaRef = doc(collection(db, 'organizations', orgId, 'comptabilites'));
+    const newComptaId = newComptaRef.id;
+    const newCompta: Comptabilite = {
+        id: newComptaId,
+        name: newComptaName.trim(),
+        description: oldComptaData?.description || '',
+        createdAt: Date.now(),
+        createdBy: creatorUid,
+        fiscalYearStart: closingDate,
+        fiscalYearEnd: '',
+        currency: oldComptaData?.currency || 'CHF',
+        isArchived: false
+    };
+    await setDoc(newComptaRef, newCompta);
+
+    // 3. Copy accounts into the new comptabilité with carried-over initial balance on ASSET account
+    let sourceAccounts: Account[] = [];
+    if (overrideAccounts && overrideAccounts.length > 0) {
+        sourceAccounts = overrideAccounts;
+    } else {
+        const accSnap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites', oldComptaId, 'accounts'));
+        sourceAccounts = accSnap.docs.map(d => d.data() as Account);
+    }
+
+    const roundedCarryOver = Math.round(Number(carryOverBalance || 0) * 100) / 100;
+    const hasAssetAccount = sourceAccounts.some(a => a.type === AccountType.ASSET);
+
+    const accountsBatch = writeBatch(db);
+    let primaryAssetHandled = false;
+
+    for (const acc of sourceAccounts) {
+        const cleanAcc: Record<string, any> = { ...acc };
+        delete cleanAcc.closingBalance;
+
+        if (acc.type === AccountType.ASSET && !primaryAssetHandled) {
+            primaryAssetHandled = true;
+            cleanAcc.initialBalance = roundedCarryOver;
+            // Also record closingBalance on old compta's asset account for historical clarity
+            const oldAccRef = doc(db, 'organizations', orgId, 'comptabilites', oldComptaId, 'accounts', acc.id);
+            accountsBatch.set(oldAccRef, { ...acc, closingBalance: roundedCarryOver }, { merge: true });
+        } else if (acc.type === AccountType.LIABILITY) {
+            cleanAcc.initialBalance = Number(acc.initialBalance || 0);
+        } else {
+            // Reset INCOME, EXPENSE, MIXED accounts to 0 for the new fiscal year
+            cleanAcc.initialBalance = 0;
+        }
+
+        // Remove undefined fields before writing to Firestore
+        Object.keys(cleanAcc).forEach(k => {
+            if (cleanAcc[k] === undefined) delete cleanAcc[k];
+        });
+
+        const newAccRef = doc(db, 'organizations', orgId, 'comptabilites', newComptaId, 'accounts', acc.id);
+        accountsBatch.set(newAccRef, cleanAcc);
+    }
+
+    if (!hasAssetAccount) {
+        const defaultAssetId = 'acc_bank_' + Date.now();
+        const defaultAsset: Account = {
+            id: defaultAssetId,
+            code: '1020',
+            label: 'Compte Bancaire',
+            description: 'Compte de trésorerie principal',
+            type: AccountType.ASSET,
+            isMembership: false,
+            initialBalance: roundedCarryOver
+        };
+        const newAccRef = doc(db, 'organizations', orgId, 'comptabilites', newComptaId, 'accounts', defaultAssetId);
+        accountsBatch.set(newAccRef, defaultAsset);
+    }
+
+    await accountsBatch.commit();
+
+    // 4. Copy AI settings if present
+    try {
+        const oldAiSnap = await getDoc(doc(db, 'organizations', orgId, 'comptabilites', oldComptaId, 'settings', 'aiConfig'));
+        if (oldAiSnap.exists()) {
+            await setDoc(doc(db, 'organizations', orgId, 'comptabilites', newComptaId, 'settings', 'aiConfig'), oldAiSnap.data());
+        }
+    } catch (e) {
+        console.warn("Could not copy aiConfig to new compta:", e);
+    }
+
+    // 5. Copy member access from old compta to new compta
+    try {
+        const oldSubMembersSnap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites', oldComptaId, 'members'));
+        for (const mDoc of oldSubMembersSnap.docs) {
+            await setDoc(doc(db, 'organizations', orgId, 'comptabilites', newComptaId, 'members', mDoc.id), {
+                ...mDoc.data(),
+                addedAt: Date.now()
+            });
+        }
+        // Ensure creator has access
+        await setDoc(doc(db, 'organizations', orgId, 'comptabilites', newComptaId, 'members', creatorUid), {
+            role: ComptaRole.CAISSIER,
+            uid: creatorUid,
+            joinedAt: Date.now()
+        }, { merge: true });
+
+        // Update comptaAccess map on organization members who had access to oldComptaId
+        const orgMembersSnap = await getDocs(collection(db, 'organizations', orgId, 'members'));
+        for (const orgMemDoc of orgMembersSnap.docs) {
+            const memData = orgMemDoc.data();
+            const existingRole = memData.comptaAccess?.[oldComptaId];
+            if (existingRole) {
+                await updateDoc(orgMemDoc.ref, {
+                    [`comptaAccess.${newComptaId}`]: existingRole
+                });
+            } else if (orgMemDoc.id === creatorUid || memData.uid === creatorUid) {
+                await updateDoc(orgMemDoc.ref, {
+                    [`comptaAccess.${newComptaId}`]: ComptaRole.CAISSIER
+                });
+            }
+        }
+    } catch (e) {
+        console.warn("Could not copy member permissions to new compta:", e);
+    }
+
+    return newCompta;
+};
+
 export const deleteComptabilite = async (orgId: string, comptaId: string): Promise<void> => {
     const db = getDb();
     
@@ -162,11 +418,11 @@ export const deleteComptabilite = async (orgId: string, comptaId: string): Promi
 
 export const toggleArchiveComptabilite = async (orgId: string, comptaId: string, isArchived: boolean): Promise<void> => {
     const db = getDb();
-    const data: Partial<Comptabilite> = { isArchived };
+    const data: Record<string, any> = { isArchived };
     if (isArchived) {
         data.archivedAt = Date.now();
     } else {
-        data.archivedAt = undefined;
+        data.archivedAt = 0;
     }
     await updateDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId), data);
 }

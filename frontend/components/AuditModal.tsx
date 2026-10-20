@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { X, Printer, CheckCircle, AlertTriangle, FileText, Bot, Receipt, Archive, Loader2 } from 'lucide-react';
+import { X, Printer, CheckCircle, AlertTriangle, FileText, Bot, Receipt, Archive, Loader2, Calendar } from 'lucide-react';
 import { Transaction, Account, AccountType } from '../../types';
+import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/AppContext';
+import { suggestNextComptaName, closeAndRolloverComptabilite } from '../services/organizationService';
 
 interface AuditModalProps {
     isOpen: boolean;
@@ -14,10 +16,47 @@ interface AuditModalProps {
 }
 
 export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, report, loading, transactions, accounts, onCloseFiscalYear }) => {
+    const { user } = useAuthContext();
+    const { selectedOrg } = useOrgContext();
+    const { selectedCompta, setSelectedCompta, setComptaRole } = useComptaContext();
+
     const [activeTab, setActiveTab] = useState<'REPORT' | 'AUDIT' | 'CLOSING'>('REPORT');
     const [isClosing, setIsClosing] = useState(false);
 
+    // Rollover / Iteration state
+    const [closingDate, setClosingDate] = useState(() => new Date().toISOString().split('T')[0]);
+    const [baseName, setBaseName] = useState('');
+    const [nextPeriod, setNextPeriod] = useState('');
+    const [nextComptaName, setNextComptaName] = useState('');
+    const [customNameEdited, setCustomNameEdited] = useState(false);
+    const [carryOverBalance, setCarryOverBalance] = useState<number>(0);
+
+    const primaryAssetAccount = accounts.find(a => a.type === AccountType.ASSET);
+    const openingBankBalance = Number(primaryAssetAccount?.initialBalance || 0);
+    const totalMovements = transactions.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+    const calculatedClosingBalance = Math.round(((primaryAssetAccount?.closingBalance !== undefined ? Number(primaryAssetAccount.closingBalance) : openingBankBalance + totalMovements)) * 100) / 100;
+
+    useEffect(() => {
+        if (isOpen) {
+            const currentComptaName = selectedCompta?.name || 'Groupe';
+            const suggestion = suggestNextComptaName(currentComptaName);
+            setClosingDate(new Date().toISOString().split('T')[0]);
+            setBaseName(suggestion.baseName);
+            setNextPeriod(suggestion.suggestedNextPeriod);
+            setNextComptaName(suggestion.suggestedFullName);
+            setCustomNameEdited(false);
+            setCarryOverBalance(calculatedClosingBalance);
+        }
+    }, [isOpen, selectedCompta?.name, calculatedClosingBalance]);
+
     if (!isOpen) return null;
+
+    const handlePeriodChange = (val: string) => {
+        setNextPeriod(val);
+        if (!customNameEdited) {
+            setNextComptaName(val.trim() ? `${baseName} ${val.trim()}`.trim() : baseName);
+        }
+    };
 
     const handlePrint = () => {
         window.print();
@@ -280,105 +319,201 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose, report,
                     </div>
 
                     {/* TAB: CLOSING CONTROL */}
-                    <div className={`${activeTab === 'CLOSING' ? 'block' : 'hidden'} print:hidden p-8`}>
-                        <div className="max-w-4xl mx-auto space-y-8">
+                    <div className={`${activeTab === 'CLOSING' ? 'block' : 'hidden'} print:hidden p-4 sm:p-8`}>
+                        <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8">
                             <div className="bg-orange-50 border border-orange-200 p-4 rounded-lg flex gap-4 text-orange-800">
                                 <AlertTriangle className="shrink-0" />
                                 <div>
-                                    <h4 className="font-bold">Contrôle de Fin d'Exercice</h4>
-                                    <p className="text-sm">Vérifiez que les soldes calculés par le système correspondent aux soldes réels de vos comptes. La clôture archivera définitivement ces {transactions.length} écritures.</p>
+                                    <h4 className="font-bold">Contrôle de Fin d'Exercice & Passage à l'Année Suivante</h4>
+                                    <p className="text-sm">
+                                        La clôture archivera la comptabilité actuelle <strong>{selectedCompta?.name || ''}</strong> ({transactions.length} écritures) et créera automatiquement la nouvelle comptabilité pour l'année suivante avec report du solde final en solde d'ouverture.
+                                    </p>
                                 </div>
                             </div>
 
-                            <table className="w-full text-left border-collapse">
-                                <thead>
-                                    <tr className="border-b border-slate-200 text-xs uppercase text-slate-500 font-bold">
-                                        <th className="py-3">Compte</th>
-                                        <th className="py-3 text-right">Solde Actuel</th>
-                                        <th className="py-3 text-right">Solde de Clôture Cible</th>
-                                        <th className="py-3 text-right">Écart</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {accounts.filter(a => a.initialBalance !== 0 || transactions.some(t => t.accountId === a.id)).map(acc => {
-                                        const movements = transactions.filter(t => t.accountId === acc.id).reduce((sum, t) => sum + t.amount, 0);
-                                        const calculated = (acc.initialBalance || 0) + movements;
-                                        const target = acc.closingBalance;
-                                        const gap = target !== undefined ? calculated - target : null;
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse min-w-[480px]">
+                                    <thead>
+                                        <tr className="border-b border-slate-200 text-xs uppercase text-slate-500 font-bold">
+                                            <th className="py-3">Compte</th>
+                                            <th className="py-3 text-right">Solde Actuel</th>
+                                            <th className="py-3 text-right">Solde de Clôture Cible</th>
+                                            <th className="py-3 text-right">Écart</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {accounts.filter(a => a.type === AccountType.ASSET || a.initialBalance !== 0 || transactions.some(t => t.accountId === a.id)).map(acc => {
+                                            const isPrimaryAsset = primaryAssetAccount && acc.id === primaryAssetAccount.id;
+                                            const movements = isPrimaryAsset
+                                                ? totalMovements
+                                                : transactions.filter(t => t.accountId === acc.id).reduce((sum, t) => sum + t.amount, 0);
+                                            const calculated = (acc.initialBalance || 0) + movements;
+                                            const target = acc.closingBalance;
+                                            const gap = target !== undefined ? calculated - target : null;
 
-                                        return (
-                                            <tr key={acc.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                                                <td className="py-4">
-                                                    <div className="font-bold text-slate-800">{acc.label}</div>
-                                                    <div className="text-xs text-slate-500 font-mono">{acc.code}</div>
-                                                </td>
-                                                <td className="py-4 text-right font-mono text-slate-700">{calculated.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}</td>
-                                                <td className="py-4 text-right font-mono text-slate-700">
-                                                    {target !== undefined ? target.toLocaleString('fr-CH', { minimumFractionDigits: 2 }) : <span className="text-slate-400 italic">Non défini</span>}
-                                                </td>
-                                                <td className="py-4 text-right">
-                                                    {gap !== null ? (
-                                                        <span className={`font-mono text-sm font-bold px-2 py-1 rounded ${Math.abs(gap) < 0.01 ? 'text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                                                            {Math.abs(gap) < 0.01 ? '✓ OK' : `${gap > 0 ? '+' : ''}${gap.toFixed(2)}`}
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-slate-400 text-xs italic">Manquant</span>
-                                                    )}
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
+                                            return (
+                                                <tr key={acc.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                                                    <td className="py-4">
+                                                        <div className="font-bold text-slate-800">{acc.label}</div>
+                                                        <div className="text-xs text-slate-500 font-mono">{acc.code}</div>
+                                                    </td>
+                                                    <td className="py-4 text-right font-mono text-slate-700">{calculated.toLocaleString('fr-CH', { minimumFractionDigits: 2 })}</td>
+                                                    <td className="py-4 text-right font-mono text-slate-700">
+                                                        {target !== undefined ? target.toLocaleString('fr-CH', { minimumFractionDigits: 2 }) : <span className="text-slate-400 italic">Non défini</span>}
+                                                    </td>
+                                                    <td className="py-4 text-right">
+                                                        {gap !== null ? (
+                                                            <span className={`font-mono text-sm font-bold px-2 py-1 rounded ${Math.abs(gap) < 0.01 ? 'text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                                                {Math.abs(gap) < 0.01 ? '✓ OK' : `${gap > 0 ? '+' : ''}${gap.toFixed(2)}`}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-400 text-xs italic">Manquant</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
 
-                            <div className="bg-slate-100 p-6 rounded-xl border border-slate-200">
-                                <h4 className="font-bold text-slate-800 mb-4">Actions de Clôture</h4>
+                            <div className="bg-slate-100 p-4 sm:p-6 rounded-xl border border-slate-200">
+                                <h4 className="font-bold text-slate-800 mb-4">Paramètres de Clôture & Nouvel Exercice</h4>
                                 <div className="space-y-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-white p-4 rounded-xl border border-slate-200">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                                                <Calendar size={14} className="text-orange-600" />
+                                                Date de clôture *
+                                            </label>
+                                            <input
+                                                type="date"
+                                                value={closingDate}
+                                                onChange={(e) => setClosingDate(e.target.value)}
+                                                className="w-full border border-slate-300 rounded-lg p-2.5 text-slate-900 text-sm focus:outline-none focus:border-orange-500"
+                                                required
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                                                Année(s) du nouvel exercice (ex: 26/27) *
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={nextPeriod}
+                                                onChange={(e) => handlePeriodChange(e.target.value)}
+                                                placeholder="Ex: 26/27"
+                                                className="w-full border border-orange-400 rounded-lg p-2.5 text-slate-900 text-sm font-semibold focus:outline-none focus:border-orange-600"
+                                                required
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                                                Nom de la nouvelle comptabilité créée *
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={nextComptaName}
+                                                onChange={(e) => {
+                                                    setNextComptaName(e.target.value);
+                                                    setCustomNameEdited(true);
+                                                }}
+                                                placeholder="Ex: Groupe 26/27"
+                                                className="w-full border border-slate-300 rounded-lg p-2.5 text-slate-900 text-sm focus:outline-none focus:border-orange-500"
+                                                required
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                                                Solde final reporté à l'ouverture (CHF)
+                                            </label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                value={carryOverBalance}
+                                                onChange={(e) => setCarryOverBalance(parseFloat(e.target.value) || 0)}
+                                                className="w-full border border-slate-300 rounded-lg p-2.5 text-emerald-700 font-mono font-bold text-sm focus:outline-none focus:border-emerald-600"
+                                            />
+                                            <span className="text-[11px] text-slate-500 mt-0.5 block">
+                                                Ouverture ({openingBankBalance.toFixed(2)}) + Mouvements ({totalMovements >= 0 ? '+' : ''}{totalMovements.toFixed(2)}) = {calculatedClosingBalance.toFixed(2)} CHF
+                                            </span>
+                                        </div>
+                                    </div>
+
                                     <div className="flex items-start gap-3 text-sm text-slate-600">
                                         <CheckCircle className="text-emerald-500 shrink-0 mt-0.5" size={16} />
-                                        <span>Les {transactions.length} écritures seront marquées comme "Archivées" et n'apparaîtront plus dans le journal courant.</span>
+                                        <span>La comptabilité actuelle <strong>{selectedCompta?.name || ''}</strong> sera archivée avec ses {transactions.length} écritures (consultable à tout moment dans les archives).</span>
                                     </div>
                                     <div className="flex items-start gap-3 text-sm text-slate-600">
                                         <CheckCircle className="text-emerald-500 shrink-0 mt-0.5" size={16} />
-                                        <span>Le solde de clôture cible deviendra le nouveau solde initial pour l'exercice suivant.</span>
+                                        <span>Une nouvelle comptabilité <strong>{nextComptaName || 'Nouvel exercice'}</strong> sera créée avec le plan comptable et un solde d'ouverture de <strong>CHF {Number(carryOverBalance || 0).toFixed(2)}</strong>.</span>
                                     </div>
                                     
                                     <div className="pt-6 border-t border-slate-200 flex flex-col items-center gap-4">
                                         <p className="text-xs text-slate-500 text-center max-w-md italic">
-                                            Assurez-vous d'avoir imprimé ou sauvegardé votre rapport de clôture avant de valider. 
-                                            Cette action est définitive pour l'organisation des données.
+                                            Assurez-vous d'avoir imprimé ou sauvegardé votre rapport de clôture avant de valider.
                                         </p>
                                         <button
-                                            disabled={isClosing}
+                                            disabled={isClosing || !nextComptaName.trim()}
                                             onClick={async () => {
-                                                if (!window.confirm("Êtes-vous sûr de vouloir clôturer l'exercice ?\n\n- Les transactions seront archivées.\n- Le solde initial sera mis à jour.")) return;
+                                                if (!window.confirm(
+                                                    `Confirmer la clôture de "${selectedCompta?.name || 'cet exercice'}" au ${closingDate} ?\n\n` +
+                                                    `- "${selectedCompta?.name || 'Cet exercice'}" sera archivé.\n` +
+                                                    `- La nouvelle comptabilité "${nextComptaName}" sera créée avec un solde initial de CHF ${Number(carryOverBalance || 0).toFixed(2)}.`
+                                                )) return;
                                                 
                                                 setIsClosing(true);
                                                 try {
-                                                    // Prepare final accounts
-                                                    const finalAccounts = accounts.map(acc => {
-                                                        const movements = transactions.filter(t => t.accountId === acc.id).reduce((sum, t) => sum + t.amount, 0);
-                                                        const calculated = (acc.initialBalance || 0) + movements;
-                                                        return {
-                                                            ...acc,
-                                                            initialBalance: acc.closingBalance !== undefined ? acc.closingBalance : calculated,
-                                                            closingBalance: undefined // Reset for next year
-                                                        };
-                                                    });
-                                                    
-                                                    await onCloseFiscalYear(finalAccounts, transactions);
-                                                    alert("Clôture effectuée avec succès ! L'application va redémarrer sur le nouvel exercice.");
-                                                    onClose();
+                                                    if (selectedOrg && selectedCompta && user) {
+                                                        const newCompta = await closeAndRolloverComptabilite({
+                                                            orgId: selectedOrg.id,
+                                                            oldComptaId: selectedCompta.id,
+                                                            newComptaName: nextComptaName.trim(),
+                                                            closingDate: closingDate || new Date().toISOString().split('T')[0],
+                                                            carryOverBalance: Number(carryOverBalance || 0),
+                                                            creatorUid: user.uid,
+                                                            overrideAccounts: accounts
+                                                        });
+                                                        setSelectedCompta(newCompta);
+                                                        setComptaRole('caissier' as any);
+                                                        alert(`Clôture effectuée ! La comptabilité "${selectedCompta.name}" a été archivée et vous êtes maintenant sur "${newCompta.name}" avec un solde d'ouverture de CHF ${Number(carryOverBalance || 0).toFixed(2)}.`);
+                                                        onClose();
+                                                    } else {
+                                                        // Fallback mode local / invité
+                                                        let assetHandled = false;
+                                                        const finalAccounts = accounts.map(acc => {
+                                                            if (acc.type === AccountType.ASSET && !assetHandled) {
+                                                                assetHandled = true;
+                                                                return {
+                                                                    ...acc,
+                                                                    initialBalance: Number(carryOverBalance || 0),
+                                                                    closingBalance: undefined
+                                                                };
+                                                            }
+                                                            return {
+                                                                ...acc,
+                                                                initialBalance: acc.type === AccountType.LIABILITY ? (acc.initialBalance || 0) : 0,
+                                                                closingBalance: undefined
+                                                            };
+                                                        });
+                                                        await onCloseFiscalYear(finalAccounts, transactions);
+                                                        alert("Clôture effectuée avec succès ! L'application redémarre sur le nouvel exercice.");
+                                                        onClose();
+                                                    }
                                                 } catch (e) {
+                                                    console.error(e);
                                                     alert("Erreur lors de la clôture.");
                                                 } finally {
                                                     setIsClosing(false);
                                                 }
                                             }}
-                                            className={`px-8 py-3 rounded-xl font-bold text-lg shadow-xl transition-all flex items-center gap-3 ${isClosing ? 'bg-slate-400 cursor-wait' : 'bg-gradient-to-r from-orange-500 to-rose-600 text-white hover:from-orange-600 hover:to-rose-700 shadow-orange-500/20 hover:scale-105'}`}
+                                            className={`px-6 sm:px-8 py-3 rounded-xl font-bold text-sm sm:text-lg shadow-xl transition-all flex items-center gap-3 ${isClosing ? 'bg-slate-400 cursor-wait' : 'bg-gradient-to-r from-orange-500 to-rose-600 text-white hover:from-orange-600 hover:to-rose-700 shadow-orange-500/20 hover:scale-105 cursor-pointer'}`}
                                         >
                                             {isClosing ? <Loader2 className="animate-spin" /> : <Archive size={20} />}
-                                            Clôturer & Archiver l'Année
+                                            Clôturer & Créer « {nextComptaName || 'Nouvel Exercice'} »
                                         </button>
                                     </div>
                                 </div>

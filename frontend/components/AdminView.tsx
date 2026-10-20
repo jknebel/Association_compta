@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useAuthContext, useOrgContext } from '../contexts/AppContext';
+import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/AppContext';
 import { 
     createComptabilite, 
     listComptabilites, 
     deleteComptabilite,
+    renameComptabilite,
     generateInviteLink,
     listInvitations,
     approveInvitation,
@@ -20,6 +21,7 @@ import { Settings, Users, Book, Link as LinkIcon, Plus, Trash2, Check, X, Loader
 export const AdminView: React.FC = () => {
     const { user, isSuperAdmin } = useAuthContext();
     const { selectedOrg, orgRole } = useOrgContext();
+    const { selectedCompta, setSelectedCompta } = useComptaContext();
 
     const [activeTab, setActiveTab] = useState<'comptas' | 'members'>('members');
     const [comptas, setComptas] = useState<Comptabilite[]>([]);
@@ -32,6 +34,12 @@ export const AdminView: React.FC = () => {
     // Form state pour nouvelle compta
     const [newComptaName, setNewComptaName] = useState('');
     const [newComptaDesc, setNewComptaDesc] = useState('');
+
+    // State pour renommer une compta
+    const [editingComptaId, setEditingComptaId] = useState<string | null>(null);
+    const [editComptaName, setEditComptaName] = useState('');
+    const [editComptaDesc, setEditComptaDesc] = useState('');
+    const [isSavingComptaRename, setIsSavingComptaRename] = useState(false);
 
     // Form state pour affectation membre par email
     const [memberEmail, setMemberEmail] = useState('');
@@ -113,6 +121,26 @@ export const AdminView: React.FC = () => {
             await fetchData();
         } catch (e) {
             console.error(e);
+        }
+    };
+
+    const handleSaveRenameCompta = async (comptaId: string) => {
+        if (!selectedOrg || !editComptaName.trim()) return;
+        setIsSavingComptaRename(true);
+        try {
+            const newName = editComptaName.trim();
+            const newDesc = editComptaDesc.trim();
+            await renameComptabilite(selectedOrg.id, comptaId, newName, newDesc);
+            setComptas(prev => prev.map(c => c.id === comptaId ? { ...c, name: newName, description: newDesc } : c));
+            if (selectedCompta && selectedCompta.id === comptaId) {
+                setSelectedCompta({ ...selectedCompta, name: newName, description: newDesc });
+            }
+            setEditingComptaId(null);
+        } catch (e) {
+            console.error(e);
+            alert("Erreur lors du renommage de la comptabilité.");
+        } finally {
+            setIsSavingComptaRename(false);
         }
     };
 
@@ -289,27 +317,88 @@ export const AdminView: React.FC = () => {
                                 Aucune comptabilité pour le moment.
                             </div>
                         ) : (
-                            comptas.map(c => (
-                                <div key={c.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex justify-between items-center hover:border-slate-700 transition-colors">
-                                    <div className="flex items-start gap-3">
-                                        <div className="p-2 bg-blue-900/30 text-blue-400 rounded-lg border border-blue-800/40 mt-0.5">
-                                            <Book size={18} />
-                                        </div>
-                                        <div>
-                                            <h4 className="font-bold text-white text-base">{c.name}</h4>
-                                            <p className="text-slate-400 text-xs mt-0.5">{c.description || "Aucune description"}</p>
-                                            <p className="text-slate-600 font-mono text-[10px] mt-1">ID: {c.id}</p>
-                                        </div>
+                            comptas.map(c => {
+                                const isEditingThis = editingComptaId === c.id;
+                                return (
+                                    <div key={c.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-3 hover:border-slate-700 transition-colors">
+                                        {isEditingThis ? (
+                                            <div className="flex-1 space-y-2">
+                                                <input
+                                                    type="text"
+                                                    value={editComptaName}
+                                                    onChange={e => setEditComptaName(e.target.value)}
+                                                    placeholder="Nom de la comptabilité"
+                                                    className="w-full bg-slate-950 border border-blue-500 rounded-lg p-2 text-white text-sm focus:outline-none"
+                                                    autoFocus
+                                                />
+                                                <input
+                                                    type="text"
+                                                    value={editComptaDesc}
+                                                    onChange={e => setEditComptaDesc(e.target.value)}
+                                                    placeholder="Description (optionnelle)"
+                                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-slate-300 text-xs focus:outline-none focus:border-blue-500"
+                                                />
+                                                <div className="flex items-center gap-2 pt-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSaveRenameCompta(c.id)}
+                                                        disabled={isSavingComptaRename || !editComptaName.trim()}
+                                                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                                                    >
+                                                        {isSavingComptaRename ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                                                        Enregistrer
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setEditingComptaId(null)}
+                                                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium transition-colors"
+                                                    >
+                                                        Annuler
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="flex items-start gap-3">
+                                                    <div className="p-2 bg-blue-900/30 text-blue-400 rounded-lg border border-blue-800/40 mt-0.5">
+                                                        <Book size={18} />
+                                                    </div>
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <h4 className="font-bold text-white text-base">{c.name}</h4>
+                                                            {c.isArchived && (
+                                                                <span className="text-[10px] uppercase tracking-wider bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">Archivé</span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-slate-400 text-xs mt-0.5">{c.description || "Aucune description"}</p>
+                                                        <p className="text-slate-600 font-mono text-[10px] mt-1">ID: {c.id}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-1 self-end sm:self-center">
+                                                    <button
+                                                        onClick={() => {
+                                                            setEditingComptaId(c.id);
+                                                            setEditComptaName(c.name);
+                                                            setEditComptaDesc(c.description || '');
+                                                        }}
+                                                        className="text-slate-400 hover:text-blue-400 hover:bg-blue-900/20 p-2 rounded-lg transition-colors"
+                                                        title="Renommer la comptabilité"
+                                                    >
+                                                        <Edit2 size={16} />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleDeleteCompta(c.id)} 
+                                                        className="text-slate-500 hover:text-red-400 hover:bg-red-900/20 p-2 rounded-lg transition-colors"
+                                                        title="Supprimer la comptabilité"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
                                     </div>
-                                    <button 
-                                        onClick={() => handleDeleteCompta(c.id)} 
-                                        className="text-slate-500 hover:text-red-400 hover:bg-red-900/20 p-2 rounded-lg transition-colors"
-                                        title="Supprimer la comptabilité"
-                                    >
-                                        <Trash2 size={16} />
-                                    </button>
-                                </div>
-                            ))
+                                );
+                            })
                         )}
                     </div>
                 </div>
