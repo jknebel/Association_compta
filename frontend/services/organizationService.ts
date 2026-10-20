@@ -693,6 +693,29 @@ export const setMemberComptaAccess = async (
 
     const memberDocId = existingUid || normalizedEmail;
 
+    // Enforce maximum 2 admins per organization
+    if (role === OrgRole.ADMIN || (role as string) === 'admin') {
+        const currentMembersSnap = await getDocs(collection(db, 'organizations', orgId, 'members'));
+        const otherAdminEmails = new Set<string>();
+        for (const mDoc of currentMembersSnap.docs) {
+            const mData = mDoc.data();
+            if (mData.role === OrgRole.ADMIN && mData.status !== 'rejected') {
+                const mEmail = (mData.email || '').trim().toLowerCase();
+                const mUid = mData.uid || mDoc.id;
+                const isSameUser =
+                    (mEmail && mEmail === normalizedEmail) ||
+                    (existingUid && mUid === existingUid) ||
+                    mDoc.id === memberDocId;
+                if (!isSameUser) {
+                    otherAdminEmails.add(mEmail || mUid);
+                }
+            }
+        }
+        if (otherAdminEmails.size >= 2) {
+            throw new Error("Limite atteinte : il ne peut y avoir que 2 administrateurs maximum par association.");
+        }
+    }
+
     // If a pre-invited doc existed under email ID and now we have a UID, clean up the old email-keyed doc
     if (existingUid && existingUid !== normalizedEmail) {
         try {

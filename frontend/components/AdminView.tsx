@@ -192,9 +192,35 @@ export const AdminView: React.FC<AdminViewProps> = ({
         }
     };
 
+    const getUniqueAdminCount = (excludeEmail?: string, excludeUid?: string) => {
+        const adminKeys = new Set<string>();
+        const normExclude = excludeEmail?.trim().toLowerCase();
+        for (const m of members) {
+            if (m.role === OrgRole.ADMIN && m.status !== 'rejected') {
+                const mEmail = (m.email || '').trim().toLowerCase();
+                const mUid = m.uid || m.id || '';
+                const isExcluded =
+                    (normExclude && mEmail === normExclude) ||
+                    (excludeUid && mUid === excludeUid);
+                if (!isExcluded) {
+                    adminKeys.add(mEmail || mUid);
+                }
+            }
+        }
+        return adminKeys.size;
+    };
+
     const handleSaveMemberAccess = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!activeOrg || !memberEmail.trim()) return;
+
+        if (memberOrgRole === OrgRole.ADMIN) {
+            const otherAdmins = getUniqueAdminCount(memberEmail, selectedFirebaseUserUid);
+            if (otherAdmins >= 2) {
+                alert("Limite atteinte : il ne peut y avoir que 2 administrateurs maximum par association pour éviter les conflits.");
+                return;
+            }
+        }
 
         setIsSavingMember(true);
         try {
@@ -214,9 +240,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
             await fetchData();
             onChanged?.();
             alert("Permissions du membre enregistrées avec succès !");
-        } catch (error) {
+        } catch (error: any) {
             console.error("Failed to save member access:", error);
-            alert("Erreur lors de l'enregistrement des accès.");
+            alert(error?.message || "Erreur lors de l'enregistrement des accès.");
         } finally {
             setIsSavingMember(false);
         }
@@ -282,9 +308,16 @@ export const AdminView: React.FC<AdminViewProps> = ({
             return;
         }
         const currentlyAdmin = existingMember?.role === OrgRole.ADMIN;
+        if (!currentlyAdmin) {
+            const otherAdmins = getUniqueAdminCount(regUser.email, regUser.uid);
+            if (otherAdmins >= 2) {
+                alert("Limite atteinte (2/2) : il ne peut y avoir que 2 administrateurs maximum par association. Retirez d'abord un administrateur actuel si vous souhaitez le remplacer.");
+                return;
+            }
+        }
         const confirmMsg = currentlyAdmin
             ? `Retirer les droits d'Administrateur du groupe « ${activeOrg.name} » à ${regUser.displayName || regUser.email} ?`
-            : `Donner les droits d'Administrateur du groupe « ${activeOrg.name} » à ${regUser.displayName || regUser.email} ?\n\nIl aura accès à toutes les comptabilités du groupe et pourra gérer les membres.`;
+            : `Donner les droits d'Administrateur du groupe « ${activeOrg.name} » à ${regUser.displayName || regUser.email} ?\n\nIl aura accès à toutes les comptabilités du groupe et pourra gérer les membres (Maximum 2 admins par groupe).`;
         if (!window.confirm(confirmMsg)) return;
 
         setIsSavingMember(true);
@@ -300,9 +333,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
             );
             await fetchData();
             onChanged?.();
-        } catch (e) {
+        } catch (e: any) {
             console.error("Failed to toggle org admin:", e);
-            alert("Erreur lors de la modification du rôle Administrateur.");
+            alert(e?.message || "Erreur lors de la modification du rôle Administrateur.");
         } finally {
             setIsSavingMember(false);
         }
@@ -795,10 +828,20 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     {/* 1. LISTE DES MEMBRES EN HAUT : Plus large, moins haute, lecture immédiate */}
                     <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
                         <div className="px-4 py-3 border-b border-slate-800 bg-slate-950 flex flex-wrap justify-between items-center gap-2">
-                            <h3 className="font-semibold text-white text-sm flex items-center gap-2">
-                                <Users size={16} className="text-blue-500" />
-                                Utilisateurs inscrits ({registeredUsers.length})
-                            </h3>
+                            <div className="flex flex-wrap items-center gap-3">
+                                <h3 className="font-semibold text-white text-sm flex items-center gap-2">
+                                    <Users size={16} className="text-blue-500" />
+                                    Utilisateurs inscrits ({registeredUsers.length})
+                                </h3>
+                                <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${
+                                    getUniqueAdminCount() >= 2
+                                        ? 'bg-amber-950/50 border-amber-700/60 text-amber-300'
+                                        : 'bg-purple-950/50 border-purple-700/60 text-purple-300'
+                                }`}>
+                                    <Shield size={11} />
+                                    Admins du groupe : {getUniqueAdminCount()} / 2 max
+                                </span>
+                            </div>
                             <span className="text-xs text-slate-400">
                                 Cliquez sur <strong>Modifier</strong> sur une ligne pour ajuster ses droits ci-dessous.
                             </span>
@@ -819,6 +862,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                     const accessEntries = Object.entries(m?.comptaAccess || {});
                                     const isUnassigned = !m;
                                     const isSelectedForEdit = memberEmail.toLowerCase() === regUser.email.toLowerCase();
+                                    const maxAdminsReachedForThisUser = !isAdmin && getUniqueAdminCount(regUser.email, regUser.uid) >= 2;
 
                                     return (
                                         <div
@@ -884,22 +928,30 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                 )}
                                             </div>
 
-                                            {/* Colonne Droite : Actions compactes (Donner Admin réservé à l'Admin + Modifier + Supprimer) */}
+                                            {/* Colonne Droite : Actions compactes (Donner Admin réservé à l'Admin, max 2 + Modifier + Supprimer) */}
                                             <div className="flex flex-wrap items-center gap-1.5 self-end lg:self-center shrink-0">
                                                 {isOrgAdmin && (
                                                     <button
                                                         type="button"
-                                                        disabled={isSavingMember}
+                                                        disabled={isSavingMember || maxAdminsReachedForThisUser}
                                                         onClick={() => handleToggleOrgAdmin(regUser, m)}
-                                                        className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer border ${
+                                                        className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border ${
                                                             isAdmin
-                                                                ? 'text-purple-200 bg-purple-900/60 hover:bg-purple-800/70 border-purple-600/70'
-                                                                : 'text-purple-300 bg-purple-950/30 hover:bg-purple-900/50 border-purple-800/50'
+                                                                ? 'text-purple-200 bg-purple-900/60 hover:bg-purple-800/70 border-purple-600/70 cursor-pointer'
+                                                                : maxAdminsReachedForThisUser
+                                                                ? 'text-slate-500 bg-slate-900/50 border-slate-800 opacity-50 cursor-not-allowed'
+                                                                : 'text-purple-300 bg-purple-950/30 hover:bg-purple-900/50 border-purple-800/50 cursor-pointer'
                                                         }`}
-                                                        title={isAdmin ? "Retirer le rôle d'Administrateur du groupe" : "Nommer Administrateur du groupe (Seul un admin peut le faire)"}
+                                                        title={
+                                                            isAdmin
+                                                                ? "Retirer le rôle d'Administrateur du groupe"
+                                                                : maxAdminsReachedForThisUser
+                                                                ? "Limite de 2 administrateurs atteinte (2/2)"
+                                                                : "Nommer Administrateur du groupe (Max 2 admins)"
+                                                        }
                                                     >
                                                         <Shield size={12} />
-                                                        {isAdmin ? "Retirer Admin" : "Donner Admin"}
+                                                        {isAdmin ? "Retirer Admin" : maxAdminsReachedForThisUser ? "Max 2 Admins" : "Donner Admin"}
                                                     </button>
                                                 )}
                                                 <button
@@ -1019,7 +1071,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                 <div>
                                     <label className="block text-[11px] font-semibold text-slate-400 mb-1 flex items-center gap-1">
                                         <Shield size={12} className="text-purple-400" />
-                                        <span className="text-purple-400 font-bold">Rôle Groupe :</span> Admin / Membre
+                                        <span className="text-purple-400 font-bold">Rôle Groupe :</span> Admin (max 2)
                                     </label>
                                     <select
                                         value={memberOrgRole}
@@ -1034,7 +1086,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                         <option value={OrgRole.MEMBER}>Membre (Selon comptabilités)</option>
                                         <option value={OrgRole.CAISSIER}>💼 Caissier du Groupe</option>
                                         {isOrgAdmin && (
-                                            <option value={OrgRole.ADMIN}>🛡️ Administrateur du Groupe (Complet)</option>
+                                            <option
+                                                value={OrgRole.ADMIN}
+                                                disabled={getUniqueAdminCount(memberEmail, selectedFirebaseUserUid) >= 2}
+                                            >
+                                                {getUniqueAdminCount(memberEmail, selectedFirebaseUserUid) >= 2
+                                                    ? '🛡️ Administrateur du Groupe (Max 2/2 atteint)'
+                                                    : '🛡️ Administrateur du Groupe (Complet)'}
+                                            </option>
                                         )}
                                     </select>
                                 </div>
@@ -1044,7 +1103,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                 <div className="bg-purple-950/40 border border-purple-700/60 rounded-lg px-3.5 py-2 flex items-center gap-2 text-xs text-purple-200">
                                     <Shield size={15} className="text-purple-400 shrink-0" />
                                     <span>
-                                        <strong>Administrateur du groupe ({activeOrg.name}) :</strong> ce membre aura automatiquement accès à toutes les comptabilités et pourra gérer les membres et nommer d'autres administrateurs.
+                                        <strong>Administrateur du groupe ({activeOrg.name}) — Limité à 2 max :</strong> ce membre aura automatiquement accès à toutes les comptabilités et pourra gérer les membres.
                                     </span>
                                 </div>
                             )}
