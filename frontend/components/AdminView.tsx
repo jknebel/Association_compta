@@ -243,6 +243,32 @@ export const AdminView: React.FC<AdminViewProps> = ({
         }
     };
 
+    const findMemberForUser = (uid?: string, email?: string): OrganizationMember | undefined => {
+        const normEmail = (email || '').trim().toLowerCase();
+        const matches = members.filter(mem => {
+            const memEmail = (mem.email || '').trim().toLowerCase();
+            const matchEmail = normEmail && (memEmail === normEmail || (mem.id || '').toLowerCase() === normEmail);
+            const matchUid = uid && (mem.uid === uid || mem.id === uid);
+            return Boolean(matchEmail || matchUid);
+        });
+        if (matches.length === 0) return undefined;
+        if (matches.length === 1) return matches[0];
+        const mergedAccess: Record<string, ComptaRole> = {};
+        let best = matches[0];
+        for (const item of matches) {
+            if (item.comptaAccess) {
+                Object.assign(mergedAccess, item.comptaAccess);
+            }
+            if (item.role === OrgRole.ADMIN || Object.keys(item.comptaAccess || {}).length > Object.keys(best.comptaAccess || {}).length) {
+                best = item;
+            }
+        }
+        return {
+            ...best,
+            comptaAccess: mergedAccess
+        };
+    };
+
     const getUniqueAdminCount = (excludeEmail?: string, excludeUid?: string) => {
         const adminKeys = new Set<string>();
         const normExclude = excludeEmail?.trim().toLowerCase();
@@ -266,9 +292,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
         if (!activeOrg || !memberEmail.trim()) return;
 
         const otherAdmins = getUniqueAdminCount(memberEmail, selectedFirebaseUserUid);
-        const existingMember = members.find(
-            m => m.email?.toLowerCase() === memberEmail.trim().toLowerCase() || (selectedFirebaseUserUid && m.uid === selectedFirebaseUserUid)
-        );
+        const existingMember = findMemberForUser(selectedFirebaseUserUid || undefined, memberEmail.trim());
         const wasAdmin = existingMember?.role === OrgRole.ADMIN;
 
         if (memberOrgRole === OrgRole.ADMIN) {
@@ -291,11 +315,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 memberName.trim() || undefined,
                 selectedFirebaseUserUid || undefined
             );
-            setMemberEmail('');
-            setMemberName('');
-            setMemberOrgRole(OrgRole.MEMBER);
-            setSelectedFirebaseUserUid('');
-            setMemberComptaRoles({});
             await fetchData();
             onChanged?.();
             alert("Permissions du membre enregistrées avec succès !");
@@ -404,7 +423,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     };
 
     const handleEditMember = (m: OrganizationMember) => {
-        setMemberEmail(m.email);
+        setMemberEmail(m.email || '');
         setMemberName(m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim());
         setMemberOrgRole(m.role || OrgRole.MEMBER);
         setMemberComptaRoles(m.comptaAccess || {});
@@ -412,7 +431,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
             const currentRole = m.comptaAccess?.[selectedCompta.id] || ComptaRole.VERIFICATEUR;
             setSingleComptaRole(currentRole as ComptaRole);
         }
-        const matched = registeredUsers.find(u => u.email.toLowerCase() === m.email.toLowerCase());
+        const mEmail = (m.email || '').trim().toLowerCase();
+        const matched = registeredUsers.find(
+            u => (mEmail && (u.email || '').trim().toLowerCase() === mEmail) || (m.uid && u.uid === m.uid) || (m.id && u.uid === m.id)
+        );
         if (matched) {
             setSelectedFirebaseUserUid(matched.uid);
         } else {
@@ -498,9 +520,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
         }
 
         const comptaMembersList = registeredUsers.filter(regUser => {
-            const m = members.find(
-                mem => mem.email?.toLowerCase() === regUser.email.toLowerCase() || mem.uid === regUser.uid || mem.id === regUser.uid
-            );
+            const m = findMemberForUser(regUser.uid, regUser.email);
             return Boolean(m?.comptaAccess?.[selectedCompta.id]);
         });
 
@@ -563,9 +583,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                             if (found) {
                                                 setMemberEmail(found.email);
                                                 setMemberName(found.displayName);
-                                                const existing = members.find(
-                                                    m => m.email?.toLowerCase() === found.email.toLowerCase() || m.uid === found.uid
-                                                );
+                                                const existing = findMemberForUser(found.uid, found.email);
                                                 const existingComptaRole = existing?.comptaAccess?.[selectedCompta.id];
                                                 setSingleComptaRole(existingComptaRole || ComptaRole.VERIFICATEUR);
                                             }
@@ -574,9 +592,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                     >
                                         <option value="">-- Sélectionner parmi les inscrits --</option>
                                         {registeredUsers.map(u => {
-                                            const m = members.find(
-                                                mem => mem.email?.toLowerCase() === u.email.toLowerCase() || mem.uid === u.uid
-                                            );
+                                            const m = findMemberForUser(u.uid, u.email);
                                             const currentRole = m?.comptaAccess?.[selectedCompta.id];
                                             const roleTag = currentRole
                                                 ? ` [${currentRole === 'caissier' || currentRole === 'comptable' ? 'Caissier' : currentRole === 'verificateur' ? 'Vérificateur' : 'Lecteur'}]`
@@ -916,14 +932,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         ) : (
                             <div className="divide-y divide-slate-800/70">
                                 {registeredUsers.map(regUser => {
-                                    const m = members.find(
-                                        mem => mem.email?.toLowerCase() === regUser.email.toLowerCase() || mem.uid === regUser.uid || mem.id === regUser.uid
-                                    );
+                                    const m = findMemberForUser(regUser.uid, regUser.email);
                                     const isAdmin = m?.role === OrgRole.ADMIN;
                                     const isOrgCaissier = m?.role === OrgRole.CAISSIER || (m?.role as string) === 'comptable';
                                     const accessEntries = Object.entries(m?.comptaAccess || {});
                                     const isUnassigned = !m;
-                                    const isSelectedForEdit = memberEmail.toLowerCase() === regUser.email.toLowerCase();
+                                    const isSelectedForEdit = (memberEmail || '').trim().toLowerCase() === (regUser.email || '').trim().toLowerCase();
                                     const otherAdminsCount = getUniqueAdminCount(regUser.email, regUser.uid);
                                     const maxAdminsReachedForThisUser = !isAdmin && otherAdminsCount >= 2;
                                     const isOnlyAdminForThisUser = isAdmin && otherAdminsCount === 0;
@@ -1094,11 +1108,18 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                         onChange={(e) => {
                                             const uid = e.target.value;
                                             setSelectedFirebaseUserUid(uid);
+                                            if (!uid) {
+                                                setMemberEmail('');
+                                                setMemberName('');
+                                                setMemberOrgRole(OrgRole.MEMBER);
+                                                setMemberComptaRoles({});
+                                                return;
+                                            }
                                             const found = registeredUsers.find(u => u.uid === uid);
                                             if (found) {
                                                 setMemberEmail(found.email);
                                                 setMemberName(found.displayName);
-                                                const existing = members.find(m => m.email.toLowerCase() === found.email.toLowerCase());
+                                                const existing = findMemberForUser(found.uid, found.email);
                                                 if (existing) {
                                                     setMemberOrgRole(existing.role || OrgRole.MEMBER);
                                                     setMemberComptaRoles(existing.comptaAccess || {});

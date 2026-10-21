@@ -722,16 +722,22 @@ export const setMemberComptaAccess = async (
         throw new Error("Action impossible : il doit toujours y avoir au moins 1 administrateur dans l'association (0 admin n'est pas autorisé). Nommez d'abord un autre administrateur.");
     }
 
-    // If a pre-invited doc existed under email ID and now we have a UID, clean up the old email-keyed doc
-    if (existingUid && existingUid !== normalizedEmail) {
-        try {
-            const legacyEmailRef = doc(db, 'organizations', orgId, 'members', normalizedEmail);
-            const legacySnap = await getDoc(legacyEmailRef);
-            if (legacySnap.exists()) {
-                await deleteDoc(legacyEmailRef);
+    // Clean up any duplicate member documents for the same user (e.g. legacy email-keyed doc vs UID-keyed doc)
+    for (const mDoc of currentMembersSnap.docs) {
+        if (mDoc.id === memberDocId) continue;
+        const mData = mDoc.data();
+        const mEmail = (mData.email || '').trim().toLowerCase();
+        const mUid = mData.uid || '';
+        const isDuplicateForSameUser =
+            mDoc.id.toLowerCase() === normalizedEmail ||
+            (mEmail && mEmail === normalizedEmail) ||
+            (existingUid && (mUid === existingUid || mDoc.id === existingUid));
+        if (isDuplicateForSameUser) {
+            try {
+                await deleteDoc(mDoc.ref);
+            } catch (e) {
+                console.warn("Could not clean up duplicate member doc:", e);
             }
-        } catch (e) {
-            console.warn("Could not clean up legacy email member doc:", e);
         }
     }
 
@@ -894,10 +900,61 @@ export const setSingleComptaMemberAccess = async (
 export const listOrganizationMembers = async (orgId: string): Promise<OrganizationMember[]> => {
     const db = getDb();
     const snapshot = await getDocs(collection(db, 'organizations', orgId, 'members'));
-    return snapshot.docs.map(d => ({
-        id: d.id,
-        ...d.data()
-    } as OrganizationMember));
+    const rawMembers = snapshot.docs.map(d => {
+        const data = d.data();
+        return {
+            id: d.id,
+            ...data,
+            email: typeof data.email === 'string' ? data.email.trim().toLowerCase() : ''
+        } as OrganizationMember;
+    });
+
+    // Deduplicate and merge comptaAccess if multiple docs exist for the same user (e.g. legacy email doc + uid doc)
+    const mergedByKey = new Map<string, OrganizationMember>();
+    for (const m of rawMembers) {
+        const emailKey = (m.email || '').trim().toLowerCase();
+        const uidKey = m.uid || m.id || '';
+        // Find if already present by email or uid
+        let existingKey: string | undefined;
+        for (const [k, existing] of mergedByKey.entries()) {
+            const exEmail = (existing.email || '').trim().toLowerCase();
+            const exUid = existing.uid || existing.id || '';
+            if ((emailKey && exEmail && emailKey === exEmail) || (uidKey && exUid && uidKey === exUid)) {
+                existingKey = k;
+                break;
+            }
+        }
+
+        if (!existingKey) {
+            const key = emailKey || uidKey || Math.random().toString();
+            mergedByKey.set(key, {
+                ...m,
+                comptaAccess: { ...(m.comptaAccess || {}) }
+            });
+        } else {
+            const prev = mergedByKey.get(existingKey)!;
+            const mergedAccess = {
+                ...(prev.comptaAccess || {}),
+                ...(m.comptaAccess || {})
+            };
+            const mergedRole =
+                prev.role === OrgRole.ADMIN || m.role === OrgRole.ADMIN
+                    ? OrgRole.ADMIN
+                    : prev.role || m.role || OrgRole.MEMBER;
+            mergedByKey.set(existingKey, {
+                ...prev,
+                ...m,
+                id: m.uid ? (m.id || prev.id) : (prev.id || m.id),
+                uid: m.uid || prev.uid,
+                email: emailKey || prev.email || '',
+                displayName: m.displayName || prev.displayName,
+                role: mergedRole,
+                comptaAccess: mergedAccess
+            });
+        }
+    }
+
+    return Array.from(mergedByKey.values());
 };
 
 export const removeOrganizationMember = async (orgId: string, memberId: string): Promise<void> => {
