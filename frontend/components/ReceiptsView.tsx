@@ -1,10 +1,10 @@
 import React, { useState, useRef } from 'react';
 import { Receipt, Transaction, TransactionStatus } from '../../types';
-import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, Coins, ExternalLink } from 'lucide-react';
+import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, Coins, ExternalLink, CreditCard, Wallet, User } from 'lucide-react';
 import { analyzeReceipt, processReceiptBackend } from '../services/geminiService';
 import { uploadReceipt } from '../services/storageService';
 import { formatDate } from '../services/formatUtils';
-import { useComptaContext } from '../contexts/AppContext';
+import { useComptaContext, useAuthContext } from '../contexts/AppContext';
 
 interface ReceiptsViewProps {
     receipts: Receipt[];
@@ -12,6 +12,7 @@ interface ReceiptsViewProps {
     onAddReceipt: (receipt: Receipt) => void;
     onDeleteReceipt: (id: string) => void;
     onLinkReceipt: (receiptId: string, transactionId: string) => void;
+    onUpdateReceipt?: (receipt: Receipt) => void;
 }
 
 export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
@@ -19,12 +20,15 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     transactions,
     onAddReceipt,
     onDeleteReceipt,
-    onLinkReceipt
+    onLinkReceipt,
+    onUpdateReceipt
 }) => {
     const { comptaRole } = useComptaContext();
+    const { user, userProfile } = useAuthContext();
     const isViewer = comptaRole === 'viewer';
     const [isProcessing, setIsProcessing] = useState(false);
     const [dragActive, setDragActive] = useState(false);
+    const [filterType, setFilterType] = useState<'ALL' | 'DEBIT_CARD' | 'REIMBURSEMENT'>('ALL');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Open receipt file (handles both URLs and base64 data URIs incl. PDFs)
@@ -233,6 +237,45 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
             .map(m => m.transaction);
     };
 
+    const displayedReceipts = unlinkedReceipts.filter(r => {
+        if (filterType === 'DEBIT_CARD') return r.expenseType === 'DEBIT_CARD';
+        if (filterType === 'REIMBURSEMENT') return r.expenseType === 'REIMBURSEMENT';
+        return true;
+    });
+
+    const debitCardCount = unlinkedReceipts.filter(r => r.expenseType === 'DEBIT_CARD').length;
+    const reimbursementCount = unlinkedReceipts.filter(r => r.expenseType === 'REIMBURSEMENT').length;
+
+    const handleToggleReimbursed = (receipt: Receipt) => {
+        if (isViewer) return;
+        const isCurrentlyReimbursed = receipt.reimbursementStatus === 'REIMBURSED';
+        if (!isCurrentlyReimbursed) {
+            const recipientText = receipt.submittedByName ? ` à ${receipt.submittedByName}` : '';
+            const amountText = receipt.extractedAmount ? ` de CHF ${receipt.extractedAmount.toFixed(2)}` : '';
+            if (!window.confirm(`Confirmer le remboursement${amountText}${recipientText} ?`)) return;
+            const updated: Receipt = {
+                ...receipt,
+                reimbursementStatus: 'REIMBURSED',
+                reimbursedAt: Date.now(),
+                reimbursedByUid: user?.uid,
+                reimbursedByName: userProfile?.displayName || user?.displayName || user?.email || 'Caissier'
+            };
+            if (onUpdateReceipt) onUpdateReceipt(updated);
+            else onAddReceipt(updated);
+        } else {
+            if (!window.confirm('Annuler le statut remboursé et repasser cette demande en attente ?')) return;
+            const updated: Receipt = {
+                ...receipt,
+                reimbursementStatus: 'PENDING',
+                reimbursedAt: undefined,
+                reimbursedByUid: undefined,
+                reimbursedByName: undefined
+            };
+            if (onUpdateReceipt) onUpdateReceipt(updated);
+            else onAddReceipt(updated);
+        }
+    };
+
     return (
         <div className="p-4 md:p-8 max-w-7xl mx-auto md:h-full flex flex-col">
             <header className="mb-6 md:mb-8">
@@ -290,13 +333,54 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
 
             {/* LIST OF RECEIPTS */}
             <div className="md:flex-1 md:overflow-y-auto">
-                <h3 className="text-lg font-bold text-slate-200 mb-4 flex items-center gap-2">
-                    <Link2 size={20} />
-                    Pièces à traiter ({unlinkedReceipts.length})
-                </h3>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                    <h3 className="text-lg font-bold text-slate-200 flex items-center gap-2">
+                        <Link2 size={20} />
+                        Pièces à traiter ({unlinkedReceipts.length})
+                    </h3>
+
+                    {/* Quick Filter Bar */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                            type="button"
+                            onClick={() => setFilterType('ALL')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                filterType === 'ALL'
+                                    ? 'bg-blue-600 text-white shadow-sm'
+                                    : 'bg-slate-800/90 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-700/60'
+                            }`}
+                        >
+                            Toutes ({unlinkedReceipts.length})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setFilterType('DEBIT_CARD')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                filterType === 'DEBIT_CARD'
+                                    ? 'bg-blue-600 text-white shadow-sm'
+                                    : 'bg-slate-800/90 text-blue-300 hover:bg-slate-800 hover:text-blue-200 border border-slate-700/60'
+                            }`}
+                        >
+                            <CreditCard size={13} />
+                            Carte ({debitCardCount})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setFilterType('REIMBURSEMENT')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                filterType === 'REIMBURSEMENT'
+                                    ? 'bg-amber-600 text-white shadow-sm'
+                                    : 'bg-slate-800/90 text-amber-300 hover:bg-slate-800 hover:text-amber-200 border border-slate-700/60'
+                            }`}
+                        >
+                            <Wallet size={13} />
+                            Remboursements ({reimbursementCount})
+                        </button>
+                    </div>
+                </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                    {unlinkedReceipts.map(receipt => {
+                    {displayedReceipts.map(receipt => {
                         const matches = findPotentialMatches(receipt);
                         const hasMatch = matches.length > 0;
 
@@ -323,6 +407,30 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
 
                                 {/* INFO BODY */}
                                 <div className="p-4 flex-1 flex flex-col">
+                                    {/* Expense Type & Merchant Badges */}
+                                    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                                        {receipt.expenseType === 'DEBIT_CARD' ? (
+                                            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-900/40 text-blue-300 border border-blue-700/50 flex items-center gap-1">
+                                                <CreditCard size={12} /> 💳 Carte de débit
+                                            </span>
+                                        ) : receipt.expenseType === 'REIMBURSEMENT' ? (
+                                            receipt.reimbursementStatus === 'REIMBURSED' ? (
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-900/40 text-emerald-300 border border-emerald-700/50 flex items-center gap-1">
+                                                    <CheckCircle size={12} /> ✅ Remboursé
+                                                </span>
+                                            ) : (
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-900/40 text-amber-300 border border-amber-700/50 flex items-center gap-1">
+                                                    <Wallet size={12} /> 💶 À rembourser
+                                                </span>
+                                            )
+                                        ) : null}
+                                        {receipt.merchantName && (
+                                            <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700 truncate max-w-[140px]" title={receipt.merchantName}>
+                                                {receipt.merchantName}
+                                            </span>
+                                        )}
+                                    </div>
+
                                     <div className="flex justify-between items-start mb-2">
                                         <span className="text-sm font-medium text-slate-200 truncate pr-2" title={receipt.fileName}>
                                             {receipt.fileName ? (receipt.fileName.includes('_') ? receipt.fileName.split('_').slice(1).join('_') : receipt.fileName) : "Sans nom"}
@@ -333,6 +441,54 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                             </button>
                                         )}
                                     </div>
+
+                                    {/* Submitter Info */}
+                                    {(receipt.submittedByName || receipt.submittedByEmail) && (
+                                        <div className="text-[11px] text-slate-400 flex items-center gap-1 mb-1 truncate" title={receipt.submittedByEmail}>
+                                            <User size={11} className="text-slate-500 shrink-0" />
+                                            <span className="truncate">Déposé par <strong className="text-slate-300">{receipt.submittedByName || receipt.submittedByEmail}</strong></span>
+                                        </div>
+                                    )}
+
+                                    {/* Description / Motif */}
+                                    {receipt.description && (
+                                        <div className="text-xs text-slate-300 italic mb-2 bg-slate-950/60 p-1.5 rounded border border-slate-800/80" title={receipt.description}>
+                                            « {receipt.description} »
+                                        </div>
+                                    )}
+
+                                    {/* Reimbursement Details & Action */}
+                                    {receipt.expenseType === 'REIMBURSEMENT' && (
+                                        <div className="mb-2 p-2 rounded bg-slate-950/80 border border-amber-900/30 text-xs">
+                                            <div className="flex justify-between items-center text-[11px] text-slate-400">
+                                                <span>IBAN :</span>
+                                                <span className="font-mono text-amber-300/90 select-all font-medium">{receipt.reimbursementIban || 'Non spécifié'}</span>
+                                            </div>
+                                            {receipt.reimbursementStatus === 'REIMBURSED' ? (
+                                                <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[11px] text-emerald-400">
+                                                    <span>Payé {receipt.reimbursedByName ? `par ${receipt.reimbursedByName}` : ''}</span>
+                                                    {!isViewer && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleToggleReimbursed(receipt)}
+                                                            className="text-[10px] text-slate-400 hover:text-rose-400 underline ml-2"
+                                                            title="Annuler le statut remboursé"
+                                                        >
+                                                            Annuler
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ) : !isViewer && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleToggleReimbursed(receipt)}
+                                                    className="mt-2 w-full py-1.5 px-2 rounded text-xs font-semibold bg-emerald-600/25 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-600/50 transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                                                >
+                                                    <CheckCircle size={13} /> Marquer comme remboursé
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
 
                                     <div className="flex gap-4 text-xs text-slate-400 mb-4">
                                         <div className="flex items-center gap-1">
@@ -415,6 +571,11 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                 {unlinkedReceipts.length === 0 && !isProcessing && (
                     <div className="text-center py-12 text-slate-500">
                         Aucune pièce en attente.
+                    </div>
+                )}
+                {unlinkedReceipts.length > 0 && displayedReceipts.length === 0 && !isProcessing && (
+                    <div className="text-center py-12 text-slate-500">
+                        Aucune pièce ne correspond au filtre sélectionné.
                     </div>
                 )}
             </div>

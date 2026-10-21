@@ -685,6 +685,7 @@ function App() {
                     onAddReceipt={handleAddReceipt}
                     onDeleteReceipt={handleDeleteReceipt}
                     onLinkReceipt={handleLinkReceipt}
+                    onUpdateReceipt={saveReceipt}
                 />
             )}
 

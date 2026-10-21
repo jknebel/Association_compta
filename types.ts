@@ -59,6 +59,9 @@ export interface Transaction {
   verifierProposal?: TransactionVerifierProposal; // Proposition du vérificateur en attente de validation par le caissier
 }
 
+export type ReceiptExpenseType = 'DEBIT_CARD' | 'REIMBURSEMENT';
+export type ReceiptReimbursementStatus = 'PENDING' | 'REIMBURSED' | 'REJECTED';
+
 export interface Receipt {
   id: string;
   url: string;
@@ -68,6 +71,18 @@ export interface Receipt {
   extractedAmount?: number;
   isAnalyzed: boolean;
   linkedTransactionId?: string | null;
+  // WEB-02 Fields
+  expenseType?: ReceiptExpenseType;
+  description?: string;
+  merchantName?: string;
+  submittedByUid?: string;
+  submittedByName?: string;
+  submittedByEmail?: string;
+  reimbursementIban?: string;
+  reimbursementStatus?: ReceiptReimbursementStatus;
+  reimbursedAt?: number;
+  reimbursedByUid?: string;
+  reimbursedByName?: string;
 }
 
 export interface Member {
