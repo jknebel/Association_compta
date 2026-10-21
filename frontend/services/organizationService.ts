@@ -1,8 +1,9 @@
-import { collection, collectionGroup, doc, setDoc, getDoc, updateDoc, deleteDoc, getDocs, query, where, writeBatch } from 'firebase/firestore';
+import { collection, collectionGroup, doc, setDoc, getDoc, updateDoc, deleteDoc, getDocs, query, where, writeBatch, runTransaction } from 'firebase/firestore';
 import { getFirestore } from 'firebase/firestore';
 import { app } from './dataService';
 import { Organization, Comptabilite, CustomField, Invitation, OrgRole, ComptaRole, OrganizationMember } from '../types/rbac';
-import { Account, AccountType, Transaction, TransactionStatus } from '../../types';
+import { Account, AccountType, Transaction, TransactionStatus, Receipt } from '../../types';
+import { performReceiptTransfer, type TransferActor, type TransferTxAdapter } from './receiptTransfer';
 
 export const getDb = () => {
     if (!app) throw new Error("Firebase app not initialized");
@@ -431,6 +432,48 @@ export const listComptabilites = async (orgId: string): Promise<Comptabilite[]> 
     const db = getDb();
     const snapshot = await getDocs(collection(db, 'organizations', orgId, 'comptabilites'));
     return snapshot.docs.map(doc => ({ ...(doc.data() as Comptabilite), id: doc.id }));
+}
+
+/**
+ * WEB-03 — Transfère une pièce justificative d'une comptabilité vers une autre de la même organisation.
+ * Déplacement atomique (runTransaction) : création dans la cible + suppression dans la source,
+ * avec ajout de `transferRequest` (traçabilité de l'origine et de l'auteur) et de l'historique d'audit.
+ * Le fichier Storage n'est pas déplacé : son URL de téléchargement reste valide.
+ */
+export const transferReceiptToComptabilite = async (
+    orgId: string,
+    fromComptaId: string,
+    toComptaId: string,
+    receipt: Pick<Receipt, 'id'>,
+    requestedBy: TransferActor,
+    note?: string,
+    options?: { isReturn?: boolean }
+): Promise<Receipt> => {
+    const db = getDb();
+    return runTransaction(db, async (transaction) => {
+        const adapter: TransferTxAdapter = {
+            get: async (segments) => {
+                const snap = await transaction.get(doc(db, segments.join('/')));
+                return { exists: snap.exists(), data: snap.exists() ? snap.data() : undefined };
+            },
+            set: (segments, data) => {
+                transaction.set(doc(db, segments.join('/')), JSON.parse(JSON.stringify(data)));
+            },
+            delete: (segments) => {
+                transaction.delete(doc(db, segments.join('/')));
+            }
+        };
+        return performReceiptTransfer(adapter, {
+            orgId,
+            fromComptaId,
+            toComptaId,
+            receiptId: receipt.id,
+            requestedBy,
+            note,
+            isReturn: options?.isReturn === true,
+            now: Date.now()
+        });
+    });
 }
 
 export const generateInviteLink = async (orgId: string, forceNew = false): Promise<string> => {

@@ -1,10 +1,21 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Receipt, Transaction, TransactionStatus } from '../../types';
-import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, Coins, ExternalLink, CreditCard, Wallet, User } from 'lucide-react';
+import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, Coins, ExternalLink, CreditCard, Wallet, User, ArrowRightLeft, Undo2, X } from 'lucide-react';
 import { analyzeReceipt, processReceiptBackend } from '../services/geminiService';
 import { uploadReceipt } from '../services/storageService';
 import { formatDate } from '../services/formatUtils';
-import { useComptaContext, useAuthContext } from '../contexts/AppContext';
+import { useComptaContext, useAuthContext, useOrgContext } from '../contexts/AppContext';
+import { listComptabilites, transferReceiptToComptabilite } from '../services/organizationService';
+import {
+    MAX_TRANSFER_NOTE_LENGTH,
+    canTransferReceipt,
+    getEligibleTargetComptas,
+    validateReceiptTransfer,
+    buildTransferConfirmationMessage,
+    buildAcceptedReceipt,
+    isPendingIncomingTransfer
+} from '../services/receiptTransfer';
+import { OrgRole, type Comptabilite } from '../types/rbac';
 
 interface ReceiptsViewProps {
     receipts: Receipt[];
@@ -15,6 +26,15 @@ interface ReceiptsViewProps {
     onUpdateReceipt?: (receipt: Receipt) => void;
 }
 
+// WEB-03 : état de la modale de transfert (sélection -> confirmation explicite)
+interface TransferDialogState {
+    receipt: Receipt;
+    step: 'select' | 'confirm';
+    targetId: string;
+    note: string;
+    isReturn: boolean;
+}
+
 export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     receipts,
     transactions,
@@ -23,13 +43,130 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     onLinkReceipt,
     onUpdateReceipt
 }) => {
-    const { comptaRole } = useComptaContext();
-    const { user, userProfile } = useAuthContext();
+    const { comptaRole, selectedCompta } = useComptaContext();
+    const { selectedOrg, orgRole } = useOrgContext();
+    const { user, userProfile, isSuperAdmin } = useAuthContext();
     const isViewer = comptaRole === 'viewer';
+    const canTransfer = !!selectedOrg && !!selectedCompta && !!user &&
+        canTransferReceipt(comptaRole, orgRole === OrgRole.ADMIN, isSuperAdmin);
     const [isProcessing, setIsProcessing] = useState(false);
     const [dragActive, setDragActive] = useState(false);
     const [filterType, setFilterType] = useState<'ALL' | 'DEBIT_CARD' | 'REIMBURSEMENT'>('ALL');
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // --- WEB-03 : transfert vers une autre comptabilité ---
+    const [transferDialog, setTransferDialog] = useState<TransferDialogState | null>(null);
+    const [orgComptas, setOrgComptas] = useState<Comptabilite[]>([]);
+    const [comptasLoading, setComptasLoading] = useState(false);
+    const [isTransferring, setIsTransferring] = useState(false);
+    const [transferError, setTransferError] = useState<string | null>(null);
+    const [transferNotice, setTransferNotice] = useState<string | null>(null);
+
+    const currentActor = () => ({
+        uid: user?.uid || '',
+        name: userProfile?.displayName || user?.displayName || user?.email || 'Utilisateur',
+        email: user?.email || undefined
+    });
+
+    useEffect(() => {
+        if (!transferDialog || !selectedOrg) return;
+        let cancelled = false;
+        setComptasLoading(true);
+        listComptabilites(selectedOrg.id)
+            .then(list => { if (!cancelled) setOrgComptas(list); })
+            .catch(err => { if (!cancelled) setTransferError(`Impossible de charger les comptabilités : ${err?.message || err}`); })
+            .finally(() => { if (!cancelled) setComptasLoading(false); });
+        return () => { cancelled = true; };
+        // Recharger uniquement à l'ouverture de la modale
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [transferDialog?.receipt.id, selectedOrg?.id]);
+
+    useEffect(() => {
+        if (!transferNotice) return;
+        const t = setTimeout(() => setTransferNotice(null), 6000);
+        return () => clearTimeout(t);
+    }, [transferNotice]);
+
+    const eligibleTargets = selectedCompta ? getEligibleTargetComptas(orgComptas, selectedCompta.id) : [];
+    const dialogTarget = transferDialog ? eligibleTargets.find(c => c.id === transferDialog.targetId) || null : null;
+
+    const openTransferDialog = (receipt: Receipt) => {
+        setTransferError(null);
+        setTransferDialog({ receipt, step: 'select', targetId: '', note: '', isReturn: false });
+    };
+
+    const openReturnDialog = (receipt: Receipt) => {
+        const origin = receipt.transferRequest?.fromComptaId || '';
+        setTransferError(null);
+        setTransferDialog({ receipt, step: 'confirm', targetId: origin, note: '', isReturn: true });
+    };
+
+    const closeTransferDialog = () => {
+        if (isTransferring) return;
+        setTransferDialog(null);
+        setTransferError(null);
+    };
+
+    const goToConfirmStep = () => {
+        if (!transferDialog || !selectedCompta) return;
+        const error = validateReceiptTransfer({
+            receipt: transferDialog.receipt,
+            fromComptaId: selectedCompta.id,
+            targetCompta: dialogTarget,
+            requestedByUid: user?.uid,
+            note: transferDialog.note
+        });
+        if (error) { setTransferError(error); return; }
+        setTransferError(null);
+        setTransferDialog({ ...transferDialog, step: 'confirm' });
+    };
+
+    const executeTransfer = async () => {
+        if (!transferDialog || !selectedOrg || !selectedCompta) return;
+        const error = validateReceiptTransfer({
+            receipt: transferDialog.receipt,
+            fromComptaId: selectedCompta.id,
+            targetCompta: dialogTarget,
+            requestedByUid: user?.uid,
+            note: transferDialog.note
+        });
+        if (error || !dialogTarget) { setTransferError(error || 'Veuillez choisir une comptabilité cible.'); return; }
+        setIsTransferring(true);
+        setTransferError(null);
+        try {
+            await transferReceiptToComptabilite(
+                selectedOrg.id,
+                selectedCompta.id,
+                dialogTarget.id,
+                transferDialog.receipt,
+                currentActor(),
+                transferDialog.note,
+                { isReturn: transferDialog.isReturn }
+            );
+            setTransferNotice(
+                transferDialog.isReturn
+                    ? `Pièce renvoyée vers « ${dialogTarget.name} ».`
+                    : `Pièce transférée vers « ${dialogTarget.name} ».`
+            );
+            setTransferDialog(null);
+        } catch (e: any) {
+            setTransferError(e?.message || 'Le transfert a échoué.');
+        } finally {
+            setIsTransferring(false);
+        }
+    };
+
+    const handleAcceptTransfer = (receipt: Receipt) => {
+        if (!canTransfer) return;
+        try {
+            const accepted = buildAcceptedReceipt(receipt, currentActor(), Date.now());
+            if (onUpdateReceipt) onUpdateReceipt(accepted);
+            else onAddReceipt(accepted);
+            setTransferNotice(`Réception confirmée (pièce venant de « ${receipt.transferRequest?.fromComptaName} »).`);
+        } catch (e: any) {
+            setTransferNotice(e?.message || 'Impossible de confirmer la réception.');
+        }
+    };
 
     // Open receipt file (handles both URLs and base64 data URIs incl. PDFs)
     const openReceipt = (url: string, fileName: string) => {
@@ -407,6 +544,46 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
 
                                 {/* INFO BODY */}
                                 <div className="p-4 flex-1 flex flex-col">
+                                    {/* WEB-03 : bandeau de pièce transférée (en attente de confirmation de réception) */}
+                                    {isPendingIncomingTransfer(receipt, selectedCompta?.id) && receipt.transferRequest && (
+                                        <div className="mb-3 p-2.5 rounded-lg bg-indigo-950/60 border border-indigo-700/60 text-xs">
+                                            <div className="flex items-start gap-1.5 text-indigo-200">
+                                                <ArrowRightLeft size={13} className="mt-0.5 shrink-0" />
+                                                <span>
+                                                    {receipt.transferRequest.isReturn ? 'Renvoyée' : 'Transférée'} depuis <strong>« {receipt.transferRequest.fromComptaName} »</strong> par <strong>{receipt.transferRequest.requestedByName}</strong>
+                                                    <span className="text-indigo-300/70"> — {new Date(receipt.transferRequest.requestedAt).toLocaleDateString('fr-CH')}</span>
+                                                </span>
+                                            </div>
+                                            {receipt.transferRequest.note && (
+                                                <div className="mt-1.5 text-indigo-200/80 italic break-words">« {receipt.transferRequest.note} »</div>
+                                            )}
+                                            {canTransfer && (
+                                                <div className="mt-2 flex gap-1.5">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleAcceptTransfer(receipt)}
+                                                        className="flex-1 py-1.5 px-2 rounded text-[11px] font-semibold bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-600/50 transition-colors flex items-center justify-center gap-1"
+                                                    >
+                                                        <CheckCircle size={12} /> Confirmer la réception
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openReturnDialog(receipt)}
+                                                        className="flex-1 py-1.5 px-2 rounded text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 transition-colors flex items-center justify-center gap-1"
+                                                        title={`Renvoyer vers « ${receipt.transferRequest.fromComptaName} »`}
+                                                    >
+                                                        <Undo2 size={12} /> Renvoyer
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                    {receipt.transferRequest?.status === 'ACCEPTED' && receipt.transferRequest.toComptaId === selectedCompta?.id && (
+                                        <div className="mb-2 text-[11px] text-slate-500 flex items-center gap-1" title={`Réception confirmée par ${receipt.transferRequest.acceptedByName || '—'}`}>
+                                            <ArrowRightLeft size={11} /> Reçue de « {receipt.transferRequest.fromComptaName} »
+                                        </div>
+                                    )}
+
                                     {/* Expense Type & Merchant Badges */}
                                     <div className="flex flex-wrap items-center gap-1.5 mb-2">
                                         {receipt.expenseType === 'DEBIT_CARD' ? (
@@ -441,6 +618,18 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                             </button>
                                         )}
                                     </div>
+
+                                    {/* WEB-03 : transfert vers une autre comptabilité (pièces non liées uniquement) */}
+                                    {canTransfer && !receipt.linkedTransactionId && (
+                                        <button
+                                            type="button"
+                                            onClick={() => openTransferDialog(receipt)}
+                                            className="mb-2 self-start text-[11px] font-medium text-indigo-300 hover:text-indigo-200 bg-indigo-950/40 hover:bg-indigo-900/50 border border-indigo-800/60 rounded px-2 py-1 transition-colors flex items-center gap-1"
+                                            title="Cette pièce n'est pas au bon endroit ? Envoyez-la vers une autre comptabilité de l'association."
+                                        >
+                                            <ArrowRightLeft size={12} /> ↪️ Transférer vers une autre compta
+                                        </button>
+                                    )}
 
                                     {/* Submitter Info */}
                                     {(receipt.submittedByName || receipt.submittedByEmail) && (
@@ -579,6 +768,153 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                     </div>
                 )}
             </div>
+
+            {/* WEB-03 : notification de transfert */}
+            {transferNotice && (
+                <div className="fixed bottom-4 right-4 z-50 max-w-sm px-4 py-3 rounded-lg bg-slate-900 border border-indigo-700 text-sm text-indigo-100 shadow-xl flex items-start gap-2">
+                    <ArrowRightLeft size={16} className="mt-0.5 shrink-0 text-indigo-400" />
+                    <span className="flex-1">{transferNotice}</span>
+                    <button type="button" onClick={() => setTransferNotice(null)} className="text-slate-400 hover:text-white" aria-label="Fermer">
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+
+            {/* WEB-03 : modale de transfert (étape 1 = choix, étape 2 = confirmation explicite) */}
+            {transferDialog && (
+                <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={closeTransferDialog}>
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+                            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                                {transferDialog.isReturn ? <Undo2 size={18} className="text-indigo-400" /> : <ArrowRightLeft size={18} className="text-indigo-400" />}
+                                {transferDialog.isReturn ? 'Renvoyer la pièce' : 'Transférer vers une autre comptabilité'}
+                            </h3>
+                            <button type="button" onClick={closeTransferDialog} disabled={isTransferring} className="text-slate-400 hover:text-white disabled:opacity-40" aria-label="Fermer">
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="px-5 py-4 space-y-4 text-sm">
+                            <div className="text-xs text-slate-400 bg-slate-950/60 border border-slate-800 rounded p-2">
+                                <span className="text-slate-300 font-medium">{transferDialog.receipt.fileName || 'Pièce sans nom'}</span>
+                                <span> — {transferDialog.receipt.extractedAmount ? `CHF ${transferDialog.receipt.extractedAmount.toFixed(2)}` : 'montant inconnu'}</span>
+                                <span> — {formatDate(transferDialog.receipt.extractedDate)}</span>
+                                <div className="mt-1">Comptabilité actuelle : <strong className="text-slate-300">« {selectedCompta?.name} »</strong></div>
+                            </div>
+
+                            {comptasLoading ? (
+                                <div className="flex items-center gap-2 text-slate-400">
+                                    <Loader2 size={16} className="animate-spin" /> Chargement des comptabilités…
+                                </div>
+                            ) : transferDialog.step === 'select' ? (
+                                <>
+                                    {eligibleTargets.length === 0 ? (
+                                        <div className="text-amber-300 text-xs bg-amber-900/20 border border-amber-800/50 rounded p-2">
+                                            Aucune autre comptabilité active dans cette organisation.
+                                        </div>
+                                    ) : (
+                                        <label className="block">
+                                            <span className="block text-xs font-semibold text-slate-400 uppercase mb-1">Comptabilité cible</span>
+                                            <select
+                                                value={transferDialog.targetId}
+                                                onChange={e => { setTransferError(null); setTransferDialog({ ...transferDialog, targetId: e.target.value }); }}
+                                                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500"
+                                            >
+                                                <option value="">— Choisir une comptabilité —</option>
+                                                {eligibleTargets.map(c => (
+                                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                    )}
+                                    <label className="block">
+                                        <span className="block text-xs font-semibold text-slate-400 uppercase mb-1">Commentaire (optionnel)</span>
+                                        <textarea
+                                            value={transferDialog.note}
+                                            maxLength={MAX_TRANSFER_NOTE_LENGTH}
+                                            onChange={e => setTransferDialog({ ...transferDialog, note: e.target.value })}
+                                            rows={3}
+                                            placeholder="Ex. : Facture du camp Pionnier envoyée par erreur chez les Louveteaux"
+                                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:border-indigo-500 resize-none"
+                                        />
+                                        <span className="block text-right text-[10px] text-slate-500">{transferDialog.note.length}/{MAX_TRANSFER_NOTE_LENGTH}</span>
+                                    </label>
+                                </>
+                            ) : dialogTarget ? (
+                                <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-700/50 text-amber-100 text-sm leading-relaxed">
+                                    <AlertCircle size={16} className="inline mr-1 -mt-0.5 text-amber-400" />
+                                    {buildTransferConfirmationMessage(transferDialog.receipt, dialogTarget.name)}
+                                    {transferDialog.note.trim() && (
+                                        <div className="mt-2 text-xs text-amber-200/80 italic">Commentaire : « {transferDialog.note.trim()} »</div>
+                                    )}
+                                    <div className="mt-2 text-xs text-amber-200/70">
+                                        La pièce disparaîtra de « {selectedCompta?.name} » et apparaîtra immédiatement dans « {dialogTarget.name} ».
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-rose-300 text-xs bg-rose-900/20 border border-rose-800/50 rounded p-2">
+                                    {transferDialog.isReturn
+                                        ? `La comptabilité d'origine « ${transferDialog.receipt.transferRequest?.fromComptaName || '?'} » n'est plus disponible (archivée ou supprimée).`
+                                        : 'Veuillez choisir une comptabilité cible.'}
+                                </div>
+                            )}
+
+                            {transferError && (
+                                <div className="text-rose-300 text-xs bg-rose-900/20 border border-rose-800/50 rounded p-2 flex items-start gap-1.5">
+                                    <AlertCircle size={14} className="mt-0.5 shrink-0" /> {transferError}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex justify-end gap-2 px-5 py-4 border-t border-slate-800">
+                            {transferDialog.step === 'confirm' && !transferDialog.isReturn ? (
+                                <button
+                                    type="button"
+                                    onClick={() => { setTransferError(null); setTransferDialog({ ...transferDialog, step: 'select' }); }}
+                                    disabled={isTransferring}
+                                    className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-40"
+                                >
+                                    Retour
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={closeTransferDialog}
+                                    disabled={isTransferring}
+                                    className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-40"
+                                >
+                                    Annuler
+                                </button>
+                            )}
+                            {transferDialog.step === 'select' ? (
+                                <button
+                                    type="button"
+                                    onClick={goToConfirmStep}
+                                    disabled={comptasLoading || !transferDialog.targetId}
+                                    className="px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    Continuer
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={executeTransfer}
+                                    disabled={isTransferring || comptasLoading || !dialogTarget}
+                                    className="px-4 py-2 rounded-lg text-sm font-semibold bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                >
+                                    {isTransferring && <Loader2 size={14} className="animate-spin" />}
+                                    {transferDialog.isReturn ? 'Oui, renvoyer' : 'Oui, transférer'}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -61,6 +61,25 @@ export interface Transaction {
 
 export type ReceiptExpenseType = 'DEBIT_CARD' | 'REIMBURSEMENT';
 export type ReceiptReimbursementStatus = 'PENDING' | 'REIMBURSED' | 'REJECTED';
+export type ReceiptTransferStatus = 'PENDING_ACCEPTANCE' | 'ACCEPTED';
+
+// WEB-03 : traçabilité du transfert d'une pièce vers une autre comptabilité
+export interface ReceiptTransferRequest {
+  fromComptaId: string;
+  fromComptaName: string;
+  toComptaId: string;
+  toComptaName: string;
+  requestedByUid: string;
+  requestedByName: string;
+  requestedByEmail?: string;
+  requestedAt: number;
+  note?: string;
+  status: ReceiptTransferStatus;
+  isReturn?: boolean; // true si la pièce a été renvoyée vers sa comptabilité d'origine
+  acceptedAt?: number;
+  acceptedByUid?: string;
+  acceptedByName?: string;
+}
 
 export interface Receipt {
   id: string;
@@ -83,6 +102,9 @@ export interface Receipt {
   reimbursedAt?: number;
   reimbursedByUid?: string;
   reimbursedByName?: string;
+  // WEB-03 Fields
+  transferRequest?: ReceiptTransferRequest;
+  transferHistory?: ReceiptTransferRequest[];
 }
 
 export interface Member {
