@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "compta-ai-v2",
     "public": "dist",
     "ignore": [
       "firebase.json",

@@ -1,46 +1,35 @@
-name: Deploy to Staging (ameliorationv2)
+name: Deploy V2 Application (Manual - compta-ai-v2.web.app)
 
 on:
-  push:
-    branches:
-      - ameliorationv2
+  workflow_dispatch:
+    inputs:
+      deploy_backend:
+        description: 'Déployer le backend Cloud Run V2 (assocompta-backend-staging)'
+        required: false
+        default: true
+        type: boolean
+      deploy_frontend:
+        description: 'Déployer le frontend Firebase Hosting V2 (https://compta-ai-v2.web.app)'
+        required: false
+        default: true
+        type: boolean
+      deploy_rules:
+        description: 'Déployer les règles Firestore & Storage'
+        required: false
+        default: true
+        type: boolean
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: europe-west1
   BACKEND_SERVICE_NAME: assocompta-backend-staging
   REPO_NAME: assocompta-backend
+  HOSTING_SITE_ID: compta-ai-v2
+  TARGET_BRANCH: ameliorationv2
 
 jobs:
-  # 1. CHANGE DETECTION
-  changes:
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-      contents: read
-    outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            backend:
-              - 'backend/**'
-              - '.github/workflows/**'
-            frontend:
-              - 'frontend/**'
-              - 'src/**'
-              - '*.json'
-              - '*.html'
-              - '*.tsx'
-              - '*.ts'
-
-  # 2. BUILD & DEPLOY BACKEND (Cloud Run - Staging)
+  # 1. BUILD & DEPLOY BACKEND (Cloud Run - V2)
   deploy-backend:
-    needs: changes
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
@@ -51,6 +40,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
 
       - id: 'auth'
         name: 'Authenticate to Google Cloud'
@@ -59,23 +50,23 @@ jobs:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
       - name: 'Docker Auth'
-        if: ${{ needs.changes.outputs.backend == 'true' }}
+        if: ${{ inputs.deploy_backend != false }}
         run: |-
           gcloud auth configure-docker europe-west1-docker.pkg.dev
 
       - name: 'Build Container'
-        if: ${{ needs.changes.outputs.backend == 'true' }}
+        if: ${{ inputs.deploy_backend != false }}
         run: |-
           docker build -t europe-west1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$BACKEND_SERVICE_NAME:${{ github.sha }} ./backend
 
       - name: 'Push Container'
-        if: ${{ needs.changes.outputs.backend == 'true' }}
+        if: ${{ inputs.deploy_backend != false }}
         run: |-
           docker push europe-west1-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/$BACKEND_SERVICE_NAME:${{ github.sha }}
 
       - id: 'deploy'
-        name: 'Deploy to Cloud Run (Staging)'
-        if: ${{ needs.changes.outputs.backend == 'true' }}
+        name: 'Deploy to Cloud Run (V2)'
+        if: ${{ inputs.deploy_backend != false }}
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
           service: '${{ env.BACKEND_SERVICE_NAME }}'
@@ -103,9 +94,10 @@ jobs:
              echo "url=$EXISTING_URL" >> $GITHUB_OUTPUT
           fi
 
-  # 3. BUILD & DEPLOY FRONTEND (Firebase Hosting - Preview Channel)
+  # 2. BUILD & DEPLOY FRONTEND (Firebase Hosting Permanent Site: compta-ai-v2.web.app)
   deploy-frontend:
-    needs: [changes, deploy-backend]
+    needs: [deploy-backend]
+    if: ${{ inputs.deploy_frontend != false }}
     runs-on: ubuntu-latest
     permissions:
       checks: write
@@ -113,6 +105,8 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -122,7 +116,6 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      # Build with environment variables (same Firebase project, staging backend)
       - name: Build Frontend
         run: npm run build
         env:
@@ -135,22 +128,30 @@ jobs:
           VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
 
-      # Deploy to a Preview Channel (temporary URL, expires after 7 days)
-      - name: Deploy to Firebase Preview Channel
-        uses: FirebaseExtended/action-hosting-deploy@v0
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
         with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.GCP_SA_KEY }}'
-          channelId: staging-ameliorationv2
-          expires: 7d
-          projectId: '${{ secrets.GCP_PROJECT_ID }}'
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-  # 4. DEPLOY FIRESTORE RULES (for testing new rules)
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Ensure Firebase Hosting Site V2 Exists & Deploy Live
+        run: |
+          echo "Création / vérification du site Firebase Hosting permanent : ${{ env.HOSTING_SITE_ID }}..."
+          firebase hosting:sites:create ${{ env.HOSTING_SITE_ID }} --project ${{ secrets.GCP_PROJECT_ID }} --non-interactive || true
+          echo "Déploiement de l'application V2 sur https://${{ env.HOSTING_SITE_ID }}.web.app ..."
+          firebase deploy --only hosting:${{ env.HOSTING_SITE_ID }} --project ${{ secrets.GCP_PROJECT_ID }} --non-interactive
+
+  # 3. DEPLOY FIRESTORE & STORAGE RULES
   deploy-rules:
-    needs: changes
+    if: ${{ inputs.deploy_rules != false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -168,6 +169,4 @@ jobs:
 
       - name: Deploy Firestore & Storage Rules
         run: |
-          echo "⚠️ ATTENTION: Les rules seront déployées sur le projet de PROD (même projet Firebase)."
-          echo "Vérifiez que les nouvelles rules sont rétro-compatibles avec l'ancienne structure."
-          firebase deploy --only firestore:rules,firestore:indexes,storage --project ${{ secrets.GCP_PROJECT_ID }}
+          firebase deploy --only firestore:rules,firestore:indexes,storage --project ${{ secrets.GCP_PROJECT_ID }} --non-interactive
