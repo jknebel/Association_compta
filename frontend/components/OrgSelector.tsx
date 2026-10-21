@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/AppContext';
-import { Organization, Comptabilite } from '../types/rbac';
+import {
+    Organization,
+    Comptabilite,
+    canOpenComptaOnWeb,
+    isUploaderRole,
+    getComptaRoleLabel
+} from '../types/rbac';
 import {
     listAllOrganizations,
     getUserOrganizations,
@@ -15,7 +21,7 @@ import {
     closeAndRolloverComptabilite
 } from '../services/organizationService';
 import { getUserComptabilites } from '../services/userService';
-import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield, Edit2, Calendar, X, CheckCircle, Users } from 'lucide-react';
+import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield, Edit2, Calendar, X, CheckCircle, Users, Camera } from 'lucide-react';
 import { logout } from '../services/authService';
 import { checkLegacyData, LegacyDataSummary, connectCurrentCompta, markLegacyMigrationDone } from '../services/migrationService';
 import { UnauthorizedView } from './UnauthorizedView';
@@ -173,8 +179,15 @@ export const OrgSelector: React.FC = () => {
     };
 
     const handleSelectCompta = (org: Organization, comptaData: {compta: Comptabilite, role: any}) => {
-        setSelectedOrg(org);
         const isOrgAdmin = isOrgAdminOf(org);
+        if (!canOpenComptaOnWeb(comptaData.role, isOrgAdmin, isSuperAdmin)) {
+            alert(
+                `Accès « Déposant Factures » (${comptaData.compta.name}) :\n\nCe rôle minimal permet uniquement d'envoyer des pièces justificatives et des demandes de remboursement depuis l'application mobile AssoCompta Scan. Il ne donne pas accès au grand livre complet sur le web.`
+            );
+            return;
+        }
+
+        setSelectedOrg(org);
         setOrgRole(isOrgAdmin ? 'admin' : 'member');
         
         setSelectedCompta(comptaData.compta);
@@ -707,6 +720,7 @@ export const OrgSelector: React.FC = () => {
                                                             {comptasToShow.map((item, idx) => {
                                                                 const isCaissierOrAdmin = isSuperAdmin || isOrgAdmin || item.role === 'caissier' || item.role === 'comptable' || item.role === 'admin';
                                                                 const canDelete = isSuperAdmin || isOrgAdmin;
+                                                                const isUploaderOnly = !isSuperAdmin && !isOrgAdmin && isUploaderRole(item.role);
 
                                                                 return (
                                                                     <div
@@ -715,6 +729,8 @@ export const OrgSelector: React.FC = () => {
                                                                         className={`flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border transition-all cursor-pointer group ${
                                                                             item.compta.isArchived
                                                                                 ? 'bg-slate-900/40 border-slate-800/80 hover:border-slate-700'
+                                                                                : isUploaderOnly
+                                                                                ? 'bg-slate-900/70 border-cyan-900/50 hover:border-cyan-700/60 shadow-sm'
                                                                                 : 'bg-slate-900 border-slate-800 hover:bg-blue-950/25 hover:border-blue-700/60 shadow-sm'
                                                                         }`}
                                                                     >
@@ -722,9 +738,11 @@ export const OrgSelector: React.FC = () => {
                                                                             <div className={`p-2.5 rounded-lg transition-colors shrink-0 ${
                                                                                 item.compta.isArchived
                                                                                     ? 'bg-slate-800/50 text-slate-500'
+                                                                                    : isUploaderOnly
+                                                                                    ? 'bg-cyan-950/60 border border-cyan-800/40 text-cyan-400'
                                                                                     : 'bg-blue-950/60 border border-blue-800/40 text-blue-400 group-hover:bg-blue-600 group-hover:text-white'
                                                                             }`}>
-                                                                                <Book size={18} />
+                                                                                {isUploaderOnly ? <Camera size={18} /> : <Book size={18} />}
                                                                             </div>
 
                                                                             <div className="min-w-0 flex-1">
@@ -741,15 +759,11 @@ export const OrgSelector: React.FC = () => {
                                                                                                 ? 'bg-emerald-900/30 text-emerald-300 border-emerald-800/50'
                                                                                                 : item.role === 'verificateur'
                                                                                                     ? 'bg-amber-900/30 text-amber-300 border-amber-800/50'
-                                                                                                    : 'bg-blue-900/30 text-blue-300 border-blue-800/50'
+                                                                                                    : isUploaderRole(item.role)
+                                                                                                        ? 'bg-cyan-900/30 text-cyan-300 border-cyan-800/50'
+                                                                                                        : 'bg-blue-900/30 text-blue-300 border-blue-800/50'
                                                                                     }`}>
-                                                                                        {item.role === 'admin'
-                                                                                            ? 'Admin'
-                                                                                            : (item.role === 'caissier' || item.role === 'comptable')
-                                                                                                ? 'Caissier'
-                                                                                                : item.role === 'verificateur'
-                                                                                                    ? 'Vérificateur'
-                                                                                                    : 'Lecteur'}
+                                                                                        {getComptaRoleLabel(item.role)}
                                                                                     </span>
                                                                                     {item.compta.isArchived && (
                                                                                         <span className="text-[10px] uppercase tracking-wider bg-slate-800 text-slate-400 px-2 py-0.5 rounded">
@@ -797,10 +811,17 @@ export const OrgSelector: React.FC = () => {
                                                                                     <Trash2 size={16} />
                                                                                 </button>
                                                                             )}
-                                                                            <div className="pl-2 ml-1 border-l border-slate-800 flex items-center gap-1 text-xs font-semibold text-slate-400 group-hover:text-blue-400">
-                                                                                <span className="hidden sm:inline">Ouvrir</span>
-                                                                                <ArrowRight size={16} className="transform transition-transform group-hover:translate-x-1" />
-                                                                            </div>
+                                                                            {isUploaderOnly ? (
+                                                                                <div className="pl-2 ml-1 border-l border-slate-800 flex items-center gap-1.5 text-xs font-semibold text-cyan-400">
+                                                                                    <Camera size={14} />
+                                                                                    <span className="hidden sm:inline">App Mobile uniquement</span>
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="pl-2 ml-1 border-l border-slate-800 flex items-center gap-1 text-xs font-semibold text-slate-400 group-hover:text-blue-400">
+                                                                                    <span className="hidden sm:inline">Ouvrir</span>
+                                                                                    <ArrowRight size={16} className="transform transition-transform group-hover:translate-x-1" />
+                                                                                </div>
+                                                                            )}
                                                                         </div>
                                                                     </div>
                                                                 );
