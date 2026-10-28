@@ -1,9 +1,28 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+
+    // SEC-01 : un justificatif doit être une image ou un PDF de moins de 5 Mo
+    function isValidReceiptFile() {
+      return request.resource != null
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType != null
+        && request.resource.contentType.matches('image/.*|application/pdf');
+    }
+
+    // Justificatifs rattachés à une comptabilité (app web + app mobile "uploader")
+    match /receipts/{orgId}/{comptaId}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && isValidReceiptFile();
+      allow delete: if request.auth != null;
+    }
+
+    // Anciens chemins (receipts/{uid}/..., receipts/public/..., receipts/...)
     match /receipts/{allPaths=**} {
       // Autorise la lecture/écriture seulement aux utilisateurs connectés.
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && isValidReceiptFile();
+      allow delete: if request.auth != null;
     }
   }
 }
