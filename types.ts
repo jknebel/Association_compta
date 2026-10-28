@@ -93,6 +93,8 @@ export interface Receipt {
   // WEB-02 Fields
   expenseType?: ReceiptExpenseType;
   description?: string;
+  comment?: string;
+  mimeType?: string;
   merchantName?: string;
   submittedByUid?: string;
   submittedByName?: string;

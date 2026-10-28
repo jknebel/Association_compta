@@ -13,6 +13,7 @@ import { SuperAdminView } from './frontend/components/SuperAdminView';
 import { MembersView } from './frontend/components/MembersView';
 import { LoginView } from './frontend/components/LoginView';
 import { ReceiptsView } from './frontend/components/ReceiptsView';
+import { ReimbursementsView } from './frontend/components/ReimbursementsView';
 
 import { Account, Transaction, AccountType, Receipt, TransactionStatus } from './types';
 import { Edit2, Save, X, AlertTriangle, CloudOff, Loader2, Download, Upload, CheckCircle, XCircle, FileSpreadsheet, RefreshCw, Mail, LogOut } from 'lucide-react';
@@ -635,8 +636,12 @@ function App() {
         }
     }
 
+    const pendingReimbursementsCount = receipts.filter(
+        r => r.expenseType === 'REIMBURSEMENT' && r.reimbursementStatus !== 'REIMBURSED'
+    ).length;
+
     return (
-        <Layout activeTab={activeTab} onTabChange={setActiveTab} user={user}>
+        <Layout activeTab={activeTab} onTabChange={setActiveTab} user={user} pendingReimbursementsCount={pendingReimbursementsCount}>
             {(!isConfigured || guestMode) && (
                 <div className="bg-orange-900/20 border-b border-orange-900/50 text-orange-200 px-4 py-2 text-xs flex items-center justify-center gap-2">
                     <CloudOff size={14} />
@@ -686,6 +691,15 @@ function App() {
                     onDeleteReceipt={handleDeleteReceipt}
                     onLinkReceipt={handleLinkReceipt}
                     onUpdateReceipt={saveReceipt}
+                />
+            )}
+
+            {activeTab === 'reimbursements' && (
+                <ReimbursementsView
+                    receipts={receipts}
+                    transactions={transactions}
+                    onUpdateReceipt={saveReceipt}
+                    onLinkReceipt={handleLinkReceipt}
                 />
             )}
 

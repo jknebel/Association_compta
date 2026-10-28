@@ -6,6 +6,7 @@ import { uploadReceipt } from '../services/storageService';
 import { formatDate } from '../services/formatUtils';
 import { useComptaContext, useAuthContext, useOrgContext } from '../contexts/AppContext';
 import { listComptabilites, transferReceiptToComptabilite } from '../services/organizationService';
+import { findPotentialMatchesForReceipt } from '../services/reimbursementMatching';
 import {
     MAX_TRANSFER_NOTE_LENGTH,
     canTransferReceipt,
@@ -304,74 +305,9 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
         alert(message);
     };
 
-    // --- MATCHING LOGIC ---
+    // --- MATCHING LOGIC (WEB-04 : Carte de débit J / J+1 vs Remboursement indépendant de la date) ---
     const findPotentialMatches = (receipt: Receipt) => {
-        if (!receipt.extractedAmount && !receipt.extractedDate) return [];
-
-        const scoredMatches = transactions.map(t => {
-            // Rule 1: Not already linked
-            if (t.receiptUrl) return { transaction: t, score: -1 };
-
-            let score = 0;
-            let amountMatches = false;
-
-            // 1. Strict Amount Check (Tolerance 0.1)
-            // If the receipt has an amount, it MUST match the transaction amount closely.
-            if (receipt.extractedAmount) {
-                if (Math.abs(Math.abs(t.amount) - receipt.extractedAmount) < 0.1) {
-                    score += 10; // High weight for exact amount
-                    amountMatches = true;
-                } else {
-                    return { transaction: t, score: -1 }; // Reject immediately if amount doesn't match
-                }
-            }
-
-            // 2. Date Check: Justificatif date should be <= Virement (Transaction) date
-            // Tolerance: Receipt is up to 30 days older than Virement, but never in the future
-            if (receipt.extractedDate) {
-                const rDate = new Date(receipt.extractedDate).getTime();
-                const tDate = new Date(t.date).getTime();
-                const diffDays = (tDate - rDate) / (1000 * 3600 * 24);
-
-                // Receipt date is older than or equal to transaction date (allow 1 day timezone drift)
-                if (diffDays >= -1 && diffDays <= 45) {
-                    score += 5;
-                    // Closer dates get more points
-                    if (diffDays >= -1 && diffDays <= 7) score += 3;
-                } else if (amountMatches) {
-                    // Small penalty if dates don't align but amount matches exactly
-                    score -= 5;
-                } else {
-                    // Reject if neither amount matches nor date is within bounds
-                    return { transaction: t, score: -1 };
-                }
-            }
-
-            // 3. Text/Description Match
-            // Use transaction text to add bonus points if it resembles the file name
-            if (receipt.fileName && t.description) {
-                const safeFileName = receipt.fileName.toLowerCase();
-                const words = t.description.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-                let textBonus = 0;
-
-                words.forEach(word => {
-                    if (safeFileName.includes(word)) {
-                        textBonus += 2;
-                    }
-                });
-
-                // Cap text bonus to avoid it outweighing amount/date
-                score += Math.min(textBonus, 6);
-            }
-
-            return { transaction: t, score };
-        });
-
-        // Filter valid matches and sort by score descending
-        return scoredMatches
-            .filter(m => m.score > 0)
-            .sort((a, b) => b.score - a.score)
-            .map(m => m.transaction);
+        return findPotentialMatchesForReceipt(receipt, transactions);
     };
 
     const displayedReceipts = unlinkedReceipts.filter(r => {

@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, Receipt, Shield, ArrowLeft, Menu, X, Edit2 } from 'lucide-react';
+import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, Receipt, Shield, ArrowLeft, Menu, X, Edit2, Wallet } from 'lucide-react';
 import { useDataService } from '../services/dataService';
 import { logout } from '../services/authService';
 import { renameComptabilite } from '../services/organizationService';
@@ -13,9 +13,10 @@ interface LayoutProps {
   onTabChange: (tab: string) => void;
   user?: User | null;
   disabled?: boolean;
+  pendingReimbursementsCount?: number;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange, user, disabled = false }) => {
+export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange, user, disabled = false, pendingReimbursementsCount = 0 }) => {
   const { isConfigured } = useDataService(user || null);
   const { isSuperAdmin } = useAuthContext();
   const { selectedOrg, orgRole, setSelectedOrg } = useOrgContext();
@@ -44,10 +45,11 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
     }
   }, [isCaissier, activeTab, onTabChange]);
 
-  const navItems = [
+  const navItems: { id: string; label: string; icon: React.ComponentType<{ size?: number }>; badge?: number }[] = [
     { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
     ...(isCaissier ? [{ id: 'upload', label: 'Import & Traitement', icon: Upload }] : []),
     { id: 'receipts', label: 'Pièces Comptables', icon: Receipt },
+    { id: 'reimbursements', label: 'Remboursements', icon: Wallet, badge: pendingReimbursementsCount },
     { id: 'ledger', label: 'Journal / Transactions', icon: BookOpen },
     { id: 'members', label: 'Membres / Payeurs', icon: Users },
     { id: 'expert', label: 'Expert Comptable', icon: MessageSquareText },
@@ -209,7 +211,12 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
                 } ${disabled ? 'cursor-not-allowed' : ''}`}
             >
               <item.icon size={18} />
-              <span className="font-medium text-sm">{item.label}</span>
+              <span className="font-medium text-sm flex-1 text-left">{item.label}</span>
+              {item.badge !== undefined && item.badge > 0 && (
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-500 text-slate-950">
+                  {item.badge}
+                </span>
+              )}
             </button>
           ))}
         </nav>
