@@ -1,4 +1,4 @@
-name: Deploy V2 Application (Manual - compta-ai-v2.web.app)
+name: Deploy to Production (ameliorationv2)
 
 on:
   workflow_dispatch:
