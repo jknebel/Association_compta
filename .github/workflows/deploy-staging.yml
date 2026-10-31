@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       deploy_backend:
-        description: 'Déployer le backend Cloud Run V2 (assocompta-backend-staging)'
+        description: 'Déployer le backend Cloud Run V2 (assocompta-backend)'
         required: false
         default: true
         type: boolean
@@ -22,7 +22,7 @@ on:
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: europe-west1
-  BACKEND_SERVICE_NAME: assocompta-backend-staging
+  BACKEND_SERVICE_NAME: assocompta-backend
   REPO_NAME: assocompta-backend
   HOSTING_SITE_ID: compta-ai-v2
   TARGET_BRANCH: ameliorationv2
