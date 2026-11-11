@@ -181,12 +181,17 @@ export const AuditModal: React.FC<AuditModalProps> = ({
 
     // --- LOGIQUE DE GÉNÉRATION DU RAPPORT DE CLÔTURE ---
 
-    // 1. Calcul du Bilan / Compte de Résultat (avec libellé parent > sous-compte si pertinent)
+    // 1. Calcul du Bilan / Compte de Résultat (avec libellé parent > sous-compte sans répétition)
     const getAccountDisplayLabel = (account?: Account) => {
         if (!account) return 'Non catégorisé';
         if (account.parentId) {
             const parent = accounts.find(p => p.id === account.parentId);
             if (parent) {
+                const parentLabelNorm = parent.label.trim().toLowerCase();
+                const childLabelNorm = account.label.trim().toLowerCase();
+                if (childLabelNorm.startsWith(parentLabelNorm)) {
+                    return account.label;
+                }
                 return `${parent.label} › ${account.label}`;
             }
         }
@@ -325,31 +330,30 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                             </label>
                         </div>
 
-                        <div className="p-4 sm:p-8 max-w-4xl mx-auto print:p-4 print:max-w-none">
+                        <div className="p-4 sm:p-8 max-w-4xl mx-auto print:p-0 print:max-w-none">
 
                             {/* ==================== FEUILLE 1 : BILAN / CHARGES & PRODUITS ==================== */}
-                            <div className={`print-section mb-8 sm:mb-12 ${printSection === 'JOURNAL' ? 'print:hidden' : 'print:block'}`}>
-                                <header className="text-center mb-8 border-b-2 border-slate-900 pb-6">
-                                    <div className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">Feuille 1 / 2 — Compte de Résultat</div>
-                                    <h1 className="text-2xl sm:text-3xl font-bold uppercase tracking-wide mb-2">
+                            <div className={`print-section mb-8 sm:mb-12 print:mb-0 ${printSection === 'JOURNAL' ? 'print:hidden' : 'print:block'}`}>
+                                <header className="text-center mb-8 border-b-2 border-slate-900 pb-6 print:mb-2.5 print:pb-2">
+                                    <div className="text-xs print:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1 print:mb-0">Feuille 1 / 2 — Compte de Résultat</div>
+                                    <h1 className="text-2xl sm:text-3xl print:text-lg font-bold uppercase tracking-wide mb-2 print:mb-0.5 print:leading-tight">
                                         Rapport de Clôture {selectedCompta?.name ? `— ${selectedCompta.name}` : ''}
                                     </h1>
-                                    <p className="text-slate-500 text-base sm:text-lg">
-                                        {selectedOrg?.name ? `${selectedOrg.name} • ` : ''}Exercice Comptable {new Date().getFullYear()}
+                                    <p className="text-slate-500 text-base sm:text-lg print:text-xs print:leading-tight">
+                                        {selectedOrg?.name ? `${selectedOrg.name} • ` : ''}Exercice Comptable {new Date().getFullYear()} • Généré le {new Date().toLocaleDateString('fr-CH')}
                                     </p>
-                                    <p className="text-sm text-slate-400 mt-1">Généré le {new Date().toLocaleDateString('fr-CH')}</p>
                                 </header>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 print:grid-cols-2">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 print:grid-cols-2 print:gap-5">
                                     {/* CHARGES */}
                                     <div>
-                                        <h3 className="text-xl font-bold border-b-2 border-rose-500 text-rose-700 mb-4 pb-2">CHARGES (Dépenses)</h3>
-                                        <table className="w-full text-sm">
+                                        <h3 className="text-xl print:text-sm font-bold border-b-2 border-rose-500 text-rose-700 mb-4 pb-2 print:mb-1.5 print:pb-1">CHARGES (Dépenses)</h3>
+                                        <table className="w-full text-sm print:text-[11px] print:leading-tight">
                                             <thead>
-                                                <tr className="border-b border-slate-200 text-xs uppercase text-slate-400">
-                                                    <th className="py-1.5 text-left w-16">Code</th>
-                                                    <th className="py-1.5 text-left">Compte</th>
-                                                    <th className="py-1.5 text-right">Montant (CHF)</th>
+                                                <tr className="border-b border-slate-200 text-xs print:text-[10px] uppercase text-slate-400">
+                                                    <th className="py-1.5 print:py-0.5 text-left w-14">Code</th>
+                                                    <th className="py-1.5 print:py-0.5 text-left">Compte</th>
+                                                    <th className="py-1.5 print:py-0.5 text-right whitespace-nowrap">Montant (CHF)</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -357,14 +361,14 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                                                     .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
                                                     .map(([code, data]) => (
                                                         <tr key={code} className="border-b border-slate-100">
-                                                            <td className="py-2 text-slate-500 font-mono text-xs">{code}</td>
-                                                            <td className="py-2 text-slate-700">{data.label}</td>
-                                                            <td className="py-2 text-right font-mono font-medium">{data.amount.toFixed(2)}</td>
+                                                            <td className="py-2 print:py-[2.5px] text-slate-500 font-mono text-xs print:text-[10px] pr-1">{code}</td>
+                                                            <td className="py-2 print:py-[2.5px] text-slate-700 pr-2">{data.label}</td>
+                                                            <td className="py-2 print:py-[2.5px] text-right font-mono font-medium whitespace-nowrap">{data.amount.toFixed(2)}</td>
                                                         </tr>
                                                     ))}
-                                                <tr className="bg-rose-50 font-bold text-rose-900 border-t-2 border-rose-200">
-                                                    <td colSpan={2} className="py-3 px-2">TOTAL CHARGES</td>
-                                                    <td className="py-3 text-right px-2 font-mono">{totalCharges.toFixed(2)}</td>
+                                                <tr className="bg-rose-50 font-bold text-rose-900 border-t-2 border-rose-200 print:text-xs">
+                                                    <td colSpan={2} className="py-3 px-2 print:py-1.5 print:px-1.5">TOTAL CHARGES</td>
+                                                    <td className="py-3 text-right px-2 print:py-1.5 print:px-1.5 font-mono whitespace-nowrap">{totalCharges.toFixed(2)}</td>
                                                 </tr>
                                             </tbody>
                                         </table>
@@ -372,13 +376,13 @@ export const AuditModal: React.FC<AuditModalProps> = ({
 
                                     {/* PRODUITS */}
                                     <div>
-                                        <h3 className="text-xl font-bold border-b-2 border-emerald-500 text-emerald-700 mb-4 pb-2">PRODUITS (Recettes)</h3>
-                                        <table className="w-full text-sm">
+                                        <h3 className="text-xl print:text-sm font-bold border-b-2 border-emerald-500 text-emerald-700 mb-4 pb-2 print:mb-1.5 print:pb-1">PRODUITS (Recettes)</h3>
+                                        <table className="w-full text-sm print:text-[11px] print:leading-tight">
                                             <thead>
-                                                <tr className="border-b border-slate-200 text-xs uppercase text-slate-400">
-                                                    <th className="py-1.5 text-left w-16">Code</th>
-                                                    <th className="py-1.5 text-left">Compte</th>
-                                                    <th className="py-1.5 text-right">Montant (CHF)</th>
+                                                <tr className="border-b border-slate-200 text-xs print:text-[10px] uppercase text-slate-400">
+                                                    <th className="py-1.5 print:py-0.5 text-left w-14">Code</th>
+                                                    <th className="py-1.5 print:py-0.5 text-left">Compte</th>
+                                                    <th className="py-1.5 print:py-0.5 text-right whitespace-nowrap">Montant (CHF)</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -386,14 +390,14 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                                                     .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
                                                     .map(([code, data]) => (
                                                         <tr key={code} className="border-b border-slate-100">
-                                                            <td className="py-2 text-slate-500 font-mono text-xs">{code}</td>
-                                                            <td className="py-2 text-slate-700">{data.label}</td>
-                                                            <td className="py-2 text-right font-mono font-medium">{data.amount.toFixed(2)}</td>
+                                                            <td className="py-2 print:py-[2.5px] text-slate-500 font-mono text-xs print:text-[10px] pr-1">{code}</td>
+                                                            <td className="py-2 print:py-[2.5px] text-slate-700 pr-2">{data.label}</td>
+                                                            <td className="py-2 print:py-[2.5px] text-right font-mono font-medium whitespace-nowrap">{data.amount.toFixed(2)}</td>
                                                         </tr>
                                                     ))}
-                                                <tr className="bg-emerald-50 font-bold text-emerald-900 border-t-2 border-emerald-200">
-                                                    <td colSpan={2} className="py-3 px-2">TOTAL PRODUITS</td>
-                                                    <td className="py-3 text-right px-2 font-mono">{totalProduits.toFixed(2)}</td>
+                                                <tr className="bg-emerald-50 font-bold text-emerald-900 border-t-2 border-emerald-200 print:text-xs">
+                                                    <td colSpan={2} className="py-3 px-2 print:py-1.5 print:px-1.5">TOTAL PRODUITS</td>
+                                                    <td className="py-3 text-right px-2 print:py-1.5 print:px-1.5 font-mono whitespace-nowrap">{totalProduits.toFixed(2)}</td>
                                                 </tr>
                                             </tbody>
                                         </table>
@@ -401,18 +405,18 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                                 </div>
 
                                 {/* RÉSULTAT & SYNTHÈSE DE TRÉSORERIE */}
-                                <div className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-2 gap-6 mt-8">
-                                    <div className={`p-6 rounded-lg text-center border-2 ${resultat >= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>
-                                        <h3 className="text-sm font-semibold uppercase mb-1">Résultat de l'exercice</h3>
-                                        <div className="text-3xl font-bold font-mono">
+                                <div className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-2 gap-6 mt-8 print:gap-4 print:mt-3 print-avoid-break">
+                                    <div className={`p-6 print:p-2.5 rounded-lg text-center border-2 ${resultat >= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>
+                                        <h3 className="text-sm print:text-xs font-semibold uppercase mb-1 print:mb-0.5">Résultat de l'exercice</h3>
+                                        <div className="text-3xl print:text-xl font-bold font-mono print:leading-tight">
                                             {resultat >= 0 ? '+' : ''}{resultat.toFixed(2)} CHF
                                         </div>
-                                        <p className="mt-1 text-sm font-bold">{resultat >= 0 ? 'EXCÉDENT (BÉNÉFICE)' : 'DÉFICIT (PERTE)'}</p>
+                                        <p className="mt-1 print:mt-0.5 text-sm print:text-[11px] font-bold">{resultat >= 0 ? 'EXCÉDENT (BÉNÉFICE)' : 'DÉFICIT (PERTE)'}</p>
                                     </div>
 
-                                    <div className="p-6 rounded-lg border-2 border-slate-200 bg-slate-50 text-slate-800 flex flex-col justify-center">
-                                        <h3 className="text-sm font-semibold uppercase text-slate-500 mb-2">Synthèse de Trésorerie</h3>
-                                        <div className="space-y-1 text-sm">
+                                    <div className="p-6 print:p-2.5 rounded-lg border-2 border-slate-200 bg-slate-50 text-slate-800 flex flex-col justify-center">
+                                        <h3 className="text-sm print:text-xs font-semibold uppercase text-slate-500 mb-2 print:mb-1">Synthèse de Trésorerie</h3>
+                                        <div className="space-y-1 print:space-y-0.5 text-sm print:text-xs">
                                             <div className="flex justify-between">
                                                 <span className="text-slate-600">Solde d'ouverture :</span>
                                                 <span className="font-mono font-medium">{openingBankBalance.toFixed(2)} CHF</span>
@@ -421,7 +425,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                                                 <span className="text-slate-600">Variation de la période :</span>
                                                 <span className="font-mono font-medium">{resultat >= 0 ? '+' : ''}{resultat.toFixed(2)} CHF</span>
                                             </div>
-                                            <div className="flex justify-between pt-1.5 border-t border-slate-300 font-bold text-base">
+                                            <div className="flex justify-between pt-1.5 print:pt-1 border-t border-slate-300 font-bold text-base print:text-xs">
                                                 <span>Solde final de clôture :</span>
                                                 <span className="font-mono">{calculatedClosingBalance.toFixed(2)} CHF</span>
                                             </div>
