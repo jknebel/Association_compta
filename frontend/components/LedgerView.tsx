@@ -17,6 +17,7 @@ interface LedgerViewProps {
   receipts?: import('../../types').Receipt[];
   onUpdateTransaction: (transaction: Transaction) => void;
   onDeleteTransaction: (id: string) => void;
+  onUpdateAccount?: (account: Account) => Promise<void> | void;
   onAutoMatch: () => void;
   onReanalyzeAll: () => void;
   onClearAll: (ids?: string[]) => void;
@@ -33,6 +34,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   receipts,
   onUpdateTransaction,
   onDeleteTransaction,
+  onUpdateAccount,
   onAutoMatch,
   onReanalyzeAll,
   onClearAll,
@@ -113,8 +115,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   const [auditReport, setAuditReport] = useState("");
   const [isAuditing, setIsAuditing] = useState(false);
 
-  const handleRunAudit = async () => {
-    setIsAuditOpen(true);
+  const executeAiAudit = async () => {
     setIsAuditing(true);
     try {
       const report = await auditLedger(transactions, accounts);
@@ -124,6 +125,11 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     } finally {
       setIsAuditing(false);
     }
+  };
+
+  const handleRunAudit = async () => {
+    setIsAuditOpen(true);
+    await executeAiAudit();
   };
 
   const handleAddManualTransaction = () => {
@@ -144,7 +150,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
     setEditForm(newTxn);
   };
 
-  const allApproved = transactions.length > 0 && transactions.every(t => t.status === TransactionStatus.APPROVED);
+  const activeTransactions = transactions.filter(t => t.status !== TransactionStatus.ARCHIVED);
+  const allApproved = activeTransactions.length > 0 && activeTransactions.every(t => t.status === TransactionStatus.APPROVED);
 
   // Receipt Upload & Link State
   const [uploadingId, setUploadingId] = useState<string | null>(null);
@@ -411,8 +418,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   };
 
   return (
-    <div className="p-4 md:p-6 md:h-full flex flex-col">
-      <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-6">
+    <div className="p-4 md:p-6 md:h-full print:p-0 print:h-auto print:block flex flex-col">
+      <header className="print:hidden flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-6">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold text-slate-100">Journal des Transactions</h2>
           <p className="text-sm text-slate-400">Vérifiez, modifiez et classez vos transactions importées.</p>
@@ -505,9 +512,9 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
               <div className="hidden sm:block w-px h-8 bg-slate-700 mx-1"></div>
 
               <button
-                className={`px-3 sm:px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-lg hover:from-amber-600 hover:to-orange-700 text-xs sm:text-sm font-bold flex items-center gap-2 shadow-lg shadow-orange-900/20 transition-all ${!allApproved ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
-                onClick={allApproved ? handleRunAudit : undefined}
-                title={allApproved ? "Générer le rapport de clôture" : "Validez toutes les transactions pour auditer"}
+                className={`px-3 sm:px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-lg hover:from-amber-600 hover:to-orange-700 text-xs sm:text-sm font-bold flex items-center gap-2 shadow-lg shadow-orange-900/20 transition-all cursor-pointer`}
+                onClick={handleRunAudit}
+                title={allApproved ? "Générer le rapport de clôture, l'audit IA et clôturer l'exercice" : "Ouvrir le rapport de clôture, l'audit IA et la clôture d'exercice"}
               >
                 <ShieldCheck size={18} />
                 Clôture & Audit
@@ -518,7 +525,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       </header>
 
       {/* Filters Container */}
-      <div className="mb-6 bg-slate-900 p-4 md:p-5 rounded-xl shadow-sm border border-slate-800 space-y-4">
+      <div className="print:hidden mb-6 bg-slate-900 p-4 md:p-5 rounded-xl shadow-sm border border-slate-800 space-y-4">
         {/* Top Row: Search & Status */}
         <div className="flex flex-col md:flex-row gap-3 md:gap-4">
           <div className="relative flex-1">
@@ -665,7 +672,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       />
 
       {/* Table Section */}
-      <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-x-auto md:flex-1 md:overflow-y-auto">
+      <div className="print:hidden bg-slate-900 rounded-xl shadow-sm border border-slate-800 overflow-x-auto md:flex-1 md:overflow-y-auto">
         <table className="w-full text-left text-sm min-w-[850px]">
           <thead className="bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
             <tr>
@@ -1184,6 +1191,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         transactions={transactions}
         accounts={accounts}
         onCloseFiscalYear={onCloseFiscalYear}
+        onRunAudit={executeAiAudit}
+        onUpdateAccount={onUpdateAccount}
       />
 
       {activeCommentTxn && (

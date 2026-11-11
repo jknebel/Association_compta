@@ -27,3 +27,28 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+@media print {
+  html, body, #root {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  .print-page-break {
+    display: block !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+  }
+
+  .print-avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}

@@ -710,6 +710,7 @@ function App() {
                     receipts={receipts}
                     onUpdateTransaction={handleUpdateTransaction}
                     onDeleteTransaction={handleDeleteTransaction}
+                    onUpdateAccount={saveAccount}
                     onAutoMatch={handleRunAutoMatching}
                     onReanalyzeAll={handleReanalyzeAll}
                     onClearAll={handleClearTransactions}

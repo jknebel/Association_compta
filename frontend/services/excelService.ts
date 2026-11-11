@@ -8,134 +8,274 @@ import { Account, Transaction, AccountType, TransactionStatus } from '../../type
 export const generateAccountingReport = (transactions: Transaction[], accounts: Account[]) => {
   const wb = XLSX.utils.book_new();
 
-  // --- SHEET 1: BILAN (Summary) ---
+  // --- SHEET 1: PLAN COMPTABLE COMPLET & BILAN (AVEC SOUS-COMPTES) ---
 
-  // 1. Initialize a map for all accounts to hold totals
-  const totalsMap = new Map<string, { income: number, expense: number, balance: number }>();
+  // 1. Initialize maps for direct totals (transactions on the account itself)
+  //    and consolidated totals (including children & grandchildren)
+  const directTotalsMap = new Map<string, { income: number; expense: number; balance: number }>();
+  const consolidatedMap = new Map<string, { income: number; expense: number; balance: number }>();
 
   accounts.forEach(acc => {
-    totalsMap.set(acc.id, { income: 0, expense: 0, balance: 0 });
+    directTotalsMap.set(acc.id, { income: 0, expense: 0, balance: 0 });
   });
 
-  // 2. Sum transactions per DIRECT account (Leaf nodes)
+  // 2. Sum transactions per DIRECT account
+  let uncategorizedIncome = 0;
+  let uncategorizedExpense = 0;
+
   transactions.forEach(t => {
-    if (t.accountId && totalsMap.has(t.accountId)) {
-      const current = totalsMap.get(t.accountId)!;
+    if (t.accountId && directTotalsMap.has(t.accountId)) {
+      const current = directTotalsMap.get(t.accountId)!;
       current.balance += t.amount;
       if (t.amount > 0) current.income += t.amount;
       else current.expense += t.amount;
+    } else {
+      if (t.amount > 0) uncategorizedIncome += t.amount;
+      else uncategorizedExpense += t.amount;
     }
   });
 
-  // 3. Roll up Child totals into Parents (3-level support: N3→N2→N1)
-  // We first identify children and add their values to their parent
-  const processedMap = new Map<string, { income: number, expense: number, balance: number }>();
-
-  // Initialize processed map with direct totals first
+  // Initialize consolidated map with direct totals
   accounts.forEach(acc => {
-    const direct = totalsMap.get(acc.id)!;
-    processedMap.set(acc.id, { ...direct });
+    const direct = directTotalsMap.get(acc.id)!;
+    consolidatedMap.set(acc.id, { ...direct });
   });
 
-  // First pass: aggregate Level 3 (grandchildren) into Level 2 (children)
-  accounts.forEach(acc => {
-    if (acc.parentId) {
-      const parent = accounts.find(p => p.id === acc.parentId);
-      // Check if this is a level 3 account (parent also has a parentId)
-      if (parent && parent.parentId) {
-        const parentTotals = processedMap.get(acc.parentId);
-        const childTotals = totalsMap.get(acc.id);
-        if (parentTotals && childTotals) {
-          parentTotals.income += childTotals.income;
-          parentTotals.expense += childTotals.expense;
-          parentTotals.balance += childTotals.balance;
+  // Helper to check if an account is a root account (no valid parent)
+  const isRootAccount = (a: Account): boolean => {
+    if (!a.parentId) return true;
+    const p = String(a.parentId).trim().toLowerCase();
+    if (p === '' || p === 'null' || p === 'undefined') return true;
+    return !accounts.some(parent => parent.id === a.parentId);
+  };
+
+  // Helper to get account depth level (1 = Root, 2 = Sub-account, 3 = Sub-sub-account)
+  const getAccountLevel = (a: Account): number => {
+    if (isRootAccount(a)) return 1;
+    const parent = accounts.find(p => p.id === a.parentId);
+    if (!parent || isRootAccount(parent)) return 2;
+    return 3;
+  };
+
+  //Helper to build full account path
+  const getAccountFullPath = (acc?: Account): string => {
+    if (!acc) return 'Non Catégorisé';
+    const parts = [acc.label];
+    let current: Account | undefined = acc;
+    for (let i = 0; i < 3; i++) {
+      if (current?.parentId) {
+        const parent = accounts.find(p => p.id === current!.parentId);
+        if (parent) {
+          parts.unshift(parent.label);
+          current = parent;
+        } else {
+          break;
         }
+      } else {
+        break;
+      }
+    }
+    return parts.join(' > ');
+  };
+
+  // 3. Roll up Child totals into Parents (Level 3 -> Level 2 -> Level 1)
+  accounts.forEach(acc => {
+    if (getAccountLevel(acc) === 3 && acc.parentId) {
+      const parentTotals = consolidatedMap.get(acc.parentId);
+      const childTotals = directTotalsMap.get(acc.id);
+      if (parentTotals && childTotals) {
+        parentTotals.income += childTotals.income;
+        parentTotals.expense += childTotals.expense;
+        parentTotals.balance += childTotals.balance;
       }
     }
   });
 
-  // Second pass: aggregate Level 2 (children with rolled-up L3) into Level 1 (roots)
   accounts.forEach(acc => {
-    if (acc.parentId) {
-      const parent = accounts.find(p => p.id === acc.parentId);
-      // Only aggregate into root parents (parent has no parentId)
-      if (parent && !parent.parentId) {
-        const parentTotals = processedMap.get(acc.parentId);
-        const childTotals = processedMap.get(acc.id); // Use processedMap (includes L3 roll-up)
-        if (parentTotals && childTotals) {
-          parentTotals.income += childTotals.income;
-          parentTotals.expense += childTotals.expense;
-          parentTotals.balance += childTotals.balance;
-        }
+    if (getAccountLevel(acc) === 2 && acc.parentId) {
+      const parentTotals = consolidatedMap.get(acc.parentId);
+      const childTotals = consolidatedMap.get(acc.id); // includes rolled-up L3
+      if (parentTotals && childTotals) {
+        parentTotals.income += childTotals.income;
+        parentTotals.expense += childTotals.expense;
+        parentTotals.balance += childTotals.balance;
       }
     }
   });
 
-  // 4. Filter for Bilan: Only show Parents and Independent accounts (skip children)
-  const bilanAccounts = accounts.filter(acc => !acc.parentId);
+  // 4. Sort ALL accounts hierarchically (Root -> Level 2 -> Level 3)
+  const orderedAccounts: Array<{ account: Account; level: number; hasChildren: boolean }> = [];
+  const visitedIds = new Set<string>();
 
-  // Prepare rows
-  const accountSummaries = bilanAccounts.map(acc => {
-    const totals = processedMap.get(acc.id)!;
+  const roots = accounts
+    .filter(a => isRootAccount(a))
+    .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
 
-    return {
-      Code: acc.code,
-      Account: acc.label,
-      Type: acc.type,
-      Income: totals.income,
-      Expense: totals.expense,
-      Balance: totals.balance
-    };
-  }).filter(a => a.Income !== 0 || a.Expense !== 0); // Optional: Hide zero balance rows? Let's keep them if they exist or filter if wanted.
+  roots.forEach(root => {
+    const level2 = accounts
+      .filter(c => c.parentId === root.id)
+      .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
 
-  // Add Grand Totals
-  const totalIncome = accountSummaries.reduce((sum, a) => sum + a.Income, 0);
-  const totalExpense = accountSummaries.reduce((sum, a) => sum + a.Expense, 0);
-  const netResult = totalIncome + totalExpense;
+    orderedAccounts.push({ account: root, level: 1, hasChildren: level2.length > 0 });
+    visitedIds.add(root.id);
 
-  // Convert to worksheet data
+    level2.forEach(child => {
+      const level3 = accounts
+        .filter(gc => gc.parentId === child.id)
+        .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+
+      orderedAccounts.push({ account: child, level: 2, hasChildren: level3.length > 0 });
+      visitedIds.add(child.id);
+
+      level3.forEach(grandchild => {
+        orderedAccounts.push({ account: grandchild, level: 3, hasChildren: false });
+        visitedIds.add(grandchild.id);
+      });
+    });
+  });
+
+  // Append any remaining accounts if any
+  accounts
+    .filter(a => !visitedIds.has(a.id))
+    .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }))
+    .forEach(orphan => {
+      orderedAccounts.push({ account: orphan, level: 1, hasChildren: false });
+    });
+
+  // 5. Build rows for the full chart of accounts (Parents + Sub-accounts)
+  const planRows = orderedAccounts.map(({ account: acc, level, hasChildren }) => {
+    const direct = directTotalsMap.get(acc.id) || { income: 0, expense: 0, balance: 0 };
+    const consolidated = consolidatedMap.get(acc.id) || { income: 0, expense: 0, balance: 0 };
+    const parent = acc.parentId ? accounts.find(p => p.id === acc.parentId) : undefined;
+
+    const indent = level === 2 ? '   ↳ ' : level === 3 ? '      ↳ ' : '';
+    const hierarchyLabel =
+      level === 1
+        ? hasChildren
+          ? 'Compte Parent'
+          : 'Compte Principal'
+        : level === 2
+        ? 'Sous-compte'
+        : 'Sous-compte (Niv. 3)';
+
+    // For parent accounts with children, show consolidated values in main columns so the summary is visible,
+    // and also provide the direct vs consolidated breakdown
+    const displayIncome = hasChildren ? consolidated.income : direct.income;
+    const displayExpense = hasChildren ? consolidated.expense : direct.expense;
+    const displayBalance = hasChildren ? consolidated.balance : direct.balance;
+
+    return [
+      acc.code,
+      `${indent}${acc.label}`,
+      hierarchyLabel,
+      parent ? `${parent.code} - ${parent.label}` : '-',
+      acc.type,
+      Number(displayIncome.toFixed(2)),
+      Number(displayExpense.toFixed(2)),
+      Number(displayBalance.toFixed(2)),
+      acc.initialBalance !== undefined ? Number(acc.initialBalance.toFixed(2)) : 0
+    ];
+  });
+
+  if (uncategorizedIncome !== 0 || uncategorizedExpense !== 0) {
+    planRows.push([
+      'N/A',
+      'Transactions non catégorisées',
+      'Non affecté',
+      '-',
+      '-',
+      Number(uncategorizedIncome.toFixed(2)),
+      Number(uncategorizedExpense.toFixed(2)),
+      Number((uncategorizedIncome + uncategorizedExpense).toFixed(2)),
+      0
+    ]);
+  }
+
+  // Grand Totals (computed from direct transactions only, to avoid double-counting parents + sub-accounts)
+  const totalIncome = Number(
+    transactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0).toFixed(2)
+  );
+  const totalExpense = Number(
+    transactions.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0).toFixed(2)
+  );
+  const netResult = Number((totalIncome + totalExpense).toFixed(2));
+
   const bilanData = [
-    ["RAPPORT FINANCIER / FINANCIAL REPORT"],
-    ["Généré le", new Date().toLocaleDateString()],
-    ["Note: Les sous-comptes sont agrégés dans leurs comptes parents."],
+    ["RAPPORT FINANCIER & PLAN COMPTABLE COMPLET (AVEC SOUS-COMPTES)"],
+    ["Généré le", new Date().toLocaleDateString('fr-CH')],
+    ["Note : Les comptes parents affichent le cumul de leurs sous-comptes. La ligne TOTAUX additionne les écritures réelles sans double comptage."],
     [""],
-    ["CODE", "COMPTE", "TYPE", "RECETTES (INCOME)", "DÉPENSES (EXPENSE)", "BALANCE"],
-    ...accountSummaries.map(a => [
-      a.Code,
-      a.Account,
-      a.Type,
-      a.Income,
-      a.Expense,
-      a.Balance
-    ]),
+    [
+      "CODE",
+      "COMPTE / SOUS-COMPTE",
+      "NIVEAU",
+      "COMPTE PARENT",
+      "TYPE",
+      "RECETTES (INCOME)",
+      "DÉPENSES (EXPENSE)",
+      "SOLDE PÉRIODE",
+      "SOLDE INITIAL"
+    ],
+    ...planRows,
     [""],
-    ["", "TOTAUX", "", totalIncome, totalExpense, netResult],
+    ["", "TOTAUX (ÉCRITURES RÉELLES)", "", "", "", totalIncome, totalExpense, netResult, ""],
     [""],
-    ["", "RÉSULTAT NET", "", "", "", netResult]
+    ["", "RÉSULTAT NET DE L'EXERCICE", "", "", "", "", "", netResult, ""]
   ];
 
   const wsBilan = XLSX.utils.aoa_to_sheet(bilanData);
-  XLSX.utils.book_append_sheet(wb, wsBilan, "Bilan (Agrégé)");
+  wsBilan['!cols'] = [
+    { wch: 12 },
+    { wch: 38 },
+    { wch: 20 },
+    { wch: 28 },
+    { wch: 12 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 16 },
+    { wch: 14 }
+  ];
+  XLSX.utils.book_append_sheet(wb, wsBilan, "Plan Comptable & Bilan");
 
   // --- SHEET 2: JOURNAL (Transactions) ---
 
   const journalData = transactions.map(t => {
     const acc = accounts.find(a => a.id === t.accountId);
     const parent = acc?.parentId ? accounts.find(p => p.id === acc.parentId) : null;
+    const grandParent = parent?.parentId ? accounts.find(gp => gp.id === parent.parentId) : null;
+    const rootParent = grandParent || parent;
 
     return {
       Date: t.date,
       Libellé: t.description,
-      Montant: t.amount,
+      Débit: t.amount < 0 ? Number(Math.abs(t.amount).toFixed(2)) : '',
+      Crédit: t.amount > 0 ? Number(t.amount.toFixed(2)) : '',
+      Montant: Number(t.amount.toFixed(2)),
       CodeCompte: acc?.code || 'Non Catégorisé',
-      NomCompte: acc?.label || '',
-      Parent: parent ? `${parent.code} - ${parent.label}` : '-', // Show parent context in journal too
+      SousCompte: acc?.label || 'Non Catégorisé',
+      CompteParent: rootParent ? `${rootParent.code} - ${rootParent.label}` : (acc ? `${acc.code} - ${acc.label}` : '-'),
+      CheminComplet: getAccountFullPath(acc),
       Membre: t.detectedMemberName || '',
-      Statut: t.status
+      Statut: t.status,
+      Notes: t.notes || ''
     };
   });
 
   const wsJournal = XLSX.utils.json_to_sheet(journalData);
+  wsJournal['!cols'] = [
+    { wch: 12 },
+    { wch: 42 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 28 },
+    { wch: 28 },
+    { wch: 40 },
+    { wch: 20 },
+    { wch: 14 },
+    { wch: 30 }
+  ];
   XLSX.utils.book_append_sheet(wb, wsJournal, "Journal (Détail)");
 
   // --- DOWNLOAD ---

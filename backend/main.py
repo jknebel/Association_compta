@@ -220,6 +220,24 @@ def get_pro_llm():
         model_name = "gemini-3.1-pro-preview"
     return create_llm(model_name=model_name, temperature=0)
 
+def extract_llm_text(response: Any) -> str:
+    """Safely extracts string text from LangChain AIMessage even when content is a list of thinking/text blocks."""
+    content = getattr(response, "content", "")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, str):
+                text_parts.append(item)
+            elif isinstance(item, dict):
+                if item.get("type") == "text" and "text" in item:
+                    text_parts.append(str(item["text"]))
+                elif "text" in item and item.get("type") != "thinking":
+                    text_parts.append(str(item["text"]))
+        return "\n".join(text_parts).strip()
+    return str(content or "").strip()
+
 # --- UTILITY FUNCTIONS ---
 
 def get_user_history_context(user_id: str, limit: int = 200) -> str:
@@ -1404,14 +1422,23 @@ async def chat_agent(request: ChatRequest):
         # Add new message
         messages.append(HumanMessage(content=request.newMessage))
         
-        # Use Pro model if available, or Flash
+        # Use Pro model if available, or fallback to Flash
         model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
         if model_name == "gemini-3-pro-preview":
             model_name = "gemini-3.1-pro-preview"
-        llm = create_llm(model_name=model_name, temperature=0.7)
-        response = llm.invoke(messages)
+        try:
+            llm = create_llm(model_name=model_name, temperature=0.7)
+            response = llm.invoke(messages)
+            text_out = extract_llm_text(response)
+            if not text_out:
+                raise ValueError("Empty response from Pro LLM")
+        except Exception as e_pro:
+            print(f"Chat Pro LLM fallback to Flash ({e_pro})")
+            flash_llm = get_llm()
+            response = flash_llm.invoke(messages)
+            text_out = extract_llm_text(response)
         
-        return ChatResponse(response=response.content)
+        return ChatResponse(response=text_out)
     except Exception as e:
         print(f"Chat Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1545,10 +1572,19 @@ async def audit_ledger_endpoint(request: AuditRequest):
         Le ton doit être formel, précis et rassurant. Fais une mise en page propre avec des titres.
         """
         
-        pro_llm = get_pro_llm()
-        response = pro_llm.invoke(prompt)
+        try:
+            pro_llm = get_pro_llm()
+            response = pro_llm.invoke(prompt)
+            report_text = extract_llm_text(response)
+            if not report_text:
+                raise ValueError("Empty report from Pro LLM")
+        except Exception as e_pro:
+            print(f"Audit Pro LLM failed ({e_pro}), falling back to Flash LLM...")
+            flash_llm = get_llm()
+            response = flash_llm.invoke(prompt)
+            report_text = extract_llm_text(response)
         
-        return {"report": response.content}
+        return {"report": report_text}
     
     except Exception as e:
         print(f"Audit Error: {e}")

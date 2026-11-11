@@ -87,9 +87,9 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
   const activeNavLabel = navItems.find(item => item.id === activeTab)?.label || 'AssoCompta';
 
   return (
-    <div className="flex flex-col md:flex-row min-h-screen md:h-screen bg-slate-950 text-slate-100">
+    <div className="flex flex-col md:flex-row min-h-screen md:h-screen print:block print:h-auto print:min-h-0 print:bg-white bg-slate-950 text-slate-100">
       {/* Mobile Header */}
-      <header className="md:hidden sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+      <header className="md:hidden print:hidden sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
           <button
             onClick={() => setMobileMenuOpen(true)}
@@ -136,7 +136,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
 
       {/* Sidebar (Desktop permanent + Mobile slide-over drawer) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-72 md:w-64 md:static md:z-10 bg-slate-900 border-r border-slate-800 flex flex-col shadow-2xl md:shadow-lg transform transition-transform duration-200 ease-in-out ${
+        className={`print:hidden fixed inset-y-0 left-0 z-50 w-72 md:w-64 md:static md:z-10 bg-slate-900 border-r border-slate-800 flex flex-col shadow-2xl md:shadow-lg transform transition-transform duration-200 ease-in-out ${
           mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         } ${disabled ? 'opacity-50 pointer-events-none grayscale' : ''}`}
       >
@@ -266,7 +266,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 md:overflow-y-auto overflow-x-hidden bg-slate-900 relative text-slate-100">
+      <main className="flex-1 md:overflow-y-auto overflow-x-hidden print:overflow-visible print:bg-white bg-slate-900 relative text-slate-100">
         {children}
       </main>
     </div>
