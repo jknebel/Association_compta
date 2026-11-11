@@ -18,6 +18,7 @@ import {
   Wallet,
   CheckCircle2,
   Clock,
+  Loader2,
 } from 'lucide-react';
 import { useComptaContext, useAuthContext, useOrgContext } from '../contexts/AppContext';
 import { formatDate } from '../services/formatUtils';
@@ -28,6 +29,7 @@ import {
   filterReimbursementReceipts,
   computeReimbursementStats,
 } from '../services/reimbursementMatching';
+import { sendReimbursementSynthesisEmail } from '../services/rentalNotificationService';
 
 interface ReimbursementsViewProps {
   receipts: Receipt[];
@@ -43,8 +45,8 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
   onLinkReceipt,
 }) => {
   const { user, userProfile, isSuperAdmin } = useAuthContext();
-  const { orgRole } = useOrgContext();
-  const { comptaRole } = useComptaContext();
+  const { selectedOrg, orgRole } = useOrgContext();
+  const { selectedCompta, comptaRole } = useComptaContext();
   const isCaissier =
     comptaRole === 'caissier' ||
     comptaRole === 'comptable' ||
@@ -59,6 +61,35 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedIbanId, setCopiedIbanId] = useState<string | null>(null);
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
+  const [sendingSynthesis, setSendingSynthesis] = useState(false);
+  const [synthesisFeedback, setSynthesisFeedback] = useState<string | null>(null);
+
+  const handleSendSynthesisNow = async () => {
+    if (stats.pendingCount === 0) {
+      alert('Aucun remboursement en attente pour cette comptabilité.');
+      return;
+    }
+    setSendingSynthesis(true);
+    setSynthesisFeedback(null);
+    try {
+      const orgId = selectedOrg?.id || 'TDGL';
+      const comptaId = selectedCompta?.id || 'default';
+      const comptaName = selectedCompta?.name || 'Comptabilité active';
+      const result = await sendReimbursementSynthesisEmail(orgId, comptaId, comptaName, receipts, undefined, true);
+      if (result.sent) {
+        setSynthesisFeedback(
+          `✓ Synthèse envoyée (${result.count} demande${result.count > 1 ? 's' : ''} — CHF ${result.totalAmount.toFixed(2)}) à : ${result.recipients.join(', ')}`
+        );
+      } else {
+        setSynthesisFeedback('Aucun destinataire caissier trouvé.');
+      }
+    } catch (err) {
+      console.error('Erreur envoi synthèse remboursements :', err);
+      alert('Erreur lors de l’envoi de la synthèse par e-mail.');
+    } finally {
+      setSendingSynthesis(false);
+    }
+  };
 
   const filteredReimbursements = useMemo(
     () => filterReimbursementReceipts(receipts, statusFilter, searchQuery),
@@ -111,7 +142,31 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
           <p className="text-sm text-slate-400 mt-1">
             Suivez les justificatifs marqués « À rembourser », vérifiez le nom, prénom, e-mail et IBAN du membre, et biffez les remboursements effectués.
           </p>
+          <p className="text-xs text-amber-300/90 mt-1.5 flex items-center gap-1.5">
+            <Mail size={13} className="text-amber-400 shrink-0" />
+            <span>
+              <strong>Synthèse automatique programmée chaque vendredi à 12h00</strong> : un e-mail récapitulatif est envoyé au caissier s’il y a des remboursements en attente.
+            </span>
+          </p>
         </div>
+
+        {isCaissier && (
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <button
+              type="button"
+              disabled={sendingSynthesis || stats.pendingCount === 0}
+              onClick={handleSendSynthesisNow}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold shadow-md shadow-amber-600/20 transition-all cursor-pointer"
+              title="Envoyer immédiatement par e-mail la synthèse des remboursements en attente au caissier"
+            >
+              {sendingSynthesis ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
+              <span>Envoyer la synthèse au caissier ({stats.pendingCount})</span>
+            </button>
+            {synthesisFeedback && (
+              <span className="text-[11px] text-emerald-400 font-medium">{synthesisFeedback}</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* KPI Summary Cards */}
@@ -261,8 +316,8 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
                           disabled={isViewer}
                           title={
                             isReimbursed
-                              ? 'Annuler le biffage (remettre en attente)'
-                              : 'Biffer ce remboursement (marquer comme remboursé)'
+                              ? 'Annuler (remettre en attente de remboursement)'
+                              : 'Marquer le remboursement comme fait et envoyer un e-mail de confirmation au membre'
                           }
                           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                             isReimbursed
@@ -273,22 +328,35 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
                           {isReimbursed ? (
                             <>
                               <CheckSquare size={15} className="text-emerald-400 shrink-0" />
-                              <span>Remboursé</span>
+                              <span>Remboursé ✓</span>
                             </>
                           ) : (
                             <>
                               <Square size={15} className="text-amber-400 shrink-0" />
-                              <span>À biffer</span>
+                              <span>Marquer fait</span>
                             </>
                           )}
                         </button>
-                        {isReimbursed && receipt.reimbursedAt && (
-                          <div className="mt-1.5 text-[10px] text-emerald-400/80 leading-tight">
-                            Biffé le{' '}
-                            {typeof receipt.reimbursedAt === 'number'
-                              ? formatDate(new Date(receipt.reimbursedAt).toISOString().split('T')[0])
-                              : String(receipt.reimbursedAt).split('T')[0]}
-                            {receipt.reimbursedByName ? ` par ${receipt.reimbursedByName}` : ''}
+                        {isReimbursed ? (
+                          <div className="mt-1.5 space-y-0.5 text-[10px] text-emerald-400/80 leading-tight">
+                            {receipt.reimbursedAt && (
+                              <div>
+                                Fait le{' '}
+                                {typeof receipt.reimbursedAt === 'number'
+                                  ? formatDate(new Date(receipt.reimbursedAt).toISOString().split('T')[0])
+                                  : String(receipt.reimbursedAt).split('T')[0]}
+                                {receipt.reimbursedByName ? ` par ${receipt.reimbursedByName}` : ''}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-1 text-emerald-300/90 font-medium">
+                              <Mail size={10} />
+                              <span>Membre notifié par mail</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-[10px] text-slate-500 flex items-center gap-1">
+                            <Mail size={10} className="text-amber-400/70 shrink-0" />
+                            <span>Notifie le membre</span>
                           </div>
                         )}
                       </td>

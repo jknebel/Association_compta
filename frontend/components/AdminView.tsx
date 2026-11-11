@@ -25,6 +25,7 @@ import {
     isCaissierRole,
     isVerificateurRole,
     isUploaderRole,
+    isResponsableLocationRole,
     getComptaRoleLabel
 } from '../types/rbac';
 import {
@@ -44,7 +45,8 @@ import {
     UserCheck,
     Shield,
     Copy,
-    Camera
+    Camera,
+    Building2
 } from 'lucide-react';
 
 interface AdminViewProps {
@@ -642,6 +644,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                         <option value={ComptaRole.VERIFICATEUR}>🔍 Vérificateur (Contrôle & notes)</option>
                                         <option value={ComptaRole.VIEWER}>👁️ Lecteur (Consultation)</option>
                                         <option value={ComptaRole.UPLOADER}>📸 Déposant Factures (App Mobile uniquement)</option>
+                                        {selectedCompta.name.toLowerCase().includes('groupe') && (
+                                            <option value={ComptaRole.RESPONSABLE_LOCATION}>🏢 Responsable Locations (App Mobile)</option>
+                                        )}
                                         {isOrgAdmin && (
                                             <option value={ComptaRole.CAISSIER}>💼 Caissier (Accès complet)</option>
                                         )}
@@ -704,6 +709,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                                     ? 'bg-emerald-950/50 border-emerald-800/60 text-emerald-300'
                                                                     : isVerificateurRole(roleOnThisCompta)
                                                                     ? 'bg-amber-950/50 border-amber-800/60 text-amber-300'
+                                                                    : isResponsableLocationRole(roleOnThisCompta)
+                                                                    ? 'bg-indigo-950/60 border-indigo-700/60 text-indigo-300'
                                                                     : isMemberUploader
                                                                     ? 'bg-cyan-950/50 border-cyan-800/60 text-cyan-300'
                                                                     : 'bg-blue-950/50 border-blue-800/60 text-blue-300'
@@ -713,6 +720,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                             <option value={ComptaRole.VERIFICATEUR}>🔍 Vérificateur</option>
                                                             <option value={ComptaRole.VIEWER}>👁️ Lecteur</option>
                                                             <option value={ComptaRole.UPLOADER}>📸 Déposant Factures</option>
+                                                            {selectedCompta.name.toLowerCase().includes('groupe') && (
+                                                                <option value={ComptaRole.RESPONSABLE_LOCATION}>🏢 Responsable Locations</option>
+                                                            )}
                                                             <option value="none">🚫 Retirer l'accès</option>
                                                         </select>
                                                     ) : (
@@ -950,6 +960,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                     const m = findMemberForUser(regUser.uid, regUser.email);
                                     const isAdmin = m?.role === OrgRole.ADMIN;
                                     const isOrgCaissier = m?.role === OrgRole.CAISSIER || (m?.role as string) === 'comptable';
+                                    const isOrgRentalManager = isResponsableLocationRole(m?.role);
                                     const accessEntries = Object.entries(m?.comptaAccess || {});
                                     const isUnassigned = !m;
                                     const isSelectedForEdit = (memberEmail || '').trim().toLowerCase() === (regUser.email || '').trim().toLowerCase();
@@ -980,6 +991,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                         💼 Caissier Asso
                                                     </span>
                                                 )}
+                                                {isOrgRentalManager && (
+                                                    <span className="text-[10px] font-bold uppercase bg-indigo-900/40 border border-indigo-700 text-indigo-300 px-2 py-0.5 rounded">
+                                                        🏢 Resp. Locations
+                                                    </span>
+                                                )}
                                                 {isUnassigned && (
                                                     <span className="text-[10px] font-bold uppercase bg-amber-900/30 border border-amber-700/60 text-amber-300 px-2 py-0.5 rounded">
                                                         ⏳ Sans rôle
@@ -1002,6 +1018,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                         const isCaissier = isCaissierRole(r);
                                                         const isVerif = isVerificateurRole(r);
                                                         const isUploader = isUploaderRole(r);
+                                                        const isRentalMgr = isResponsableLocationRole(r);
                                                         return (
                                                             <span
                                                                 key={cId}
@@ -1010,12 +1027,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                                         ? 'bg-emerald-950/50 border-emerald-800/60 text-emerald-300'
                                                                         : isVerif
                                                                         ? 'bg-amber-950/50 border-amber-800/60 text-amber-300'
+                                                                        : isRentalMgr
+                                                                        ? 'bg-indigo-950/60 border-indigo-700/60 text-indigo-300'
                                                                         : isUploader
                                                                         ? 'bg-cyan-950/50 border-cyan-800/60 text-cyan-300'
                                                                         : 'bg-blue-950/50 border-blue-800/60 text-blue-300'
                                                                 }`}
                                                             >
-                                                                {isCaissier ? <PenTool size={10} /> : isVerif ? <Search size={10} /> : isUploader ? <Camera size={10} /> : <Eye size={10} />}
+                                                                {isCaissier ? <PenTool size={10} /> : isVerif ? <Search size={10} /> : isRentalMgr ? <Building2 size={10} /> : isUploader ? <Camera size={10} /> : <Eye size={10} />}
                                                                 <strong className="font-semibold">{cName}:</strong>
                                                                 <span>{getComptaRoleLabel(r)}</span>
                                                             </span>
@@ -1184,19 +1203,37 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                 <div>
                                     <label className="block text-[11px] font-semibold text-slate-400 mb-1 flex items-center gap-1">
                                         <Shield size={12} className="text-purple-400" />
-                                        <span className="text-purple-400 font-bold">Rôle Groupe :</span> Admin (max 2)
+                                        <span className="text-purple-400 font-bold">Rôle Groupe :</span> Admin / Locations
                                     </label>
                                     <select
                                         value={memberOrgRole}
-                                        onChange={e => setMemberOrgRole(e.target.value as OrgRole)}
+                                        onChange={e => {
+                                            const nextOrgRole = e.target.value as OrgRole;
+                                            setMemberOrgRole(nextOrgRole);
+                                            // Si on choisit Responsable Locations dans Rôle Groupe, pré-sélectionner automatiquement sur la compta de Groupe active
+                                            if (nextOrgRole === OrgRole.RESPONSABLE_LOCATION) {
+                                                const activeGroupeCompta = comptas.find(
+                                                    c => !c.isArchived && c.name.toLowerCase().includes('groupe')
+                                                );
+                                                if (activeGroupeCompta) {
+                                                    setMemberComptaRoles(prev => ({
+                                                        ...prev,
+                                                        [activeGroupeCompta.id]: prev[activeGroupeCompta.id] || ComptaRole.RESPONSABLE_LOCATION
+                                                    }));
+                                                }
+                                            }
+                                        }}
                                         disabled={!isOrgAdmin}
                                         className={`w-full border rounded-lg px-2.5 py-2 text-xs font-semibold focus:outline-none ${
                                             memberOrgRole === OrgRole.ADMIN
                                                 ? 'bg-purple-950/60 border-purple-600 text-purple-200'
+                                                : memberOrgRole === OrgRole.RESPONSABLE_LOCATION
+                                                ? 'bg-indigo-950/60 border-indigo-600 text-indigo-200'
                                                 : 'bg-slate-950 border-slate-700 text-white focus:border-blue-500'
                                         }`}
                                     >
                                         <option value={OrgRole.MEMBER}>Membre (Selon comptabilités)</option>
+                                        <option value={OrgRole.RESPONSABLE_LOCATION}>🏢 Responsable Locations (Groupe)</option>
                                         <option value={OrgRole.CAISSIER}>💼 Caissier du Groupe</option>
                                         {isOrgAdmin && (
                                             <option
@@ -1221,6 +1258,15 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                 </div>
                             )}
 
+                            {memberOrgRole === OrgRole.RESPONSABLE_LOCATION && (
+                                <div className="bg-indigo-950/40 border border-indigo-700/60 rounded-lg px-3.5 py-2 flex items-center gap-2 text-xs text-indigo-200">
+                                    <Building2 size={15} className="text-indigo-400 shrink-0" />
+                                    <span>
+                                        <strong>Responsable Locations (Compta de Groupe) :</strong> ce membre aura l'onglet <strong>🏢 Locations</strong> sur l'application mobile pour saisir les locations de locaux de la comptabilité de Groupe, tout en conservant ses droits sur sa propre maîtrise.
+                                    </span>
+                                </div>
+                            )}
+
                             {/* Ligne 2 : Grille multi-colonnes compacte pour les Comptabilités (2 ou 3 par ligne au lieu d'une longue colonne) */}
                             <div className="pt-2 border-t border-slate-800/80">
                                 <div className="flex items-center justify-between mb-2">
@@ -1228,7 +1274,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                         <span className="text-emerald-400 font-bold">Niveau 2 :</span> Accès par Comptabilité
                                     </label>
                                     <span className="text-[11px] text-slate-500">
-                                        💼 Caissier • 🔍 Vérificateur • 👁️ Lecteur • 📸 Déposant Factures
+                                        💼 Caissier • 🔍 Vérificateur • 👁️ Lecteur • 📸 Déposant Factures • 🏢 Locations (Groupe)
                                     </span>
                                 </div>
 
@@ -1238,11 +1284,16 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                                         {sortedComptas.map(c => {
                                             const currentRole = memberComptaRoles[c.id] || 'none';
+                                            const isGroupeCompta = c.name.toLowerCase().includes('groupe');
                                             return (
                                                 <div
                                                     key={c.id}
                                                     className={`flex items-center justify-between px-3 py-2 bg-slate-950 rounded-lg border gap-2 ${
-                                                        c.isArchived ? 'border-slate-800/50 opacity-70' : 'border-slate-800'
+                                                        c.isArchived
+                                                            ? 'border-slate-800/50 opacity-70'
+                                                            : isGroupeCompta
+                                                            ? 'border-indigo-500/40 bg-indigo-950/10'
+                                                            : 'border-slate-800'
                                                     }`}
                                                 >
                                                     <div className="min-w-0 flex-1">
@@ -1250,6 +1301,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                             <span className={`text-xs font-semibold truncate ${c.isArchived ? 'text-slate-400 line-through' : 'text-white'}`}>
                                                                 {c.name}
                                                             </span>
+                                                            {isGroupeCompta && !c.isArchived && (
+                                                                <span className="text-[9px] uppercase bg-indigo-900/50 text-indigo-300 border border-indigo-700/50 px-1 rounded shrink-0" title="Comptabilité de Groupe (inclut les locations de locaux)">
+                                                                    🏢 Groupe
+                                                                </span>
+                                                            )}
                                                             {c.isArchived && (
                                                                 <span className="text-[9px] uppercase bg-slate-800 text-slate-400 px-1 py-0.2 rounded shrink-0">
                                                                     Arch.
@@ -1276,6 +1332,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                                 ? 'bg-emerald-950/60 border-emerald-700 text-emerald-300'
                                                                 : isVerificateurRole(currentRole)
                                                                 ? 'bg-amber-950/60 border-amber-700 text-amber-300'
+                                                                : isResponsableLocationRole(currentRole)
+                                                                ? 'bg-indigo-950/60 border-indigo-600 text-indigo-300'
                                                                 : isUploaderRole(currentRole)
                                                                 ? 'bg-cyan-950/60 border-cyan-700 text-cyan-300'
                                                                 : currentRole === 'viewer'
@@ -1288,6 +1346,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                         <option value="verificateur">🔍 Vérificateur</option>
                                                         <option value="viewer">👁️ Lecteur</option>
                                                         <option value="uploader">📸 Déposant Factures</option>
+                                                        {(isGroupeCompta || currentRole === 'responsable_location') && (
+                                                            <option value="responsable_location">🏢 Responsable Locations</option>
+                                                        )}
                                                     </select>
                                                 </div>
                                             );

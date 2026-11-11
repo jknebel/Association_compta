@@ -1,0 +1,35 @@
+name: Synthèse Hebdomadaire Remboursements (Vendredi 12h00)
+
+on:
+  schedule:
+    # Vendredi à 12h00 heure suisse (Europe/Zurich : 11h00 UTC en hiver / 10h00 UTC en été)
+    - cron: '0 10,11 * * 5'
+  workflow_dispatch:
+
+jobs:
+  send-friday-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Vérifier l'heure Europe/Zurich (12h00) et envoyer les synthèses aux caissiers
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          ZURICH_HOUR=$(TZ="Europe/Zurich" date +%H)
+          echo "Heure actuelle à Zurich : ${ZURICH_HOUR}h00"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$ZURICH_HOUR" = "12" ]; then
+            node Script/send_friday_reimbursements_digest.mjs
+          else
+            echo "Ce créneau UTC ne correspond pas à 12h00 Europe/Zurich, exécution ignorée."
+          fi

@@ -143,6 +143,11 @@ service cloud.firestore {
           allow write: if isAuthenticated() && !isUploaderOnly(orgId, comptaId);
         }
 
+        // Locations de locaux (responsable des locations, caissier, admin)
+        match /rentals/{rentalId} {
+          allow read, write: if isAuthenticated();
+        }
+
         // Justificatifs : un uploader crée et relit uniquement ses propres envois
         match /receipts/{receiptId} {
           allow read: if isAuthenticated() && (
@@ -163,6 +168,11 @@ service cloud.firestore {
     }
     match /{path=**}/invitations/{inviteId} {
       allow read: if isAuthenticated();
+    }
+
+    // File d'attente d'envoi d'e-mails ( locations, rappels 5j, synthèse remboursements vendredi 12h )
+    match /mail/{mailId} {
+      allow create, read: if isAuthenticated();
     }
   }
 }

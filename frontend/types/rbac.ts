@@ -2,6 +2,7 @@
 export enum OrgRole {
     ADMIN = 'admin',
     CAISSIER = 'caissier',
+    RESPONSABLE_LOCATION = 'responsable_location',
     MEMBER = 'member'
 }
 
@@ -10,6 +11,7 @@ export enum ComptaRole {
     VERIFICATEUR = 'verificateur',
     VIEWER = 'viewer',
     UPLOADER = 'uploader', // Déposant de factures (App Mobile uniquement)
+    RESPONSABLE_LOCATION = 'responsable_location', // Responsable des locations de locaux (Compta de Groupe)
     COMPTABLE = 'comptable' // Rétro-compatibilité
 }
 
@@ -38,6 +40,11 @@ export const isUploaderRole = (role?: ComptaRole | string | null): boolean => {
     return norm === ComptaRole.UPLOADER;
 };
 
+export const isResponsableLocationRole = (role?: ComptaRole | OrgRole | string | null): boolean => {
+    const norm = normalizeRoleInput(role);
+    return norm === ComptaRole.RESPONSABLE_LOCATION || norm === 'location' || norm === 'locations';
+};
+
 export const isValidComptaRole = (role?: string | null): role is ComptaRole => {
     const norm = normalizeRoleInput(role);
     return (
@@ -45,7 +52,8 @@ export const isValidComptaRole = (role?: string | null): role is ComptaRole => {
         norm === ComptaRole.COMPTABLE ||
         norm === ComptaRole.VERIFICATEUR ||
         norm === ComptaRole.VIEWER ||
-        norm === ComptaRole.UPLOADER
+        norm === ComptaRole.UPLOADER ||
+        norm === ComptaRole.RESPONSABLE_LOCATION
     );
 };
 
@@ -69,7 +77,7 @@ export const canUploadReceiptToCompta = (
     if (isArchived === true) return false;
     if (isSuperAdmin === true || isOrgAdmin === true) return true;
     const norm = normalizeRoleInput(role);
-    return isUploaderRole(norm) || isCaissierRole(norm);
+    return isUploaderRole(norm) || isResponsableLocationRole(norm) || isCaissierRole(norm);
 };
 
 export const getComptaRoleLabel = (role?: ComptaRole | string | null): string => {
@@ -78,6 +86,7 @@ export const getComptaRoleLabel = (role?: ComptaRole | string | null): string =>
     if (isCaissierRole(norm)) return 'Caissier';
     if (isVerificateurRole(norm)) return 'Vérificateur';
     if (isViewerRole(norm)) return 'Lecteur';
+    if (isResponsableLocationRole(norm)) return 'Responsable Locations';
     if (isUploaderRole(norm)) return 'Déposant Factures';
     return 'Aucun accès';
 };

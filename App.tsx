@@ -14,8 +14,9 @@ import { MembersView } from './frontend/components/MembersView';
 import { LoginView } from './frontend/components/LoginView';
 import { ReceiptsView } from './frontend/components/ReceiptsView';
 import { ReimbursementsView } from './frontend/components/ReimbursementsView';
+import { RentalsView } from './frontend/components/RentalsView';
 
-import { Account, Transaction, AccountType, Receipt, TransactionStatus } from './types';
+import { Account, Transaction, AccountType, Receipt, TransactionStatus, Rental } from './types';
 import { Edit2, Save, X, AlertTriangle, CloudOff, Loader2, Download, Upload, CheckCircle, XCircle, FileSpreadsheet, RefreshCw, Mail, LogOut } from 'lucide-react';
 import { useDataService } from './frontend/services/dataService';
 import { useAuthContext, useOrgContext, useComptaContext } from './frontend/contexts/AppContext';
@@ -27,6 +28,17 @@ import { matchTransactionsWithReceipts } from './frontend/services/matchingServi
 import { suggestCategory, parseBankStatementPDF } from './frontend/services/geminiService';
 import { deleteFileFromStorage } from './frontend/services/storageService';
 import { parseExcelLedger } from './frontend/services/excelService';
+import {
+    subscribeRentals,
+    linkRentalToTransactionWeb,
+    unlinkRentalFromTransactionWeb
+} from './frontend/services/rentalService';
+import {
+    notifyRentalManagerOnVisa,
+    checkAndAlertCaissierPendingRentals5Days,
+    checkAndSendFriday12hReimbursementDigest,
+    notifyMemberOnReimbursementDone
+} from './frontend/services/rentalNotificationService';
 
 function App() {
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -81,6 +93,75 @@ function App() {
         saveGlobalAiContext,
         closeFiscalYear
     } = useDataService(user, guestMode, selectedOrg?.id, selectedCompta?.id);
+
+    // Suivi temps réel des réservations / locations de locaux
+    const [rentals, setRentals] = useState<Rental[]>([]);
+
+    useEffect(() => {
+        if (!selectedOrg?.id || !selectedCompta?.id) {
+            setRentals([]);
+            return;
+        }
+        const unsubscribe = subscribeRentals(
+            selectedOrg.id,
+            selectedCompta.id,
+            (list) => {
+                setRentals(list);
+                // Vérifier et alerter le caissier pour les locations en attente de visa depuis 5 jours
+                void checkAndAlertCaissierPendingRentals5Days(
+                    selectedOrg.id,
+                    selectedCompta.id,
+                    list,
+                    user?.email || 'jean.francois.knebel@gmail.com'
+                );
+            },
+            (err) => console.error('Erreur écoute rentals App.tsx:', err)
+        );
+        return () => unsubscribe();
+    }, [selectedOrg?.id, selectedCompta?.id, user?.email]);
+
+    // Synthèse hebdomadaire du vendredi à 12h00 pour les remboursements en attente
+    useEffect(() => {
+        if (!selectedOrg?.id || !selectedCompta?.id || dataLoading) return;
+        const runDigestCheck = () => {
+            void checkAndSendFriday12hReimbursementDigest(
+                selectedOrg.id,
+                selectedCompta.id,
+                selectedCompta.name || selectedCompta.id,
+                receipts,
+                user?.email || 'jean.francois.knebel@gmail.com'
+            );
+        };
+        runDigestCheck();
+        const interval = setInterval(runDigestCheck, 5 * 60 * 1000);
+        return () => clearInterval(interval);
+    }, [selectedOrg?.id, selectedCompta?.id, selectedCompta?.name, receipts, dataLoading, user?.email]);
+
+    const handleLinkRental = async (rentalId: string, txnId: string | null) => {
+        if (!selectedOrg?.id || !selectedCompta?.id) return;
+        const currentActorName = userProfile?.displayName || user?.displayName || user?.email || 'Caissier';
+        try {
+            if (txnId) {
+                await linkRentalToTransactionWeb(
+                    selectedOrg.id,
+                    selectedCompta.id,
+                    rentalId,
+                    txnId,
+                    user,
+                    currentActorName
+                );
+                const target = rentals.find(r => r.id === rentalId);
+                if (target) {
+                    await notifyRentalManagerOnVisa(selectedOrg.id, selectedCompta.id, target, currentActorName);
+                }
+            } else {
+                await unlinkRentalFromTransactionWeb(selectedOrg.id, selectedCompta.id, rentalId);
+            }
+        } catch (err) {
+            console.error('Erreur liaison location-transaction:', err);
+            alert('Erreur lors de la mise à jour de la location.');
+        }
+    };
 
     const generateTransactionSignature = (t: Transaction): string => {
         return `${t.date}-${(t.amount || 0).toFixed(2)}-${(t.description || '').trim().toLowerCase()}`;
@@ -291,6 +372,27 @@ function App() {
         deleteReceipt(id);
     };
 
+    const handleUpdateReceipt = (updatedReceipt: Receipt) => {
+        const previousReceipt = receipts.find(r => r.id === updatedReceipt.id);
+        const becameReimbursed =
+            updatedReceipt.expenseType === 'REIMBURSEMENT' &&
+            updatedReceipt.reimbursementStatus === 'REIMBURSED' &&
+            previousReceipt?.reimbursementStatus !== 'REIMBURSED';
+
+        saveReceipt(updatedReceipt);
+
+        if (becameReimbursed && selectedOrg?.id && selectedCompta?.id) {
+            const currentActorName = userProfile?.displayName || user?.displayName || user?.email || 'Caissier';
+            void notifyMemberOnReimbursementDone(
+                selectedOrg.id,
+                selectedCompta.id,
+                selectedCompta.name || selectedCompta.id,
+                updatedReceipt,
+                currentActorName
+            );
+        }
+    };
+
     const handleLinkReceipt = (receiptId: string, transactionId: string) => {
         const receipt = receipts.find(r => r.id === receiptId);
         const txn = transactions.find(t => t.id === transactionId);
@@ -299,8 +401,36 @@ function App() {
             // Update Transaction
             const nameWithoutExt = receipt.fileName ? receipt.fileName.replace(/\.[^/.]+$/, "") : undefined;
             saveTransaction({ ...txn, receiptUrl: receipt.url, receiptFileName: nameWithoutExt });
-            // Update Receipt
-            saveReceipt({ ...receipt, linkedTransactionId: txn.id });
+
+            // Si c'est un remboursement lié à une écriture bancaire, le marquer aussi comme remboursé et notifier le membre
+            const currentActorName = userProfile?.displayName || user?.displayName || user?.email || 'Caissier';
+            const isReimbursement = receipt.expenseType === 'REIMBURSEMENT';
+            const wasAlreadyReimbursed = receipt.reimbursementStatus === 'REIMBURSED';
+
+            const updatedReceipt: Receipt = {
+                ...receipt,
+                linkedTransactionId: txn.id,
+                ...(isReimbursement
+                    ? {
+                          reimbursementStatus: 'REIMBURSED',
+                          reimbursedAt: receipt.reimbursedAt || Date.now(),
+                          reimbursedByUid: receipt.reimbursedByUid || user?.uid || 'caissier',
+                          reimbursedByName: receipt.reimbursedByName || currentActorName,
+                      }
+                    : {}),
+            };
+
+            saveReceipt(updatedReceipt);
+
+            if (isReimbursement && !wasAlreadyReimbursed && selectedOrg?.id && selectedCompta?.id) {
+                void notifyMemberOnReimbursementDone(
+                    selectedOrg.id,
+                    selectedCompta.id,
+                    selectedCompta.name || selectedCompta.id,
+                    updatedReceipt,
+                    currentActorName
+                );
+            }
         }
     };
 
@@ -640,8 +770,16 @@ function App() {
         r => r.expenseType === 'REIMBURSEMENT' && r.reimbursementStatus !== 'REIMBURSED'
     ).length;
 
+    const pendingRentalsCount = rentals.filter(r => r.status === 'PENDING').length;
+
     return (
-        <Layout activeTab={activeTab} onTabChange={setActiveTab} user={user} pendingReimbursementsCount={pendingReimbursementsCount}>
+        <Layout
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            user={user}
+            pendingReimbursementsCount={pendingReimbursementsCount}
+            pendingRentalsCount={pendingRentalsCount}
+        >
             {(!isConfigured || guestMode) && (
                 <div className="bg-orange-900/20 border-b border-orange-900/50 text-orange-200 px-4 py-2 text-xs flex items-center justify-center gap-2">
                     <CloudOff size={14} />
@@ -687,10 +825,12 @@ function App() {
                 <ReceiptsView
                     receipts={receipts}
                     transactions={transactions}
+                    rentals={rentals}
                     onAddReceipt={handleAddReceipt}
                     onDeleteReceipt={handleDeleteReceipt}
                     onLinkReceipt={handleLinkReceipt}
-                    onUpdateReceipt={saveReceipt}
+                    onLinkRental={handleLinkRental}
+                    onUpdateReceipt={handleUpdateReceipt}
                 />
             )}
 
@@ -698,9 +838,13 @@ function App() {
                 <ReimbursementsView
                     receipts={receipts}
                     transactions={transactions}
-                    onUpdateReceipt={saveReceipt}
+                    onUpdateReceipt={handleUpdateReceipt}
                     onLinkReceipt={handleLinkReceipt}
                 />
+            )}
+
+            {activeTab === 'rentals' && (
+                <RentalsView transactions={transactions} />
             )}
 
             {activeTab === 'ledger' && (

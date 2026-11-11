@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Receipt, Transaction, TransactionStatus } from '../../types';
-import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, Coins, ExternalLink, CreditCard, Wallet, User, ArrowRightLeft, Undo2, X } from 'lucide-react';
+import { Receipt, Transaction, TransactionStatus, Rental } from '../../types';
+import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Link2, Trash2, Calendar, Coins, ExternalLink, CreditCard, Wallet, User, ArrowRightLeft, Undo2, X, Building2 } from 'lucide-react';
 import { analyzeReceipt, processReceiptBackend } from '../services/geminiService';
 import { uploadReceipt } from '../services/storageService';
 import { formatDate } from '../services/formatUtils';
@@ -25,6 +25,8 @@ interface ReceiptsViewProps {
     onDeleteReceipt: (id: string) => void;
     onLinkReceipt: (receiptId: string, transactionId: string) => void;
     onUpdateReceipt?: (receipt: Receipt) => void;
+    rentals?: Rental[];
+    onLinkRental?: (rentalId: string, transactionId: string | null) => void;
 }
 
 // WEB-03 : état de la modale de transfert (sélection -> confirmation explicite)
@@ -42,7 +44,9 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     onAddReceipt,
     onDeleteReceipt,
     onLinkReceipt,
-    onUpdateReceipt
+    onUpdateReceipt,
+    rentals = [],
+    onLinkRental
 }) => {
     const { comptaRole, selectedCompta } = useComptaContext();
     const { selectedOrg, orgRole } = useOrgContext();
@@ -52,7 +56,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
         canTransferReceipt(comptaRole, orgRole === OrgRole.ADMIN, isSuperAdmin);
     const [isProcessing, setIsProcessing] = useState(false);
     const [dragActive, setDragActive] = useState(false);
-    const [filterType, setFilterType] = useState<'ALL' | 'DEBIT_CARD' | 'REIMBURSEMENT'>('ALL');
+    const [filterType, setFilterType] = useState<'ALL' | 'DEBIT_CARD' | 'REIMBURSEMENT' | 'RENTALS'>('ALL');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // --- WEB-03 : transfert vers une autre comptabilité ---
@@ -311,6 +315,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
     };
 
     const displayedReceipts = unlinkedReceipts.filter(r => {
+        if (filterType === 'RENTALS') return false;
         if (filterType === 'DEBIT_CARD') return r.expenseType === 'DEBIT_CARD';
         if (filterType === 'REIMBURSEMENT') return r.expenseType === 'REIMBURSEMENT';
         return true;
@@ -318,6 +323,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
 
     const debitCardCount = unlinkedReceipts.filter(r => r.expenseType === 'DEBIT_CARD').length;
     const reimbursementCount = unlinkedReceipts.filter(r => r.expenseType === 'REIMBURSEMENT').length;
+    const rentalsCount = rentals.length;
 
     const handleToggleReimbursed = (receipt: Receipt) => {
         if (isViewer) return;
@@ -448,6 +454,18 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                         >
                             <Wallet size={13} />
                             Remboursements ({reimbursementCount})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setFilterType('RENTALS')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                filterType === 'RENTALS'
+                                    ? 'bg-indigo-600 text-white shadow-sm'
+                                    : 'bg-slate-800/90 text-indigo-300 hover:bg-slate-800 hover:text-indigo-200 border border-slate-700/60'
+                            }`}
+                        >
+                            <Building2 size={13} />
+                            Locations ({rentalsCount})
                         </button>
                     </div>
                 </div>
@@ -692,13 +710,151 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                             </div>
                         );
                     })}
+                    {/* CARTES DE LOCATIONS (Traitées comme des pièces justificatives) */}
+                    {(filterType === 'ALL' || filterType === 'RENTALS') && rentals.map(rental => {
+                        const isPaid = rental.status === 'PAID';
+                        const isLinked = !!rental.linkedTransactionId;
+                        const linkedTxn = isLinked ? transactions.find(t => t.id === rental.linkedTransactionId) : null;
+                        const potentialMatches = !isLinked
+                            ? transactions.filter(t => t.amount > 0 && Math.abs(t.amount - rental.amount) < 0.01)
+                            : [];
+
+                        return (
+                            <div key={rental.id} className={`bg-slate-900 border rounded-xl overflow-hidden flex flex-col shadow-sm ${
+                                isLinked ? 'border-emerald-500/40' : 'border-indigo-500/30'
+                            }`}>
+                                <div className="h-32 bg-gradient-to-br from-indigo-950 to-slate-950 p-3.5 flex flex-col justify-between border-b border-indigo-900/30 relative">
+                                    <div className="flex items-center justify-between">
+                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                            <Building2 size={13} />
+                                            Location : {rental.roomName}
+                                        </span>
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                            isLinked
+                                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                                : isPaid
+                                                ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                        }`}>
+                                            {isLinked ? '✓ Visé & Lié au relevé' : isPaid ? 'Payé (à viser)' : '⏳ À viser'}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-xl font-black text-emerald-400">
+                                            + CHF {rental.amount.toFixed(2)}
+                                        </span>
+                                        <p className="text-[11px] text-slate-400 mt-0.5">
+                                            {rental.startDate} {rental.endDate && rental.endDate !== rental.startDate ? `au ${rental.endDate}` : ''}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="p-4 flex-1 flex flex-col justify-between gap-3">
+                                    <div>
+                                        <h4 className="font-bold text-slate-100 text-sm">{rental.renterName}</h4>
+                                        {rental.renterPhone && (
+                                            <p className="text-[11px] text-slate-400 mt-0.5">Tél : {rental.renterPhone}</p>
+                                        )}
+                                        {rental.notes && (
+                                            <p className="text-[11px] text-slate-400 italic mt-1 bg-slate-950/60 p-2 rounded-lg border border-slate-800/60">
+                                                « {rental.notes} »
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    <div className="pt-2 border-t border-slate-800/80">
+                                        {isLinked && linkedTxn ? (
+                                            <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-900/50 text-xs">
+                                                <div className="flex items-center justify-between text-emerald-300 font-semibold mb-1">
+                                                    <span>Lié au relevé bancaire :</span>
+                                                    {!isViewer && onLinkRental && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => onLinkRental(rental.id, null)}
+                                                            className="text-[10px] text-slate-400 hover:text-rose-300 underline"
+                                                        >
+                                                            Dissocier
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <p className="text-slate-200 font-medium truncate">{linkedTxn.description}</p>
+                                                <p className="text-slate-400 text-[11px] mt-0.5">
+                                                    {formatDate(linkedTxn.date)} • + CHF {linkedTxn.amount.toFixed(2)}
+                                                </p>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {potentialMatches.length > 0 && (
+                                                    <div className="p-2 rounded-lg bg-emerald-950/30 border border-emerald-900/50">
+                                                        <p className="text-[11px] font-semibold text-emerald-300 mb-1">
+                                                            Ligne trouvée sur le relevé de compte :
+                                                        </p>
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <div className="min-w-0 text-[11px]">
+                                                                <p className="text-slate-200 truncate">{potentialMatches[0].description}</p>
+                                                                <p className="text-slate-400">{formatDate(potentialMatches[0].date)} • + CHF {potentialMatches[0].amount.toFixed(2)}</p>
+                                                            </div>
+                                                            {!isViewer && onLinkRental && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        if (window.confirm(`Viser cette location et la lier à :\n"${potentialMatches[0].description}" (+ CHF ${potentialMatches[0].amount.toFixed(2)}) ?`)) {
+                                                                            onLinkRental(rental.id, potentialMatches[0].id);
+                                                                        }
+                                                                    }}
+                                                                    className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shrink-0 shadow-sm transition-all"
+                                                                >
+                                                                    Viser & Lier
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {!isViewer && onLinkRental && (
+                                                    <div>
+                                                        <label className="block text-[10px] font-semibold text-slate-400 mb-1 uppercase tracking-wider">
+                                                            Viser à la main (sur le relevé) :
+                                                        </label>
+                                                        <select
+                                                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                                                            defaultValue=""
+                                                            onChange={(e) => {
+                                                                if (e.target.value) {
+                                                                    const tId = e.target.value;
+                                                                    const tFound = transactions.find(t => t.id === tId);
+                                                                    if (window.confirm(`Viser cette location et la lier à :\n"${tFound?.description || tId}" ?`)) {
+                                                                        onLinkRental(rental.id, tId);
+                                                                    }
+                                                                }
+                                                            }}
+                                                        >
+                                                            <option value="" disabled>Sélectionner une écriture bancaire...</option>
+                                                            {transactions
+                                                                .filter(t => t.amount > 0)
+                                                                .slice(0, 30)
+                                                                .map(t => (
+                                                                    <option key={t.id} value={t.id}>
+                                                                        {t.date} | + CHF {t.amount.toFixed(2)} | {t.description.slice(0, 32)}
+                                                                    </option>
+                                                                ))}
+                                                        </select>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
-                {unlinkedReceipts.length === 0 && !isProcessing && (
+                {unlinkedReceipts.length === 0 && rentals.length === 0 && !isProcessing && (
                     <div className="text-center py-12 text-slate-500">
                         Aucune pièce en attente.
                     </div>
                 )}
-                {unlinkedReceipts.length > 0 && displayedReceipts.length === 0 && !isProcessing && (
+                {(unlinkedReceipts.length > 0 || rentals.length > 0) && displayedReceipts.length === 0 && (filterType !== 'RENTALS' || rentals.length === 0) && !isProcessing && (
                     <div className="text-center py-12 text-slate-500">
                         Aucune pièce ne correspond au filtre sélectionné.
                     </div>

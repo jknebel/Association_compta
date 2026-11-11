@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, Receipt, Shield, ArrowLeft, Menu, X, Edit2, Wallet } from 'lucide-react';
+import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, Receipt, Shield, ArrowLeft, Menu, X, Edit2, Wallet, Building2 } from 'lucide-react';
 import { useDataService } from '../services/dataService';
 import { logout } from '../services/authService';
 import { renameComptabilite } from '../services/organizationService';
@@ -14,9 +14,10 @@ interface LayoutProps {
   user?: User | null;
   disabled?: boolean;
   pendingReimbursementsCount?: number;
+  pendingRentalsCount?: number;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange, user, disabled = false, pendingReimbursementsCount = 0 }) => {
+export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange, user, disabled = false, pendingReimbursementsCount = 0, pendingRentalsCount = 0 }) => {
   const { isConfigured } = useDataService(user || null);
   const { isSuperAdmin } = useAuthContext();
   const { selectedOrg, orgRole, setSelectedOrg } = useOrgContext();
@@ -39,17 +40,23 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
     }
   };
 
+  const isGroupeCompta = !selectedCompta || selectedCompta.name.toLowerCase().includes('groupe') || pendingRentalsCount > 0;
+
   React.useEffect(() => {
     if (!isCaissier && activeTab === 'upload') {
       onTabChange('dashboard');
     }
-  }, [isCaissier, activeTab, onTabChange]);
+    if (!isGroupeCompta && activeTab === 'rentals') {
+      onTabChange('dashboard');
+    }
+  }, [isCaissier, isGroupeCompta, activeTab, onTabChange]);
 
   const navItems: { id: string; label: string; icon: React.ComponentType<{ size?: number }>; badge?: number }[] = [
     { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
     ...(isCaissier ? [{ id: 'upload', label: 'Import & Traitement', icon: Upload }] : []),
     { id: 'receipts', label: 'Pièces Comptables', icon: Receipt },
     { id: 'reimbursements', label: 'Remboursements', icon: Wallet, badge: pendingReimbursementsCount },
+    ...(isGroupeCompta ? [{ id: 'rentals', label: 'Locations', icon: Building2, badge: pendingRentalsCount }] : []),
     { id: 'ledger', label: 'Journal / Transactions', icon: BookOpen },
     { id: 'members', label: 'Membres / Payeurs', icon: Users },
     { id: 'expert', label: 'Expert Comptable', icon: MessageSquareText },
