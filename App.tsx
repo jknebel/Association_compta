@@ -840,6 +840,7 @@ function App() {
                     transactions={transactions}
                     onUpdateReceipt={handleUpdateReceipt}
                     onLinkReceipt={handleLinkReceipt}
+                    onDeleteReceipt={handleDeleteReceipt}
                 />
             )}
 

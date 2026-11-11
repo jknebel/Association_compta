@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  Trash2,
 } from 'lucide-react';
 import { useComptaContext, useAuthContext, useOrgContext } from '../contexts/AppContext';
 import { formatDate } from '../services/formatUtils';
@@ -36,6 +37,7 @@ interface ReimbursementsViewProps {
   transactions: Transaction[];
   onUpdateReceipt?: (receipt: Receipt) => void;
   onLinkReceipt: (receiptId: string, transactionId: string) => void;
+  onDeleteReceipt?: (receiptId: string) => void;
 }
 
 export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
@@ -43,6 +45,7 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
   transactions,
   onUpdateReceipt,
   onLinkReceipt,
+  onDeleteReceipt,
 }) => {
   const { user, userProfile, isSuperAdmin } = useAuthContext();
   const { selectedOrg, orgRole } = useOrgContext();
@@ -451,13 +454,34 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
                             >
                               {receipt.merchantName || receipt.fileName}
                             </span>
-                            <button
-                              onClick={() => setSelectedReceipt(receipt)}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-950/60 hover:bg-blue-900/60 text-blue-300 border border-blue-800/50 text-[11px] transition-colors cursor-pointer"
-                              title="Voir le justificatif"
-                            >
-                              <Eye size={12} /> Voir
-                            </button>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <button
+                                onClick={() => setSelectedReceipt(receipt)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-950/60 hover:bg-blue-900/60 text-blue-300 border border-blue-800/50 text-[11px] transition-colors cursor-pointer"
+                                title="Voir le justificatif"
+                              >
+                                <Eye size={12} /> Voir
+                              </button>
+                              {!isViewer && onDeleteReceipt && (
+                                <button
+                                  onClick={() => {
+                                    if (
+                                      window.confirm(
+                                        `Êtes-vous sûr de vouloir supprimer définitivement cette demande de remboursement (${
+                                          receipt.merchantName || receipt.fileName
+                                        }) ?`
+                                      )
+                                    ) {
+                                      onDeleteReceipt(receipt.id);
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/50 text-[11px] transition-colors cursor-pointer"
+                                  title="Supprimer la demande de remboursement"
+                                >
+                                  <Trash2 size={12} /> Supprimer
+                                </button>
+                              )}
+                            </div>
                           </div>
                           {(receipt.description || receipt.comment) && (
                             <p
