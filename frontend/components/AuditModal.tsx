@@ -181,50 +181,166 @@ export const AuditModal: React.FC<AuditModalProps> = ({
 
     // --- LOGIQUE DE GÉNÉRATION DU RAPPORT DE CLÔTURE ---
 
-    // 1. Calcul du Bilan / Compte de Résultat (avec libellé parent > sous-compte sans répétition)
-    const getAccountDisplayLabel = (account?: Account) => {
-        if (!account) return 'Non catégorisé';
-        if (account.parentId) {
-            const parent = accounts.find(p => p.id === account.parentId);
-            if (parent) {
-                const parentLabelNorm = parent.label.trim().toLowerCase();
-                const childLabelNorm = account.label.trim().toLowerCase();
-                if (childLabelNorm.startsWith(parentLabelNorm)) {
-                    return account.label;
-                }
-                return `${parent.label} › ${account.label}`;
-            }
-        }
-        return account.label;
+    // 1. Calcul du Bilan / Compte de Résultat hiérarchique par Niveau 1 (comme dans le Tableau de Bord)
+    const isRootAccount = (a: Account): boolean => {
+        if (!a.parentId) return true;
+        const p = String(a.parentId).trim().toLowerCase();
+        if (p === '' || p === 'null' || p === 'undefined') return true;
+        return !accounts.some(parent => parent.id === a.parentId);
     };
 
-    const charges = activeTransactions
-        .filter(t => t.amount < 0)
-        .reduce((acc, t) => {
-            const account = accounts.find(a => a.id === t.accountId);
-            const code = account ? account.code : 'Inconnu';
-            const label = getAccountDisplayLabel(account);
+    const getAccountDisplayLabel = (account?: Account) => {
+        if (!account) return 'Non catégorisé';
+        const parts: string[] = [account.label];
+        let curr: Account | undefined = account;
+        for (let depth = 0; depth < 3; depth++) {
+            if (!curr?.parentId) break;
+            const parent = accounts.find(p => p.id === curr!.parentId);
+            if (!parent) break;
+            const parentNorm = parent.label.trim().toLowerCase();
+            const firstPartNorm = parts[0].trim().toLowerCase();
+            if (!firstPartNorm.startsWith(parentNorm)) {
+                parts.unshift(parent.label);
+            }
+            curr = parent;
+        }
+        return parts.join(' › ');
+    };
 
-            if (!acc[code]) acc[code] = { label, amount: 0 };
-            acc[code].amount += Math.abs(t.amount);
-            return acc;
-        }, {} as Record<string, { label: string; amount: number }>);
+    interface SubAccountRow {
+        id: string;
+        code: string;
+        label: string;
+        charges: number;
+        produits: number;
+        solde: number;
+    }
 
-    const produits = activeTransactions
-        .filter(t => t.amount > 0)
-        .reduce((acc, t) => {
-            const account = accounts.find(a => a.id === t.accountId);
-            const code = account ? account.code : 'Inconnu';
-            const label = getAccountDisplayLabel(account);
+    interface Level1GroupRow {
+        id: string;
+        code: string;
+        label: string;
+        charges: number;
+        produits: number;
+        solde: number;
+        subRows: SubAccountRow[];
+    }
 
-            if (!acc[code]) acc[code] = { label, amount: 0 };
-            acc[code].amount += t.amount;
-            return acc;
-        }, {} as Record<string, { label: string; amount: number }>);
+    // Somme directe par compte
+    const directTotalsByAccount = new Map<string, { charges: number; produits: number }>();
+    let uncategorizedCharges = 0;
+    let uncategorizedProduits = 0;
 
-    const totalCharges = Object.values(charges).reduce((sum, c) => sum + c.amount, 0);
-    const totalProduits = Object.values(produits).reduce((sum, p) => sum + p.amount, 0);
+    activeTransactions.forEach(t => {
+        const acc = t.accountId ? accounts.find(a => a.id === t.accountId) : undefined;
+        if (!acc) {
+            if (t.amount < 0) uncategorizedCharges += Math.abs(t.amount);
+            else if (t.amount > 0) uncategorizedProduits += t.amount;
+            return;
+        }
+        const curr = directTotalsByAccount.get(acc.id) || { charges: 0, produits: 0 };
+        if (t.amount < 0) curr.charges += Math.abs(t.amount);
+        else if (t.amount > 0) curr.produits += t.amount;
+        directTotalsByAccount.set(acc.id, curr);
+    });
+
+    const rootAccounts = accounts
+        .filter(a => isRootAccount(a))
+        .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+
+    const hierarchicalGroups: Level1GroupRow[] = [];
+
+    rootAccounts.forEach(root => {
+        const directRoot = directTotalsByAccount.get(root.id) || { charges: 0, produits: 0 };
+        const level2Children = accounts
+            .filter(a => a.parentId === root.id)
+            .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+
+        // Si le compte racine a uniquement des sous-comptes auto-générés (.1 / .2 MIXTE)
+        const onlyAutoChildren =
+            level2Children.length > 0 &&
+            level2Children.every(c => c.autoGenerated || /\.[12]$/.test(c.code.trim()));
+
+        const subRows: SubAccountRow[] = [];
+        let childrenCharges = 0;
+        let childrenProduits = 0;
+
+        level2Children.forEach(child => {
+            const directChild = directTotalsByAccount.get(child.id) || { charges: 0, produits: 0 };
+            // Récupérer les éventuels sous-comptes de niveau 3 (ex: 616.1 Participation & 616.2 Charges pour un compte MIXTE)
+            const level3Grandchildren = accounts.filter(gc => gc.parentId === child.id);
+            let gcCharges = 0;
+            let gcProduits = 0;
+            level3Grandchildren.forEach(gc => {
+                const d = directTotalsByAccount.get(gc.id) || { charges: 0, produits: 0 };
+                gcCharges += d.charges;
+                gcProduits += d.produits;
+            });
+
+            const cCharges = directChild.charges + gcCharges;
+            const cProduits = directChild.produits + gcProduits;
+
+            childrenCharges += cCharges;
+            childrenProduits += cProduits;
+
+            if (!onlyAutoChildren && (cCharges > 0 || cProduits > 0)) {
+                subRows.push({
+                    id: child.id,
+                    code: child.code,
+                    label: child.label,
+                    charges: cCharges,
+                    produits: cProduits,
+                    solde: cProduits - cCharges
+                });
+            }
+        });
+
+        const groupCharges = directRoot.charges + childrenCharges;
+        const groupProduits = directRoot.produits + childrenProduits;
+
+        if (groupCharges === 0 && groupProduits === 0) return;
+
+        // Si le compte Niv. 1 a à la fois des écritures directes ET des sous-comptes actifs,
+        // on affiche une ligne de détail pour les écritures directes afin que la somme des sous-lignes corresponde au total Niv. 1
+        if (subRows.length > 0 && (directRoot.charges > 0 || directRoot.produits > 0)) {
+            subRows.unshift({
+                id: `${root.id}-direct`,
+                code: root.code,
+                label: `${root.label} (général)`,
+                charges: directRoot.charges,
+                produits: directRoot.produits,
+                solde: directRoot.produits - directRoot.charges
+            });
+        }
+
+        hierarchicalGroups.push({
+            id: root.id,
+            code: root.code,
+            label: root.label,
+            charges: groupCharges,
+            produits: groupProduits,
+            solde: groupProduits - groupCharges,
+            subRows
+        });
+    });
+
+    if (uncategorizedCharges > 0 || uncategorizedProduits > 0) {
+        hierarchicalGroups.push({
+            id: 'uncategorized',
+            code: '—',
+            label: 'Non catégorisé',
+            charges: uncategorizedCharges,
+            produits: uncategorizedProduits,
+            solde: uncategorizedProduits - uncategorizedCharges,
+            subRows: []
+        });
+    }
+
+    const totalCharges = hierarchicalGroups.reduce((sum, g) => sum + g.charges, 0);
+    const totalProduits = hierarchicalGroups.reduce((sum, g) => sum + g.produits, 0);
     const resultat = totalProduits - totalCharges;
+
+    const formatChf = (val: number) => (val === 0 ? '—' : val.toFixed(2));
 
     // 2. Journal pour l'impression (Trié par date)
     const sortedTransactions = [...activeTransactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -332,91 +448,96 @@ export const AuditModal: React.FC<AuditModalProps> = ({
 
                         <div className="p-4 sm:p-8 max-w-4xl mx-auto print:p-0 print:max-w-none">
 
-                            {/* ==================== FEUILLE 1 : BILAN / CHARGES & PRODUITS ==================== */}
+                            {/* ==================== FEUILLE 1 : BILAN / CHARGES & PRODUITS (HIÉRARCHIQUE NIV 1) ==================== */}
                             <div className={`print-section mb-8 sm:mb-12 print:mb-0 ${printSection === 'JOURNAL' ? 'print:hidden' : 'print:block'}`}>
-                                <header className="text-center mb-8 border-b-2 border-slate-900 pb-6 print:mb-2.5 print:pb-2">
-                                    <div className="text-xs print:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1 print:mb-0">Feuille 1 / 2 — Compte de Résultat</div>
-                                    <h1 className="text-2xl sm:text-3xl print:text-lg font-bold uppercase tracking-wide mb-2 print:mb-0.5 print:leading-tight">
+                                <header className="text-center mb-6 border-b-2 border-slate-900 pb-4 print:mb-2 print:pb-1.5">
+                                    <div className="text-xs print:text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-0.5 print:mb-0">Feuille 1 / 2 — Compte de Résultat (Par Catégorie Niv. 1)</div>
+                                    <h1 className="text-2xl sm:text-3xl print:text-base font-bold uppercase tracking-wide mb-1 print:mb-0 print:leading-tight">
                                         Rapport de Clôture {selectedCompta?.name ? `— ${selectedCompta.name}` : ''}
                                     </h1>
-                                    <p className="text-slate-500 text-base sm:text-lg print:text-xs print:leading-tight">
+                                    <p className="text-slate-500 text-sm sm:text-base print:text-[10.5px] print:leading-tight">
                                         {selectedOrg?.name ? `${selectedOrg.name} • ` : ''}Exercice Comptable {new Date().getFullYear()} • Généré le {new Date().toLocaleDateString('fr-CH')}
                                     </p>
                                 </header>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 print:grid-cols-2 print:gap-5">
-                                    {/* CHARGES */}
-                                    <div>
-                                        <h3 className="text-xl print:text-sm font-bold border-b-2 border-rose-500 text-rose-700 mb-4 pb-2 print:mb-1.5 print:pb-1">CHARGES (Dépenses)</h3>
-                                        <table className="w-full text-sm print:text-[11px] print:leading-tight">
-                                            <thead>
-                                                <tr className="border-b border-slate-200 text-xs print:text-[10px] uppercase text-slate-400">
-                                                    <th className="py-1.5 print:py-0.5 text-left w-14">Code</th>
-                                                    <th className="py-1.5 print:py-0.5 text-left">Compte</th>
-                                                    <th className="py-1.5 print:py-0.5 text-right whitespace-nowrap">Montant (CHF)</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {Object.entries(charges)
-                                                    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-                                                    .map(([code, data]) => (
-                                                        <tr key={code} className="border-b border-slate-100">
-                                                            <td className="py-2 print:py-[2.5px] text-slate-500 font-mono text-xs print:text-[10px] pr-1">{code}</td>
-                                                            <td className="py-2 print:py-[2.5px] text-slate-700 pr-2">{data.label}</td>
-                                                            <td className="py-2 print:py-[2.5px] text-right font-mono font-medium whitespace-nowrap">{data.amount.toFixed(2)}</td>
-                                                        </tr>
-                                                    ))}
-                                                <tr className="bg-rose-50 font-bold text-rose-900 border-t-2 border-rose-200 print:text-xs">
-                                                    <td colSpan={2} className="py-3 px-2 print:py-1.5 print:px-1.5">TOTAL CHARGES</td>
-                                                    <td className="py-3 text-right px-2 print:py-1.5 print:px-1.5 font-mono whitespace-nowrap">{totalCharges.toFixed(2)}</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
+                                {/* TABLEAU HIÉRARCHIQUE NIV 1 (STYLE TABLEAU DE BORD) */}
+                                <div className="border border-slate-200 rounded-lg overflow-hidden print:border-slate-300 print:rounded-none">
+                                    <table className="w-full text-sm print:text-[10px] print:leading-tight border-collapse">
+                                        <thead>
+                                            <tr className="bg-slate-900 text-white print:bg-slate-100 print:text-slate-800 border-b-2 border-slate-300 text-xs print:text-[9.5px] uppercase tracking-wider font-bold">
+                                                <th className="py-2.5 px-3 print:py-1 print:px-1.5 text-left w-16">Code</th>
+                                                <th className="py-2.5 px-3 print:py-1 print:px-1.5 text-left">Structure (Niv. 1 & Sous-comptes)</th>
+                                                <th className="py-2.5 px-3 print:py-1 print:px-1.5 text-right text-rose-300 print:text-rose-700 whitespace-nowrap w-28">Charges (CHF)</th>
+                                                <th className="py-2.5 px-3 print:py-1 print:px-1.5 text-right text-emerald-300 print:text-emerald-700 whitespace-nowrap w-28">Produits (CHF)</th>
+                                                <th className="py-2.5 px-3 print:py-1 print:px-1.5 text-right whitespace-nowrap w-28">Solde (CHF)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {hierarchicalGroups.map(group => (
+                                                <React.Fragment key={group.id}>
+                                                    {/* Ligne Parent Niveau 1 */}
+                                                    <tr className="bg-slate-100/90 print:bg-slate-100/80 border-t border-slate-300 font-bold text-slate-900">
+                                                        <td className="py-2 px-3 print:py-[2px] print:px-1.5 font-mono text-xs print:text-[9.5px] text-slate-600">{group.code}</td>
+                                                        <td className="py-2 px-3 print:py-[2px] print:px-1.5">{group.label}</td>
+                                                        <td className="py-2 px-3 print:py-[2px] print:px-1.5 text-right font-mono text-rose-700 whitespace-nowrap">
+                                                            {formatChf(group.charges)}
+                                                        </td>
+                                                        <td className="py-2 px-3 print:py-[2px] print:px-1.5 text-right font-mono text-emerald-700 whitespace-nowrap">
+                                                            {formatChf(group.produits)}
+                                                        </td>
+                                                        <td className={`py-2 px-3 print:py-[2px] print:px-1.5 text-right font-mono whitespace-nowrap ${group.solde >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
+                                                            {group.solde > 0 ? `+${group.solde.toFixed(2)}` : group.solde.toFixed(2)}
+                                                        </td>
+                                                    </tr>
 
-                                    {/* PRODUITS */}
-                                    <div>
-                                        <h3 className="text-xl print:text-sm font-bold border-b-2 border-emerald-500 text-emerald-700 mb-4 pb-2 print:mb-1.5 print:pb-1">PRODUITS (Recettes)</h3>
-                                        <table className="w-full text-sm print:text-[11px] print:leading-tight">
-                                            <thead>
-                                                <tr className="border-b border-slate-200 text-xs print:text-[10px] uppercase text-slate-400">
-                                                    <th className="py-1.5 print:py-0.5 text-left w-14">Code</th>
-                                                    <th className="py-1.5 print:py-0.5 text-left">Compte</th>
-                                                    <th className="py-1.5 print:py-0.5 text-right whitespace-nowrap">Montant (CHF)</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {Object.entries(produits)
-                                                    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-                                                    .map(([code, data]) => (
-                                                        <tr key={code} className="border-b border-slate-100">
-                                                            <td className="py-2 print:py-[2.5px] text-slate-500 font-mono text-xs print:text-[10px] pr-1">{code}</td>
-                                                            <td className="py-2 print:py-[2.5px] text-slate-700 pr-2">{data.label}</td>
-                                                            <td className="py-2 print:py-[2.5px] text-right font-mono font-medium whitespace-nowrap">{data.amount.toFixed(2)}</td>
+                                                    {/* Sous-comptes rattachés au Niveau 1 */}
+                                                    {group.subRows.map(sub => (
+                                                        <tr key={sub.id} className="border-t border-slate-100 text-slate-600 hover:bg-slate-50/70">
+                                                            <td className="py-1.5 px-3 print:py-[1.5px] print:px-1.5 font-mono text-[11px] print:text-[9px] text-slate-400 pl-5 print:pl-3">{sub.code}</td>
+                                                            <td className="py-1.5 px-3 print:py-[1.5px] print:px-1.5 pl-6 print:pl-4 text-xs print:text-[9.5px]">
+                                                                <span className="text-slate-400 mr-1">↳</span>
+                                                                {sub.label}
+                                                            </td>
+                                                            <td className="py-1.5 px-3 print:py-[1.5px] print:px-1.5 text-right font-mono text-xs print:text-[9.5px] text-rose-600/90 whitespace-nowrap">
+                                                                {formatChf(sub.charges)}
+                                                            </td>
+                                                            <td className="py-1.5 px-3 print:py-[1.5px] print:px-1.5 text-right font-mono text-xs print:text-[9.5px] text-emerald-600/90 whitespace-nowrap">
+                                                                {formatChf(sub.produits)}
+                                                            </td>
+                                                            <td className={`py-1.5 px-3 print:py-[1.5px] print:px-1.5 text-right font-mono text-xs print:text-[9.5px] font-medium whitespace-nowrap ${sub.solde >= 0 ? 'text-blue-600/80' : 'text-orange-600/80'}`}>
+                                                                {sub.solde > 0 ? `+${sub.solde.toFixed(2)}` : sub.solde.toFixed(2)}
+                                                            </td>
                                                         </tr>
                                                     ))}
-                                                <tr className="bg-emerald-50 font-bold text-emerald-900 border-t-2 border-emerald-200 print:text-xs">
-                                                    <td colSpan={2} className="py-3 px-2 print:py-1.5 print:px-1.5">TOTAL PRODUITS</td>
-                                                    <td className="py-3 text-right px-2 print:py-1.5 print:px-1.5 font-mono whitespace-nowrap">{totalProduits.toFixed(2)}</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
+                                                </React.Fragment>
+                                            ))}
+                                        </tbody>
+                                        <tfoot>
+                                            <tr className="bg-slate-900 text-white print:bg-slate-200 print:text-slate-900 font-bold border-t-2 border-slate-900 text-sm print:text-[10.5px]">
+                                                <td colSpan={2} className="py-3 px-3 print:py-1.5 print:px-1.5 uppercase tracking-wider">Totaux de l'exercice</td>
+                                                <td className="py-3 px-3 print:py-1.5 print:px-1.5 text-right font-mono text-rose-300 print:text-rose-800 whitespace-nowrap">{totalCharges.toFixed(2)}</td>
+                                                <td className="py-3 px-3 print:py-1.5 print:px-1.5 text-right font-mono text-emerald-300 print:text-emerald-800 whitespace-nowrap">{totalProduits.toFixed(2)}</td>
+                                                <td className={`py-3 px-3 print:py-1.5 print:px-1.5 text-right font-mono whitespace-nowrap ${resultat >= 0 ? 'text-emerald-300 print:text-emerald-800' : 'text-rose-300 print:text-rose-800'}`}>
+                                                    {resultat >= 0 ? `+${resultat.toFixed(2)}` : resultat.toFixed(2)}
+                                                </td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
                                 </div>
 
                                 {/* RÉSULTAT & SYNTHÈSE DE TRÉSORERIE */}
-                                <div className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-2 gap-6 mt-8 print:gap-4 print:mt-3 print-avoid-break">
-                                    <div className={`p-6 print:p-2.5 rounded-lg text-center border-2 ${resultat >= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>
-                                        <h3 className="text-sm print:text-xs font-semibold uppercase mb-1 print:mb-0.5">Résultat de l'exercice</h3>
-                                        <div className="text-3xl print:text-xl font-bold font-mono print:leading-tight">
+                                <div className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-2 gap-6 mt-6 print:gap-3 print:mt-2 print-avoid-break">
+                                    <div className={`p-5 print:p-2 rounded-lg text-center border-2 ${resultat >= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>
+                                        <h3 className="text-sm print:text-[10px] font-semibold uppercase mb-1 print:mb-0">Résultat de l'exercice</h3>
+                                        <div className="text-3xl print:text-lg font-bold font-mono print:leading-tight">
                                             {resultat >= 0 ? '+' : ''}{resultat.toFixed(2)} CHF
                                         </div>
-                                        <p className="mt-1 print:mt-0.5 text-sm print:text-[11px] font-bold">{resultat >= 0 ? 'EXCÉDENT (BÉNÉFICE)' : 'DÉFICIT (PERTE)'}</p>
+                                        <p className="mt-1 print:mt-0 text-sm print:text-[10px] font-bold">{resultat >= 0 ? 'EXCÉDENT (BÉNÉFICE)' : 'DÉFICIT (PERTE)'}</p>
                                     </div>
 
-                                    <div className="p-6 print:p-2.5 rounded-lg border-2 border-slate-200 bg-slate-50 text-slate-800 flex flex-col justify-center">
-                                        <h3 className="text-sm print:text-xs font-semibold uppercase text-slate-500 mb-2 print:mb-1">Synthèse de Trésorerie</h3>
-                                        <div className="space-y-1 print:space-y-0.5 text-sm print:text-xs">
+                                    <div className="p-5 print:p-2 rounded-lg border-2 border-slate-200 bg-slate-50 text-slate-800 flex flex-col justify-center">
+                                        <h3 className="text-sm print:text-[10px] font-semibold uppercase text-slate-500 mb-2 print:mb-0.5">Synthèse de Trésorerie</h3>
+                                        <div className="space-y-1 print:space-y-0 text-sm print:text-[10.5px] print:leading-snug">
                                             <div className="flex justify-between">
                                                 <span className="text-slate-600">Solde d'ouverture :</span>
                                                 <span className="font-mono font-medium">{openingBankBalance.toFixed(2)} CHF</span>
@@ -425,7 +546,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                                                 <span className="text-slate-600">Variation de la période :</span>
                                                 <span className="font-mono font-medium">{resultat >= 0 ? '+' : ''}{resultat.toFixed(2)} CHF</span>
                                             </div>
-                                            <div className="flex justify-between pt-1.5 print:pt-1 border-t border-slate-300 font-bold text-base print:text-xs">
+                                            <div className="flex justify-between pt-1.5 print:pt-0.5 border-t border-slate-300 font-bold text-base print:text-[11px]">
                                                 <span>Solde final de clôture :</span>
                                                 <span className="font-mono">{calculatedClosingBalance.toFixed(2)} CHF</span>
                                             </div>
