@@ -13,14 +13,16 @@ except ImportError:
 import operator
 from typing import List, Optional, Dict, Any, Annotated
 from datetime import datetime
+import smtplib
+from email.message import EmailMessage
 
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 # Firebase Admin (Server Side)
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, auth as firebase_auth
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 # LangChain / LangGraph
@@ -1589,3 +1591,91 @@ async def audit_ledger_endpoint(request: AuditRequest):
     except Exception as e:
         print(f"Audit Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class SendEmailRequest(BaseModel):
+    to: List[str]
+    subject: str
+    text: Optional[str] = ""
+    html: Optional[str] = None
+    from_name: Optional[str] = None
+    reply_to: Optional[str] = None
+
+
+def _send_smtp_email_sync(
+    smtp_user: str,
+    smtp_pass: str,
+    from_name: str,
+    recipients: List[str],
+    subject: str,
+    text: str,
+    html: Optional[str],
+    reply_to: Optional[str],
+) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = f"{from_name} <{smtp_user}>"
+    msg["To"] = ", ".join(recipients)
+    if reply_to and "@" in reply_to:
+        msg["Reply-To"] = reply_to.strip()
+
+    msg.set_content(text or "")
+    if html:
+        msg.add_alternative(html, subtype="html")
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as server:
+        server.login(smtp_user, smtp_pass)
+        server.send_message(msg)
+
+
+@app.post("/api/send-email")
+async def send_email_endpoint(
+    request: SendEmailRequest,
+    authorization: Optional[str] = Header(default=None),
+    x_mailer_secret: Optional[str] = Header(default=None),
+):
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_pass = os.getenv("SMTP_PASS", "").strip()
+    if not smtp_user or not smtp_pass:
+        raise HTTPException(status_code=500, detail="SMTP credentials not configured on server.")
+
+    # Verify caller: either valid Firebase ID Token or matching X-Mailer-Secret
+    authorized = False
+    if x_mailer_secret and x_mailer_secret == smtp_pass:
+        authorized = True
+    elif authorization and authorization.startswith("Bearer "):
+        token = authorization.split("Bearer ", 1)[1].strip()
+        if token and firebase_admin._apps:
+            try:
+                firebase_auth.verify_id_token(token)
+                authorized = True
+            except Exception as auth_err:
+                print(f"Firebase token verification failed: {auth_err}")
+
+    if not authorized:
+        raise HTTPException(status_code=401, detail="Unauthorized email dispatch request.")
+
+    clean_recipients = [
+        r.strip() for r in (request.to or []) if isinstance(r, str) and "@" in r and "." in r
+    ]
+    if not clean_recipients:
+        raise HTTPException(status_code=400, detail="No valid recipient email addresses provided.")
+
+    from_name = (request.from_name or os.getenv("SMTP_FROM_NAME", "AssoCompta (Ne pas répondre)")).strip()
+
+    try:
+        await asyncio.to_thread(
+            _send_smtp_email_sync,
+            smtp_user,
+            smtp_pass,
+            from_name,
+            clean_recipients,
+            request.subject,
+            request.text or "",
+            request.html,
+            request.reply_to,
+        )
+        return {"status": "sent", "to": clean_recipients, "from": smtp_user}
+    except Exception as e:
+        print(f"SMTP send failed: {e}")
+        raise HTTPException(status_code=500, detail=f"SMTP send failed: {e}")

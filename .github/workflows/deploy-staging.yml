@@ -83,6 +83,8 @@ jobs:
             GEMINI_PRO_MODEL=gemini-3-pro-preview
             USE_VERTEX_AI=true
             GOOGLE_GENAI_USE_VERTEXAI=true
+            SMTP_USER=${{ secrets.SMTP_USER }}
+            SMTP_PASS=${{ secrets.SMTP_PASS }}
 
       - id: 'get-url'
         name: 'Get Service URL'

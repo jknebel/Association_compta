@@ -1,4 +1,5 @@
 import { collection, addDoc, doc, getDoc, getDocs, setDoc, updateDoc, getFirestore } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { app } from './dataService';
 import type { Rental, Receipt } from '../../types';
 
@@ -7,6 +8,89 @@ const getDb = () => {
     return getFirestore(app);
   }
   return null;
+};
+
+const getBackendUrl = (): string => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    return 'http://localhost:8000';
+  }
+  return 'https://assocompta-backend-vkiznjrvtq-ew.a.run.app';
+};
+
+const dispatchEmail = async (params: {
+  to: string[];
+  subject: string;
+  text: string;
+  html: string;
+  fromName?: string;
+}): Promise<boolean> => {
+  const db = getDb();
+  let sentViaBackend = false;
+  let errorMsg: string | null = null;
+
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (app) {
+      const currentUser = getAuth(app).currentUser;
+      if (currentUser) {
+        const token = await currentUser.getIdToken();
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+      }
+    }
+
+    const res = await fetch(`${getBackendUrl()}/api/send-email`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        to: params.to,
+        subject: params.subject,
+        text: params.text,
+        html: params.html,
+        from_name: params.fromName || 'AssoCompta (Ne pas répondre)',
+      }),
+    });
+
+    if (res.ok) {
+      sentViaBackend = true;
+    } else {
+      errorMsg = `HTTP ${res.status}: ${await res.text()}`;
+      console.warn('Backend email dispatch failed:', errorMsg);
+    }
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : String(err);
+    console.warn('Backend email dispatch error:', errorMsg);
+  }
+
+  if (db) {
+    try {
+      await addDoc(collection(db, 'mail'), {
+        to: params.to,
+        from: `${params.fromName || 'AssoCompta (Ne pas répondre)'} <assocompta.app@gmail.com>`,
+        message: {
+          subject: params.subject,
+          text: params.text,
+          html: params.html,
+        },
+        delivery: {
+          state: sentViaBackend ? 'SUCCESS' : 'ERROR',
+          error: errorMsg,
+          endTime: new Date().toISOString(),
+        },
+        createdAt: new Date().toISOString(),
+      });
+    } catch (logErr) {
+      console.warn('Impossible de journaliser le mail dans Firestore:', logErr);
+    }
+  }
+
+  return sentViaBackend;
 };
 
 export interface NotificationLog {
@@ -63,15 +147,12 @@ export const notifyRentalManagerOnVisa = async (
 
   if (db) {
     try {
-      // 1. File d'attente d'envoi d'e-mails (Firebase Trigger Email)
-      await addDoc(collection(db, 'mail'), {
+      // 1. Envoi réel de l'e-mail (via backend SMTP noreply) + journalisation Firestore
+      const emailSent = await dispatchEmail({
         to: [recipientEmail],
-        message: {
-          subject,
-          text: textBody,
-          html: htmlBody,
-        },
-        createdAt: new Date().toISOString(),
+        subject,
+        text: textBody,
+        html: htmlBody,
       });
 
       // 2. Journaliser la notification
@@ -84,6 +165,7 @@ export const notifyRentalManagerOnVisa = async (
         roomName: rental.roomName,
         amount: rental.amount,
         subject,
+        status: emailSent ? 'SENT' : 'LOGGED',
         sentAt: new Date().toISOString(),
       });
 
@@ -150,15 +232,12 @@ export const checkAndAlertCaissierPendingRentals5Days = async (
       `;
 
       try {
-        // Envoi dans la file d'attente d'e-mails
-        await addDoc(collection(db, 'mail'), {
+        // Envoi réel de l'e-mail (via backend SMTP noreply) + journalisation Firestore
+        const emailSent = await dispatchEmail({
           to: [caissierEmail],
-          message: {
-            subject,
-            text: textBody,
-            html: htmlBody,
-          },
-          createdAt: new Date().toISOString(),
+          subject,
+          text: textBody,
+          html: htmlBody,
         });
 
         // Journaliser la notification
@@ -170,6 +249,7 @@ export const checkAndAlertCaissierPendingRentals5Days = async (
           roomName: r.roomName,
           amount: r.amount,
           subject,
+          status: emailSent ? 'SENT' : 'LOGGED',
           sentAt: new Date().toISOString(),
         });
 
@@ -367,14 +447,11 @@ export const sendReimbursementSynthesisEmail = async (
     </div>
   `;
 
-  await addDoc(collection(db, 'mail'), {
+  const emailSent = await dispatchEmail({
     to: recipients,
-    message: {
-      subject,
-      text: textBody,
-      html: htmlBody,
-    },
-    createdAt: new Date().toISOString(),
+    subject,
+    text: textBody,
+    html: htmlBody,
   });
 
   const weekKey = getIsoWeekKey(new Date());
@@ -397,10 +474,11 @@ export const sendReimbursementSynthesisEmail = async (
     totalAmount,
     weekKey,
     subject,
+    status: emailSent ? 'SENT' : 'LOGGED',
     sentAt: new Date().toISOString(),
   });
 
-  return { sent: true, recipients, count: pending.length, totalAmount };
+  return { sent: emailSent, recipients, count: pending.length, totalAmount };
 };
 
 /**
@@ -516,14 +594,11 @@ export const notifyMemberOnReimbursementDone = async (
 
   if (db) {
     try {
-      await addDoc(collection(db, 'mail'), {
+      const emailSent = await dispatchEmail({
         to: [recipientEmail],
-        message: {
-          subject,
-          text: textBody,
-          html: htmlBody,
-        },
-        createdAt: new Date().toISOString(),
+        subject,
+        text: textBody,
+        html: htmlBody,
       });
 
       await addDoc(collection(db, 'organizations', orgId, 'comptabilites', comptaId, 'notifications'), {
@@ -533,10 +608,11 @@ export const notifyMemberOnReimbursementDone = async (
         receiptId: receipt.id,
         amount,
         subject,
+        status: emailSent ? 'SENT' : 'LOGGED',
         sentAt: new Date().toISOString(),
       });
 
-      return true;
+      return emailSent;
     } catch (err) {
       console.warn('Erreur lors de l’envoi de l’e-mail de confirmation de remboursement :', err);
     }

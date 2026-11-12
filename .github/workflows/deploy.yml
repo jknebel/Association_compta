@@ -119,6 +119,8 @@ jobs:
             GEMINI_PRO_MODEL=gemini-3.1-pro-preview
             USE_VERTEX_AI=true
             GOOGLE_GENAI_USE_VERTEXAI=true
+            SMTP_USER=${{ secrets.SMTP_USER }}
+            SMTP_PASS=${{ secrets.SMTP_PASS }}
 
       # ALWAYS GET URL (Even if we didn't deploy, we need the URL for frontend)
       - id: 'get-url'
