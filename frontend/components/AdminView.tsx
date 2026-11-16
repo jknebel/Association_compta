@@ -1020,8 +1020,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                         const isUploader = isUploaderRole(r);
                                                         const isRentalMgr = isResponsableLocationRole(r);
                                                         return (
+                                                            <React.Fragment key={cId}>
                                                             <span
-                                                                key={cId}
                                                                 className={`text-xs px-2 py-0.5 rounded border inline-flex items-center gap-1 ${
                                                                     isCaissier
                                                                         ? 'bg-emerald-950/50 border-emerald-800/60 text-emerald-300'
@@ -1038,6 +1038,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                                 <strong className="font-semibold">{cName}:</strong>
                                                                 <span>{getComptaRoleLabel(r)}</span>
                                                             </span>
+                                                            {!isUploader && (
+                                                                <span title="Droit hérité automatiquement sur l'application mobile" className="text-xs px-2 py-0.5 rounded border inline-flex items-center gap-1 bg-cyan-950/50 border-cyan-800/60 text-cyan-300">
+                                                                    <Camera size={10} />
+                                                                    <strong className="font-semibold">{cName}:</strong>
+                                                                    <span>Déposant Factures</span>
+                                                                </span>
+                                                            )}
+                                                            </React.Fragment>
                                                         );
                                                     })
                                                 )}
