@@ -12,21 +12,15 @@ service cloud.firestore {
       return request.auth.uid == userId;
     }
 
-    // ------------------------------------------------------------------
-    // SEC-01 : Rôle "uploader" (Déposant de factures - App Mobile)
-    // Un utilisateur dont le rôle sur une comptabilité est "uploader" peut
-    // CRÉER des justificatifs (et relire uniquement ses propres envois) mais
-    // ne peut ni modifier ni supprimer les écritures, comptes, paramètres ou
-    // membres de cette comptabilité.
-    // Le rôle est lu dans :
-    //   - organizations/{orgId}/comptabilites/{comptaId}/members/{uid}.role
-    //   - organizations/{orgId}/members/{uid | email}.comptaAccess[comptaId]
-    // Si l'une de ces sources indique "uploader", les restrictions s'appliquent
-    // (sauf pour un admin d'organisation ou un super-admin).
-    // ------------------------------------------------------------------
-
     function authEmail() {
       return ('email' in request.auth.token) ? request.auth.token.email.lower() : '';
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.get('superAdmin', false) == true
+        || authEmail() in ['jean.francois.knebel@gmail.com', 'jean-francois@knebel.ch']
+      );
     }
 
     function normRole(value) {
@@ -41,8 +35,12 @@ service cloud.firestore {
       return /databases/$(database)/documents/organizations/$(orgId)/members/$(authEmail());
     }
 
+    function comptaMemberPath(orgId, comptaId) {
+      return /databases/$(database)/documents/organizations/$(orgId)/comptabilites/$(comptaId)/members/$(request.auth.uid);
+    }
+
     function comptaSubRole(orgId, comptaId) {
-      let path = /databases/$(database)/documents/organizations/$(orgId)/comptabilites/$(comptaId)/members/$(request.auth.uid);
+      let path = comptaMemberPath(orgId, comptaId);
       return exists(path) ? normRole(get(path).data.get('role', '')) : '';
     }
 
@@ -59,9 +57,24 @@ service cloud.firestore {
       return exists(path) ? normRole(get(path).data.get('role', '')) : '';
     }
 
+    function hasAnyOrgComptaAccess(path) {
+      return exists(path)
+        && get(path).data.get('status', 'approved') != 'rejected'
+        && comptaAccessOf(get(path).data).size() > 0;
+    }
+
     function isOrgAdmin(orgId) {
-      return orgMemberOrgRole(orgMemberPathByUid(orgId)) == 'admin'
+      return isSuperAdmin()
+        || orgMemberOrgRole(orgMemberPathByUid(orgId)) == 'admin'
         || (authEmail() != '' && orgMemberOrgRole(orgMemberPathByEmail(orgId)) == 'admin');
+    }
+
+    // Vérifie que l'utilisateur possède au moins un rôle actif dans l'organisation ou la comptabilité
+    function hasAnyRoleInOrgOrCompta(orgId, comptaId) {
+      return isOrgAdmin(orgId)
+        || exists(comptaMemberPath(orgId, comptaId))
+        || hasAnyOrgComptaAccess(orgMemberPathByUid(orgId))
+        || (authEmail() != '' && hasAnyOrgComptaAccess(orgMemberPathByEmail(orgId)));
     }
 
     function hasUploaderRole(orgId, comptaId) {
@@ -73,16 +86,40 @@ service cloud.firestore {
     // true si l'utilisateur est "uploader" sur cette comptabilité et n'a aucun rôle supérieur
     function isUploaderOnly(orgId, comptaId) {
       return isAuthenticated()
-        && request.auth.token.get('superAdmin', false) != true
+        && !isSuperAdmin()
         && hasUploaderRole(orgId, comptaId)
         && !isOrgAdmin(orgId);
     }
 
+    // Un utilisateur avec rôle supérieur à "uploader" (caissier, comptable, vérificateur, viewer, admin)
+    function hasFullComptaRole(orgId, comptaId) {
+      return isAuthenticated()
+        && hasAnyRoleInOrgOrCompta(orgId, comptaId)
+        && !isUploaderOnly(orgId, comptaId);
+    }
+
     // Un uploader ne peut pas modifier son propre profil membre (anti-élévation de privilèges)
     function isRestrictedSelfMember(memberId) {
-      return (memberId == request.auth.uid || (authEmail() != '' && memberId == authEmail()))
+      return !isSuperAdmin()
+        && (memberId == request.auth.uid || (authEmail() != '' && memberId == authEmail()))
         && resource.data.get('role', '') != 'admin'
         && comptaAccessOf(resource.data).values().hasAny(['uploader']);
+    }
+
+    // Demande d'adhésion initiale par un nouvel inscrit (uniquement pour soi-même, sans rôle admin ni accès compta)
+    function isSafeSelfJoinRequest(memberId) {
+      let data = request.resource.data;
+      return memberId == request.auth.uid
+        && normRole(data.get('role', 'member')) != 'admin'
+        && comptaAccessOf(data).size() == 0;
+    }
+
+    // Mise à jour de son propre profil membre sans modifier son rôle ni ses accès comptables
+    function isSafeSelfMemberUpdate(memberId) {
+      return (memberId == request.auth.uid || (authEmail() != '' && memberId == authEmail()))
+        && !isRestrictedSelfMember(memberId)
+        && request.resource.data.get('role', null) == resource.data.get('role', null)
+        && comptaAccessOf(request.resource.data) == comptaAccessOf(resource.data);
     }
 
     // Contraintes sur un justificatif créé par un uploader : rattaché à son auteur, jamais pré-traité
@@ -113,11 +150,24 @@ service cloud.firestore {
     // Phase 2 : Organisations
     match /organizations/{orgId} {
       allow read: if true;
-      allow write: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isOrgAdmin(orgId)
+        || hasAnyOrgComptaAccess(orgMemberPathByUid(orgId))
+        || (authEmail() != '' && hasAnyOrgComptaAccess(orgMemberPathByEmail(orgId)))
+      );
 
       match /members/{memberId} {
-        allow read, create: if isAuthenticated();
-        allow update, delete: if isAuthenticated() && !isRestrictedSelfMember(memberId);
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && (
+          isOrgAdmin(orgId)
+          || isSafeSelfJoinRequest(memberId)
+          || hasAnyOrgComptaAccess(orgMemberPathByUid(orgId))
+        );
+        allow update: if isAuthenticated() && (
+          isOrgAdmin(orgId)
+          || isSafeSelfMemberUpdate(memberId)
+        );
+        allow delete: if isAuthenticated() && isOrgAdmin(orgId);
       }
 
       match /invitations/{inviteId} {
@@ -125,39 +175,51 @@ service cloud.firestore {
       }
 
       match /comptabilites/{comptaId} {
-        allow read, create: if isAuthenticated();
-        allow update, delete: if isAuthenticated() && !isUploaderOnly(orgId, comptaId);
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && (
+          isOrgAdmin(orgId)
+          || hasAnyOrgComptaAccess(orgMemberPathByUid(orgId))
+          || (authEmail() != '' && hasAnyOrgComptaAccess(orgMemberPathByEmail(orgId)))
+        );
+        allow update, delete: if hasFullComptaRole(orgId, comptaId);
 
         // Sous-collections génériques (accounts, transactions, settings, categories...)
+        // Un "uploader" ne peut PAS lire les écritures bancaires ("transactions"), et un inscrit sans rôle ne peut rien lire ni écrire.
         match /{sub}/{docId=**} {
-          allow read: if isAuthenticated() && sub != 'receipts';
-          allow write: if isAuthenticated()
+          allow read: if isAuthenticated()
             && sub != 'receipts'
+            && hasAnyRoleInOrgOrCompta(orgId, comptaId)
+            && (sub != 'transactions' || !isUploaderOnly(orgId, comptaId));
+          allow write: if sub != 'receipts'
             && sub != 'members'
-            && !isUploaderOnly(orgId, comptaId);
+            && hasFullComptaRole(orgId, comptaId);
         }
 
-        // Membres de la comptabilité (rôles) : un uploader ne peut pas s'auto-promouvoir
+        // Membres de la comptabilité (rôles) : un uploader ou sans-rôle ne peut pas s'auto-promouvoir
         match /members/{memberUid} {
           allow read: if isAuthenticated();
-          allow write: if isAuthenticated() && !isUploaderOnly(orgId, comptaId);
+          allow write: if hasFullComptaRole(orgId, comptaId);
         }
 
         // Locations de locaux (responsable des locations, caissier, admin)
         match /rentals/{rentalId} {
-          allow read, write: if isAuthenticated();
+          allow read, write: if isAuthenticated() && hasAnyRoleInOrgOrCompta(orgId, comptaId);
         }
 
-        // Justificatifs : un uploader crée et relit uniquement ses propres envois
+        // Justificatifs : un uploader crée et relit uniquement ses propres envois ; aucun accès pour les inscrits sans rôle
         match /receipts/{receiptId} {
-          allow read: if isAuthenticated() && (
-            !isUploaderOnly(orgId, comptaId) ||
-            resource.data.get('submittedByUid', '') == request.auth.uid
-          );
-          allow create: if isAuthenticated() && (
-            !isUploaderOnly(orgId, comptaId) || isValidUploaderReceipt()
-          );
-          allow update, delete: if isAuthenticated() && !isUploaderOnly(orgId, comptaId);
+          allow read: if isAuthenticated()
+            && hasAnyRoleInOrgOrCompta(orgId, comptaId)
+            && (
+              !isUploaderOnly(orgId, comptaId) ||
+              resource.data.get('submittedByUid', '') == request.auth.uid
+            );
+          allow create: if isAuthenticated()
+            && hasAnyRoleInOrgOrCompta(orgId, comptaId)
+            && (
+              !isUploaderOnly(orgId, comptaId) || isValidUploaderReceipt()
+            );
+          allow update, delete: if hasFullComptaRole(orgId, comptaId);
         }
       }
     }
@@ -170,7 +232,7 @@ service cloud.firestore {
       allow read: if isAuthenticated();
     }
 
-    // File d'attente d'envoi d'e-mails ( locations, rappels 5j, synthèse remboursements vendredi 12h )
+    // File d'attente d'envoi d'e-mails (locations, rappels 5j, synthèse remboursements vendredi 12h)
     match /mail/{mailId} {
       allow create, read: if isAuthenticated();
     }

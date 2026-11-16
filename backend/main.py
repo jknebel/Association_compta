@@ -58,7 +58,16 @@ app = FastAPI(title="AssoCompta AI Backend")
 # Allow CORS for local dev and potential production domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:8080", "*"], # Adjust "*" for strict prod security later
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "https://compta-ai.web.app",
+        "https://compta-ai.firebaseapp.com",
+        "https://compta-ai-v2.web.app",
+        "https://compta-ai-v2.firebaseapp.com",
+        "https://justificatifs-tdgl.web.app",
+        "https://justificatifs-tdgl.firebaseapp.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
