@@ -116,6 +116,7 @@ class AnalyzeReceiptRequest(BaseModel):
 class AnalyzeReceiptResponse(BaseModel):
     date: Optional[str] = None
     amount: Optional[float] = None
+    merchantName: Optional[str] = None
 
 class ChatMessage(BaseModel):
     role: str
@@ -1369,6 +1370,7 @@ async def analyze_receipt(request: AnalyzeReceiptRequest):
         Extract:
         1. The date of the transaction (Format YYYY-MM-DD).
         2. The TOTAL amount (Float).
+        3. The merchant, store, or vendor name (e.g. 'Migros', 'Coop', 'CFF', 'Swisscom').
         
         If you cannot find one of them, return null for that field.
         """
