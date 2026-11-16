@@ -16,7 +16,7 @@ from datetime import datetime
 import smtplib
 from email.message import EmailMessage
 
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Header
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -1135,11 +1135,115 @@ compiled_app = workflow.compile()
 
 # --- ENDPOINTS ---
 
+import time as _time
+
+_SUPER_ADMIN_EMAILS = {
+    "jean.francois.knebel@gmail.com",
+    "jean-francois@knebel.ch",
+}
+_VALID_ROLES = {
+    "admin",
+    "caissier",
+    "comptable",
+    "verificateur",
+    "viewer",
+    "uploader",
+    "responsable_location",
+    "location",
+}
+_ROLE_CACHE: Dict[str, tuple] = {}  # uid -> (has_role: bool, expires_at: float)
+_ROLE_CACHE_TTL_SEC = 60.0
+
+def _is_valid_role(raw_role: Any) -> bool:
+    return isinstance(raw_role, str) and raw_role.strip().lower() in _VALID_ROLES
+
+def _user_has_any_role(uid: str, email: str) -> bool:
+    norm_email = (email or "").strip().lower()
+    if norm_email in _SUPER_ADMIN_EMAILS:
+        return True
+    if not db:
+        return False
+
+    now = _time.time()
+    cached = _ROLE_CACHE.get(uid)
+    if cached and cached[1] > now:
+        return cached[0]
+
+    has_role = False
+    try:
+        # 1. Check if user is admin/creator of any organization
+        for org_doc in db.collection("organizations").stream():
+            org_data = org_doc.to_dict() or {}
+            org_admin_email = (org_data.get("adminEmail") or "").strip().lower()
+            if (
+                org_data.get("createdBy") == uid
+                or org_data.get("adminUid") == uid
+                or (norm_email and org_admin_email == norm_email)
+            ):
+                has_role = True
+                break
+
+        # 2. Check organization members and direct comptabilité members via collection_group("members")
+        if not has_role:
+            for m_doc in db.collection_group("members").stream():
+                m_data = m_doc.to_dict() or {}
+                m_email = (m_data.get("email") or "").strip().lower()
+                m_id_lower = m_doc.id.strip().lower()
+                matches = (
+                    m_doc.id == uid
+                    or m_data.get("uid") == uid
+                    or (norm_email and (m_email == norm_email or m_id_lower == norm_email))
+                )
+                if not matches:
+                    continue
+                if (m_data.get("status") or "").strip().lower() == "rejected":
+                    continue
+
+                if _is_valid_role(m_data.get("role")):
+                    has_role = True
+                    break
+
+                compta_access = m_data.get("comptaAccess")
+                if isinstance(compta_access, dict) and any(_is_valid_role(v) for v in compta_access.values()):
+                    has_role = True
+                    break
+    except Exception as role_err:
+        print(f"Role lookup failed for uid={uid}: {role_err}")
+        has_role = False
+
+    if has_role:
+        _ROLE_CACHE[uid] = (True, now + _ROLE_CACHE_TTL_SEC)
+    return has_role
+
+async def verify_firebase_token(authorization: Optional[str] = Header(default=None)):
+    """Verifies the Firebase ID Token and ensures the user has at least one active role."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split("Bearer ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Empty Bearer token.")
+    if not firebase_admin._apps:
+        raise HTTPException(status_code=500, detail="Firebase Admin not initialized on server.")
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+    except Exception as auth_err:
+        print(f"Firebase token verification failed: {auth_err}")
+        raise HTTPException(status_code=401, detail="Invalid or expired Firebase ID token.")
+
+    uid = decoded.get("uid") or ""
+    email = decoded.get("email") or ""
+    if not _user_has_any_role(uid, email):
+        raise HTTPException(
+            status_code=403,
+            detail="Aucun role attribue. Demandez a un administrateur de vous activer l'acces."
+        )
+    return decoded
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "AssoCompta Backend"}
 
-@app.post("/process-bank-statement")
+@app.post("/process-bank-statement", dependencies=[Depends(verify_firebase_token)])
 async def process_statement(
     file: UploadFile = File(...),
     accounts: str = Form(...),
@@ -1196,7 +1300,7 @@ async def process_statement(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/process-receipt")
+@app.post("/process-receipt", dependencies=[Depends(verify_firebase_token)])
 async def process_receipt(
     file: UploadFile = File(...),
     transactions: str = Form(...) 
@@ -1359,7 +1463,7 @@ async def process_receipt(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/analyze-receipt")
+@app.post("/analyze-receipt", dependencies=[Depends(verify_firebase_token)])
 async def analyze_receipt(request: AnalyzeReceiptRequest):
     try:
         flash_llm = get_llm()
@@ -1391,7 +1495,7 @@ async def analyze_receipt(request: AnalyzeReceiptRequest):
         print(f"Receipt Analysis Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/chat")
+@app.post("/chat", dependencies=[Depends(verify_firebase_token)])
 async def chat_agent(request: ChatRequest):
     try:
         # Prepare Context
@@ -1447,7 +1551,7 @@ async def chat_agent(request: ChatRequest):
         print(f"Chat Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/suggest-category")
+@app.post("/suggest-category", dependencies=[Depends(verify_firebase_token)])
 async def suggest_category(request: SuggestCategoryRequest):
     try:
         print("--- [Agent: SUGGEST_CATEGORY][INPUT_START] ---")
@@ -1536,7 +1640,7 @@ class AuditRequest(BaseModel):
     transactions: List[Transaction]
     accounts: List[Account]
 
-@app.post("/audit")
+@app.post("/audit", dependencies=[Depends(verify_firebase_token)])
 async def audit_ledger_endpoint(request: AuditRequest):
     try:
         # Pre-calc totals
