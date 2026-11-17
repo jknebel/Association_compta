@@ -12,7 +12,8 @@ import {
     setMemberComptaAccess,
     setSingleComptaMemberAccess,
     listOrganizationMembers,
-    removeOrganizationMember
+    removeOrganizationMember,
+    parseComptaDisplay
 } from '../services/organizationService';
 import { listAllRegisteredUsers } from '../services/userService';
 import {
@@ -1009,12 +1010,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                     <span className="text-xs bg-purple-950/60 border border-purple-800/60 text-purple-300 px-2.5 py-0.5 rounded">
                                                         Accès Admin à toutes les comptabilités
                                                     </span>
-                                                ) : accessEntries.length === 0 ? (
-                                                    <span className="text-xs text-slate-500 italic">Aucune comptabilité assignée</span>
-                                                ) : (
-                                                    accessEntries.map(([cId, r]) => {
-                                                        const comptaObj = comptas.find(c => c.id === cId);
-                                                        const cName = comptaObj ? comptaObj.name : cId;
+                                                ) : (() => {
+                                                    const validAccessEntries = accessEntries.filter(([cId]) => comptas.some(c => c.id === cId));
+                                                    if (validAccessEntries.length === 0) {
+                                                        return <span className="text-xs text-slate-500 italic">Aucune comptabilité assignée</span>;
+                                                    }
+                                                    return validAccessEntries.map(([cId, r]) => {
+                                                        const comptaObj = comptas.find(c => c.id === cId)!;
+                                                        const cName = parseComptaDisplay(comptaObj).baseName || comptaObj.name;
                                                         const isCaissier = isCaissierRole(r);
                                                         const isVerif = isVerificateurRole(r);
                                                         const isUploader = isUploaderRole(r);
@@ -1047,8 +1050,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                             )}
                                                             </React.Fragment>
                                                         );
-                                                    })
-                                                )}
+                                                    });
+                                                })()}
                                             </div>
 
                                             {/* Colonne Droite : Actions compactes (Donner Admin réservé à l'Admin, min 1 / max 2 + Modifier + Supprimer) */}
@@ -1307,7 +1310,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                     <div className="min-w-0 flex-1">
                                                         <div className="flex items-center gap-1.5">
                                                             <span className={`text-xs font-semibold truncate ${c.isArchived ? 'text-slate-400 line-through' : 'text-white'}`}>
-                                                                {c.name}
+                                                                {parseComptaDisplay(c).baseName || c.name}
                                                             </span>
                                                             {isGroupeCompta && !c.isArchived && (
                                                                 <span className="text-[9px] uppercase bg-indigo-900/50 text-indigo-300 border border-indigo-700/50 px-1 rounded shrink-0" title="Comptabilité de Groupe (inclut les locations de locaux)">

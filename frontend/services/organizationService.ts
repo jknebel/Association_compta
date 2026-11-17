@@ -1,4 +1,4 @@
-import { collection, collectionGroup, doc, setDoc, getDoc, updateDoc, deleteDoc, getDocs, query, where, writeBatch, runTransaction } from 'firebase/firestore';
+import { collection, collectionGroup, doc, setDoc, getDoc, updateDoc, deleteDoc, deleteField, getDocs, query, where, writeBatch, runTransaction } from 'firebase/firestore';
 import { getFirestore } from 'firebase/firestore';
 import { app } from './dataService';
 import { Organization, Comptabilite, CustomField, Invitation, OrgRole, ComptaRole, OrganizationMember } from '../types/rbac';
@@ -613,6 +613,25 @@ export const deleteComptabilite = async (orgId: string, comptaId: string): Promi
     await deleteSubcollection('transactions');
     await deleteSubcollection('categories');
     await deleteSubcollection('members');
+    await deleteSubcollection('receipts');
+    await deleteSubcollection('rentals');
+    await deleteSubcollection('settings');
+
+    // Clean up stale comptaAccess entries on organization members
+    try {
+        const orgMembersSnap = await getDocs(collection(db, 'organizations', orgId, 'members'));
+        const cleanupPromises = orgMembersSnap.docs
+            .filter(d => {
+                const access = d.data()?.comptaAccess;
+                return access && typeof access === 'object' && comptaId in access;
+            })
+            .map(d => updateDoc(d.ref, { [`comptaAccess.${comptaId}`]: deleteField() }));
+        if (cleanupPromises.length > 0) {
+            await Promise.all(cleanupPromises);
+        }
+    } catch (e) {
+        console.warn("Could not clean up comptaAccess references after deletion:", e);
+    }
 
     // Delete the main compta document
     await deleteDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId));
