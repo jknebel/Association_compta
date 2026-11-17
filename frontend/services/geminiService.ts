@@ -1,16 +1,32 @@
 /// <reference types="vite/client" />
 import { getAuth } from "firebase/auth";
+import { app } from "./dataService";
 import { Account, Transaction } from "../../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 /**
+ * Returns Authorization header with the current user's short-lived Firebase ID token.
+ */
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  if (!app) return {};
+  const currentUser = getAuth(app).currentUser;
+  if (!currentUser) return {};
+  const token = await currentUser.getIdToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
  * Helper for API calls
  */
 async function callApi<T>(endpoint: string, body: any): Promise<T> {
+  const authHeaders = await getAuthHeaders();
   const response = await fetch(`${API_URL}${endpoint}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders,
+    },
     body: JSON.stringify(body),
   });
 
@@ -65,8 +81,10 @@ export const processReceiptBackend = async (
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
   try {
+    const authHeaders = await getAuthHeaders();
     const response = await fetch(`${apiUrl}/process-receipt`, {
       method: 'POST',
+      headers: authHeaders,
       body: formData,
     });
 
@@ -118,8 +136,10 @@ export const parseBankStatementPDF = async (
   formData.append('context', globalContext);
 
   try {
+    const authHeaders = await getAuthHeaders();
     const response = await fetch(`${API_URL}/process-bank-statement`, {
       method: 'POST',
+      headers: authHeaders,
       body: formData,
     });
 
