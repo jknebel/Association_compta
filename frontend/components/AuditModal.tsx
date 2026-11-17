@@ -3,7 +3,12 @@ import ReactMarkdown from 'react-markdown';
 import { X, Printer, CheckCircle, AlertTriangle, FileText, Bot, Archive, Loader2, Calendar, RefreshCw, Sparkles, Check } from 'lucide-react';
 import { Transaction, Account, AccountType, TransactionStatus } from '../../types';
 import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/AppContext';
-import { suggestNextComptaName, closeAndRolloverComptabilite } from '../services/organizationService';
+import {
+    closeAndRolloverComptabilite,
+    getLastTransactionDateYMD,
+    buildPeriodFromClosingDate,
+    parseComptaDisplay
+} from '../services/organizationService';
 
 interface AuditModalProps {
     isOpen: boolean;
@@ -59,12 +64,15 @@ export const AuditModal: React.FC<AuditModalProps> = ({
 
     useEffect(() => {
         if (isOpen) {
-            const currentComptaName = selectedCompta?.name || 'Groupe';
-            const suggestion = suggestNextComptaName(currentComptaName);
-            setClosingDate(new Date().toISOString().split('T')[0]);
-            setBaseName(suggestion.baseName);
-            setNextPeriod(suggestion.suggestedNextPeriod);
-            setNextComptaName(suggestion.suggestedFullName);
+            const currentCompta = selectedCompta || { name: 'Groupe', fiscalYearStart: '', fiscalYearEnd: '' };
+            const parsed = parseComptaDisplay(currentCompta);
+            const lastTxnDate = getLastTransactionDateYMD(activeTransactions) || new Date().toISOString().split('T')[0];
+            const periods = buildPeriodFromClosingDate(lastTxnDate);
+
+            setClosingDate(lastTxnDate);
+            setBaseName(parsed.baseName || currentCompta.name || 'Groupe');
+            setNextPeriod(periods.nextPeriod);
+            setNextComptaName(parsed.baseName || currentCompta.name || 'Groupe');
             setCustomNameEdited(false);
 
             const initialTargetMap: Record<string, string> = {};
@@ -94,7 +102,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
     const handlePeriodChange = (val: string) => {
         setNextPeriod(val);
         if (!customNameEdited) {
-            setNextComptaName(val.trim() ? `${baseName} ${val.trim()}`.trim() : baseName);
+            setNextComptaName(baseName);
         }
     };
 
@@ -136,18 +144,25 @@ export const AuditModal: React.FC<AuditModalProps> = ({
         setIsClosing(true);
         try {
             if (selectedOrg && selectedCompta && user) {
+                const effectiveClosingDate = closingDate || new Date().toISOString().split('T')[0];
+                const derived = buildPeriodFromClosingDate(effectiveClosingDate);
                 const newCompta = await closeAndRolloverComptabilite({
                     orgId: selectedOrg.id,
                     oldComptaId: selectedCompta.id,
                     newComptaName: nextComptaName.trim(),
-                    closingDate: closingDate || new Date().toISOString().split('T')[0],
+                    closingDate: effectiveClosingDate,
                     carryOverBalance: Number(carryOverBalance || 0),
                     creatorUid: user.uid,
-                    overrideAccounts: accounts
+                    overrideAccounts: accounts,
+                    closedPeriod: derived.closedPeriod,
+                    nextPeriod: nextPeriod.trim() || derived.nextPeriod
                 });
                 setSelectedCompta(newCompta);
                 setComptaRole('caissier' as any);
-                alert(`Clôture effectuée ! La comptabilité "${selectedCompta.name}" a été archivée et vous êtes maintenant sur "${newCompta.name}" avec un solde d'ouverture de CHF ${Number(carryOverBalance || 0).toFixed(2)}.`);
+                const movedMsg = newCompta.movedReceiptsCount
+                    ? `\n${newCompta.movedReceiptsCount} justificatif(s)/remboursement(s) en attente daté(s) après le ${effectiveClosingDate} ont été transférés vers le nouvel exercice.`
+                    : '';
+                alert(`Clôture effectuée (${derived.closedPeriod}) ! La comptabilité "${selectedCompta.name}" et ses pièces comptables ont été archivées.\nVous êtes maintenant sur "${newCompta.name}" (${newCompta.fiscalPeriod}) avec un solde d'ouverture de CHF ${Number(carryOverBalance || 0).toFixed(2)}.${movedMsg}`);
                 onClose();
             } else {
                 // Fallback mode local / invité

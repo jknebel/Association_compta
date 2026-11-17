@@ -146,14 +146,155 @@ export const renameComptabilite = async (
     orgId: string,
     comptaId: string,
     newName: string,
-    newDescription?: string
-): Promise<void> => {
+    newDescription?: string,
+    fiscalYears?: {
+        startYear?: number | null;
+        endYear?: number | null;
+        existingStart?: string;
+        existingEnd?: string;
+    }
+): Promise<{ fiscalPeriod?: string; fiscalYearStart?: string; fiscalYearEnd?: string }> => {
     const db = getDb();
     const updates: Record<string, any> = { name: newName.trim() };
     if (newDescription !== undefined) {
         updates.description = newDescription.trim();
     }
+
+    const result: { fiscalPeriod?: string; fiscalYearStart?: string; fiscalYearEnd?: string } = {};
+    if (fiscalYears && fiscalYears.startYear && fiscalYears.endYear) {
+        const sYear = Number(fiscalYears.startYear);
+        const eYear = Number(fiscalYears.endYear);
+        const period = `${sYear}-${eYear}`;
+        updates.fiscalPeriod = period;
+        result.fiscalPeriod = period;
+
+        const existingStartMatch = (fiscalYears.existingStart || '').match(/^\d{4}-(\d{2}-\d{2})$/);
+        const existingEndMatch = (fiscalYears.existingEnd || '').match(/^\d{4}-(\d{2}-\d{2})$/);
+        const defaultStartMD = eYear > sYear ? '10-01' : '01-01';
+        const defaultEndMD = eYear > sYear ? '09-30' : '12-31';
+
+        const nextStart = `${sYear}-${existingStartMatch ? existingStartMatch[1] : defaultStartMD}`;
+        const nextEnd = `${eYear}-${existingEndMatch ? existingEndMatch[1] : defaultEndMD}`;
+        updates.fiscalYearStart = nextStart;
+        updates.fiscalYearEnd = nextEnd;
+        result.fiscalYearStart = nextStart;
+        result.fiscalYearEnd = nextEnd;
+    }
+
     await updateDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId), updates);
+    return result;
+};
+
+export const normalizeDateToYMD = (raw?: string | number | null): string | null => {
+    if (raw === undefined || raw === null || raw === '') return null;
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+        const d = new Date(raw);
+        if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+        return null;
+    }
+    const str = String(raw).trim();
+    if (!str) return null;
+
+    // YYYY-MM-DD (or ISO timestamp starting with YYYY-MM-DD)
+    const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+        return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    }
+
+    // DD.MM.YYYY or DD/MM/YYYY or DD.MM.YY or DD/MM/YY
+    const euMatch = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+    if (euMatch) {
+        const day = euMatch[1].padStart(2, '0');
+        const month = euMatch[2].padStart(2, '0');
+        let year = euMatch[3];
+        if (year.length === 2) {
+            year = `20${year}`;
+        }
+        return `${year}-${month}-${day}`;
+    }
+
+    return null;
+};
+
+export const addDaysToYMD = (ymd: string, days: number): string => {
+    const match = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return ymd;
+    const d = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().split('T')[0];
+};
+
+export const getLastTransactionDateYMD = (transactions: Array<{ date?: string; status?: string }>): string | null => {
+    let latest: string | null = null;
+    for (const t of transactions) {
+        if (t.status === TransactionStatus.ARCHIVED) continue;
+        const ymd = normalizeDateToYMD(t.date);
+        if (ymd && (!latest || ymd > latest)) {
+            latest = ymd;
+        }
+    }
+    return latest;
+};
+
+export const buildPeriodFromClosingDate = (closingDateYMD: string): {
+    closingYear: number;
+    closedPeriod: string;
+    nextPeriod: string;
+} => {
+    const ymd = normalizeDateToYMD(closingDateYMD) || new Date().toISOString().split('T')[0];
+    const closingYear = Number(ymd.slice(0, 4)) || new Date().getFullYear();
+    return {
+        closingYear,
+        closedPeriod: `${closingYear - 1}-${closingYear}`,
+        nextPeriod: `${closingYear}-${closingYear + 1}`
+    };
+};
+
+const toFourDigitYear = (yStr: string): number => {
+    const n = parseInt(yStr, 10);
+    return yStr.length === 2 ? 2000 + n : n;
+};
+
+export const parseComptaDisplay = (compta: Pick<Comptabilite, 'name' | 'fiscalPeriod' | 'fiscalYearStart' | 'fiscalYearEnd'>): {
+    baseName: string;
+    periodLabel: string;
+    startYear: number | null;
+    endYear: number | null;
+} => {
+    const trimmed = (compta.name || '').trim();
+    const dualYearMatch = trimmed.match(/^(.*?)\s*(\d{2,4})\s*[\/\-]\s*(\d{2,4})$/);
+    const baseName = dualYearMatch && dualYearMatch[1].trim()
+        ? dualYearMatch[1].trim()
+        : trimmed;
+
+    // 1. Explicit fiscalPeriod field takes priority
+    if (compta.fiscalPeriod && compta.fiscalPeriod.trim()) {
+        const fpMatch = compta.fiscalPeriod.trim().match(/^(\d{2,4})\s*[\/\-]\s*(\d{2,4})$/);
+        if (fpMatch) {
+            const sY = toFourDigitYear(fpMatch[1]);
+            const eY = toFourDigitYear(fpMatch[2]);
+            return { baseName, periodLabel: `${sY}-${eY}`, startYear: sY, endYear: eY };
+        }
+        return { baseName, periodLabel: compta.fiscalPeriod.trim(), startYear: null, endYear: null };
+    }
+
+    // 2. Fallback: extract from name suffix (e.g., "Louveteaux 25-26")
+    if (dualYearMatch) {
+        const sY = toFourDigitYear(dualYearMatch[2]);
+        const eY = toFourDigitYear(dualYearMatch[3]);
+        return { baseName, periodLabel: `${sY}-${eY}`, startYear: sY, endYear: eY };
+    }
+
+    // 3. Fallback: extract from fiscalYearStart / fiscalYearEnd if both exist
+    const sMatch = (compta.fiscalYearStart || '').match(/^(\d{4})-/);
+    const eMatch = (compta.fiscalYearEnd || '').match(/^(\d{4})-/);
+    if (sMatch && eMatch) {
+        const sY = Number(sMatch[1]);
+        const eY = Number(eMatch[1]);
+        return { baseName, periodLabel: `${sY}-${eY}`, startYear: sY, endYear: eY };
+    }
+
+    return { baseName, periodLabel: '', startYear: null, endYear: null };
 };
 
 export const suggestNextComptaName = (currentName: string): {
@@ -220,6 +361,7 @@ export const getComptaBalanceSummary = async (orgId: string, comptaId: string): 
     closingBalance: number;
     transactionsCount: number;
     accountsCount: number;
+    lastTransactionDate: string | null;
 }> => {
     const db = getDb();
     const accountsSnap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites', comptaId, 'accounts'));
@@ -248,7 +390,8 @@ export const getComptaBalanceSummary = async (orgId: string, comptaId: string): 
         totalMovements: Math.round(totalMovements * 100) / 100,
         closingBalance,
         transactionsCount: activeTxns.length,
-        accountsCount: accounts.length
+        accountsCount: accounts.length,
+        lastTransactionDate: getLastTransactionDateYMD(activeTxns)
     };
 };
 
@@ -260,7 +403,9 @@ export const closeAndRolloverComptabilite = async (options: {
     carryOverBalance: number;
     creatorUid: string;
     overrideAccounts?: Account[];
-}): Promise<Comptabilite> => {
+    closedPeriod?: string;
+    nextPeriod?: string;
+}): Promise<Comptabilite & { movedReceiptsCount?: number }> => {
     const { orgId, oldComptaId, newComptaName, closingDate, carryOverBalance, creatorUid, overrideAccounts } = options;
     const db = getDb();
 
@@ -268,14 +413,20 @@ export const closeAndRolloverComptabilite = async (options: {
     const oldComptaSnap = await getDoc(oldComptaRef);
     const oldComptaData = oldComptaSnap.exists() ? (oldComptaSnap.data() as Comptabilite) : null;
 
-    // 1. Archive the old comptabilité with closing date
+    const normalizedClosingDate = normalizeDateToYMD(closingDate) || new Date().toISOString().split('T')[0];
+    const derivedPeriods = buildPeriodFromClosingDate(normalizedClosingDate);
+    const closedPeriod = (options.closedPeriod || derivedPeriods.closedPeriod).trim();
+    const nextPeriod = (options.nextPeriod || derivedPeriods.nextPeriod).trim();
+
+    // 1. Archive the old comptabilité with closing date & closed fiscalPeriod
     await updateDoc(oldComptaRef, {
         isArchived: true,
         archivedAt: Date.now(),
-        fiscalYearEnd: closingDate
+        fiscalYearEnd: normalizedClosingDate,
+        fiscalPeriod: closedPeriod
     });
 
-    // 2. Create the new comptabilité
+    // 2. Create the new comptabilité (starts the day after closingDate so ranges never overlap)
     const newComptaRef = doc(collection(db, 'organizations', orgId, 'comptabilites'));
     const newComptaId = newComptaRef.id;
     const newCompta: Comptabilite = {
@@ -284,8 +435,9 @@ export const closeAndRolloverComptabilite = async (options: {
         description: oldComptaData?.description || '',
         createdAt: Date.now(),
         createdBy: creatorUid,
-        fiscalYearStart: closingDate,
+        fiscalYearStart: addDaysToYMD(normalizedClosingDate, 1),
         fiscalYearEnd: '',
+        fiscalPeriod: nextPeriod,
         currency: oldComptaData?.currency || 'CHF',
         isArchived: false
     };
@@ -394,7 +546,56 @@ export const closeAndRolloverComptabilite = async (options: {
         console.warn("Could not copy member permissions to new compta:", e);
     }
 
-    return newCompta;
+    // 6. Transfer pending receipts & reimbursements dated AFTER closingDate to the new comptabilité,
+    //    and archive the remaining receipts of the closed comptabilité.
+    let movedReceiptsCount = 0;
+    try {
+        const oldReceiptsSnap = await getDocs(collection(db, 'organizations', orgId, 'comptabilites', oldComptaId, 'receipts'));
+        const archivedAt = Date.now();
+        let receiptsBatch = writeBatch(db);
+        let opsInBatch = 0;
+
+        const flushBatchIfNeeded = async () => {
+            if (opsInBatch >= 400) {
+                await receiptsBatch.commit();
+                receiptsBatch = writeBatch(db);
+                opsInBatch = 0;
+            }
+        };
+
+        for (const rDoc of oldReceiptsSnap.docs) {
+            const rData = rDoc.data();
+            const isPendingReceipt = !rData.linkedTransactionId || rData.reimbursementStatus === 'PENDING';
+            const receiptDateYMD = normalizeDateToYMD(rData.extractedDate) || normalizeDateToYMD(rData.uploadDate);
+
+            if (isPendingReceipt && receiptDateYMD && receiptDateYMD > normalizedClosingDate) {
+                const newReceiptRef = doc(db, 'organizations', orgId, 'comptabilites', newComptaId, 'receipts', rDoc.id);
+                receiptsBatch.set(newReceiptRef, {
+                    ...rData,
+                    isArchived: false,
+                    migratedFromComptaId: oldComptaId,
+                    migratedAt: archivedAt
+                });
+                receiptsBatch.delete(rDoc.ref);
+                opsInBatch += 2;
+                movedReceiptsCount++;
+            } else if (!rData.isArchived) {
+                receiptsBatch.update(rDoc.ref, {
+                    isArchived: true,
+                    archivedAt
+                });
+                opsInBatch += 1;
+            }
+            await flushBatchIfNeeded();
+        }
+        if (opsInBatch > 0) {
+            await receiptsBatch.commit();
+        }
+    } catch (e) {
+        console.warn("Could not process receipts during rollover:", e);
+    }
+
+    return { ...newCompta, movedReceiptsCount };
 };
 
 export const deleteComptabilite = async (orgId: string, comptaId: string): Promise<void> => {

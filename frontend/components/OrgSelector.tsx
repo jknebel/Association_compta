@@ -18,7 +18,9 @@ import {
     renameComptabilite,
     suggestNextComptaName,
     getComptaBalanceSummary,
-    closeAndRolloverComptabilite
+    closeAndRolloverComptabilite,
+    parseComptaDisplay,
+    buildPeriodFromClosingDate
 } from '../services/organizationService';
 import { getUserComptabilites } from '../services/userService';
 import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield, Edit2, Calendar, X, CheckCircle, Users, Camera } from 'lucide-react';
@@ -50,6 +52,8 @@ export const OrgSelector: React.FC = () => {
     const [renamingTarget, setRenamingTarget] = useState<{ orgId: string; compta: Comptabilite } | null>(null);
     const [renameNameInput, setRenameNameInput] = useState('');
     const [renameDescInput, setRenameDescInput] = useState('');
+    const [renameStartYearInput, setRenameStartYearInput] = useState('');
+    const [renameEndYearInput, setRenameEndYearInput] = useState('');
     const [isSavingRename, setIsSavingRename] = useState(false);
 
     // Close & Rollover Modal State
@@ -241,9 +245,13 @@ export const OrgSelector: React.FC = () => {
 
     const handleOpenRename = (e: React.MouseEvent, orgId: string, compta: Comptabilite) => {
         e.stopPropagation();
+        const parsed = parseComptaDisplay(compta);
+        const currentYear = new Date().getFullYear();
         setRenamingTarget({ orgId, compta });
-        setRenameNameInput(compta.name);
+        setRenameNameInput(parsed.baseName || compta.name);
         setRenameDescInput(compta.description || '');
+        setRenameStartYearInput(parsed.startYear ? String(parsed.startYear) : String(currentYear));
+        setRenameEndYearInput(parsed.endYear ? String(parsed.endYear) : String(currentYear + 1));
     };
 
     const handleSaveRename = async (e: React.FormEvent) => {
@@ -253,14 +261,41 @@ export const OrgSelector: React.FC = () => {
         try {
             const newName = renameNameInput.trim();
             const newDesc = renameDescInput.trim();
-            await renameComptabilite(renamingTarget.orgId, renamingTarget.compta.id, newName, newDesc);
+            const sYear = parseInt(renameStartYearInput, 10);
+            const eYear = parseInt(renameEndYearInput, 10);
+            const hasValidYears = Number.isFinite(sYear) && Number.isFinite(eYear) && sYear >= 2000 && eYear >= sYear;
+
+            const updatedDates = await renameComptabilite(
+                renamingTarget.orgId,
+                renamingTarget.compta.id,
+                newName,
+                newDesc,
+                hasValidYears
+                    ? {
+                          startYear: sYear,
+                          endYear: eYear,
+                          existingStart: renamingTarget.compta.fiscalYearStart,
+                          existingEnd: renamingTarget.compta.fiscalYearEnd
+                      }
+                    : undefined
+            );
             setComptasByOrg(prev => {
                 const orgList = prev[renamingTarget.orgId] || [];
                 return {
                     ...prev,
                     [renamingTarget.orgId]: orgList.map(item =>
                         item.compta.id === renamingTarget.compta.id
-                            ? { ...item, compta: { ...item.compta, name: newName, description: newDesc } }
+                            ? {
+                                  ...item,
+                                  compta: {
+                                      ...item.compta,
+                                      name: newName,
+                                      description: newDesc,
+                                      ...(updatedDates.fiscalPeriod ? { fiscalPeriod: updatedDates.fiscalPeriod } : {}),
+                                      ...(updatedDates.fiscalYearStart ? { fiscalYearStart: updatedDates.fiscalYearStart } : {}),
+                                      ...(updatedDates.fiscalYearEnd ? { fiscalYearEnd: updatedDates.fiscalYearEnd } : {})
+                                  }
+                              }
                             : item
                     )
                 };
@@ -288,12 +323,14 @@ export const OrgSelector: React.FC = () => {
             return;
         }
 
-        const suggestion = suggestNextComptaName(compta.name);
+        const parsed = parseComptaDisplay(compta);
+        const fallbackToday = new Date().toISOString().split('T')[0];
+        const initialPeriods = buildPeriodFromClosingDate(fallbackToday);
         setClosingTarget({ org, compta });
-        setClosingDateInput(new Date().toISOString().split('T')[0]);
-        setClosingBaseName(suggestion.baseName);
-        setClosingPeriodInput(suggestion.suggestedNextPeriod);
-        setClosingNewNameInput(suggestion.suggestedFullName);
+        setClosingDateInput(fallbackToday);
+        setClosingBaseName(parsed.baseName || compta.name);
+        setClosingPeriodInput(initialPeriods.nextPeriod);
+        setClosingNewNameInput(parsed.baseName || compta.name);
         setClosingCustomNameEdited(false);
         setClosingSummary(null);
         setClosingCarryOverBalance(0);
@@ -303,6 +340,11 @@ export const OrgSelector: React.FC = () => {
             const summary = await getComptaBalanceSummary(org.id, compta.id);
             setClosingSummary(summary);
             setClosingCarryOverBalance(summary.closingBalance);
+            if (summary.lastTransactionDate) {
+                const periods = buildPeriodFromClosingDate(summary.lastTransactionDate);
+                setClosingDateInput(summary.lastTransactionDate);
+                setClosingPeriodInput(periods.nextPeriod);
+            }
         } catch (err) {
             console.error("Erreur lors du calcul du solde de clôture:", err);
         } finally {
@@ -313,10 +355,7 @@ export const OrgSelector: React.FC = () => {
     const handlePeriodChangeInModal = (periodVal: string) => {
         setClosingPeriodInput(periodVal);
         if (!closingCustomNameEdited) {
-            const nextName = periodVal.trim()
-                ? `${closingBaseName} ${periodVal.trim()}`.trim()
-                : closingBaseName;
-            setClosingNewNameInput(nextName);
+            setClosingNewNameInput(closingBaseName);
         }
     };
 
@@ -325,13 +364,17 @@ export const OrgSelector: React.FC = () => {
         if (!closingTarget || !user || !closingNewNameInput.trim()) return;
         setIsSubmittingClose(true);
         try {
+            const effectiveClosingDate = closingDateInput || new Date().toISOString().split('T')[0];
+            const derived = buildPeriodFromClosingDate(effectiveClosingDate);
             const newCompta = await closeAndRolloverComptabilite({
                 orgId: closingTarget.org.id,
                 oldComptaId: closingTarget.compta.id,
                 newComptaName: closingNewNameInput.trim(),
-                closingDate: closingDateInput || new Date().toISOString().split('T')[0],
+                closingDate: effectiveClosingDate,
                 carryOverBalance: Number(closingCarryOverBalance || 0),
-                creatorUid: user.uid
+                creatorUid: user.uid,
+                closedPeriod: derived.closedPeriod,
+                nextPeriod: closingPeriodInput.trim() || derived.nextPeriod
             });
             const targetOrg = closingTarget.org;
             setClosingTarget(null);
@@ -747,11 +790,27 @@ export const OrgSelector: React.FC = () => {
 
                                                                             <div className="min-w-0 flex-1">
                                                                                 <div className="flex flex-wrap items-center gap-2">
-                                                                                    <span className={`font-bold text-sm sm:text-base transition-colors truncate ${
-                                                                                        item.compta.isArchived ? 'text-slate-500 line-through' : 'text-white group-hover:text-blue-300'
-                                                                                    }`}>
-                                                                                        {item.compta.name}
-                                                                                    </span>
+                                                                                    {(() => {
+                                                                                        const parsed = parseComptaDisplay(item.compta);
+                                                                                        return (
+                                                                                            <>
+                                                                                                <span className={`font-bold text-sm sm:text-base transition-colors truncate ${
+                                                                                                    item.compta.isArchived ? 'text-slate-500 line-through' : 'text-white group-hover:text-blue-300'
+                                                                                                }`}>
+                                                                                                    {parsed.baseName || item.compta.name}
+                                                                                                </span>
+                                                                                                {parsed.periodLabel && (
+                                                                                                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${
+                                                                                                        item.compta.isArchived
+                                                                                                            ? 'bg-slate-800/80 text-slate-400 border-slate-700'
+                                                                                                            : 'bg-indigo-950/70 text-indigo-300 border-indigo-700/50'
+                                                                                                    }`}>
+                                                                                                        {parsed.periodLabel}
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </>
+                                                                                        );
+                                                                                    })()}
                                                                                     <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${
                                                                                         item.role === 'admin'
                                                                                             ? 'bg-purple-900/30 text-purple-300 border-purple-800/50'
@@ -881,6 +940,45 @@ export const OrgSelector: React.FC = () => {
                                     autoFocus
                                     required
                                 />
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                                    Exercice (Années — Pastille)
+                                </label>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <span className="block text-[11px] text-slate-400 mb-1">Année début</span>
+                                        <input
+                                            type="number"
+                                            min={2000}
+                                            max={2100}
+                                            value={renameStartYearInput}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                setRenameStartYearInput(val);
+                                                const y = parseInt(val, 10);
+                                                if (Number.isFinite(y) && val.length === 4) {
+                                                    setRenameEndYearInput(String(y + 1));
+                                                }
+                                            }}
+                                            placeholder="2025"
+                                            className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <span className="block text-[11px] text-slate-400 mb-1">Année fin</span>
+                                        <input
+                                            type="number"
+                                            min={2000}
+                                            max={2100}
+                                            value={renameEndYearInput}
+                                            onChange={(e) => setRenameEndYearInput(e.target.value)}
+                                            placeholder="2026"
+                                            className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500"
+                                        />
+                                    </div>
+                                </div>
                             </div>
 
                             <div>

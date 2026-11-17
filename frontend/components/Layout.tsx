@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { LayoutDashboard, Upload, BookOpen, Users, MessageSquareText, Settings, Cloud, CloudOff, LogOut, Receipt, Shield, ArrowLeft, Menu, X, Edit2, Wallet, Building2 } from 'lucide-react';
 import { useDataService } from '../services/dataService';
 import { logout } from '../services/authService';
-import { renameComptabilite } from '../services/organizationService';
+import { renameComptabilite, parseComptaDisplay } from '../services/organizationService';
 import { User } from 'firebase/auth';
 import { useAuthContext, useOrgContext, useComptaContext } from '../contexts/AppContext';
 
@@ -171,7 +171,21 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
               </div>
               <div className="flex items-center justify-between gap-1 mt-1">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <p className="text-xs text-blue-400 truncate font-medium" title={selectedCompta?.name}>{selectedCompta?.name || "Aucune compta"}</p>
+                  {selectedCompta ? (() => {
+                    const parsed = parseComptaDisplay(selectedCompta);
+                    return (
+                      <>
+                        <p className="text-xs text-blue-400 truncate font-medium" title={selectedCompta.name}>{parsed.baseName || selectedCompta.name}</p>
+                        {parsed.periodLabel && (
+                          <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-indigo-950/70 text-indigo-300 border border-indigo-700/50 shrink-0">
+                            {parsed.periodLabel}
+                          </span>
+                        )}
+                      </>
+                    );
+                  })() : (
+                    <p className="text-xs text-blue-400 truncate font-medium">Aucune compta</p>
+                  )}
                   {selectedCompta && isCaissier && !selectedCompta.isArchived && (
                     <button
                       onClick={handleQuickRenameCompta}

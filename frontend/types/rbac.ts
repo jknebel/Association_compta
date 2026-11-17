@@ -190,6 +190,7 @@ export interface Comptabilite {
     createdBy: string;
     fiscalYearStart: string; // YYYY-MM-DD
     fiscalYearEnd: string;   // YYYY-MM-DD
+    fiscalPeriod?: string;   // ex. "2025-2026"
     currency: string;
     isArchived?: boolean;
     archivedAt?: number;
