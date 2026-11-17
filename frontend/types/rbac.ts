@@ -194,6 +194,8 @@ export interface Comptabilite {
     currency: string;
     isArchived?: boolean;
     archivedAt?: number;
+    isSuspended?: boolean;
+    suspendedAt?: number;
 }
 
 export interface ComptaMember {

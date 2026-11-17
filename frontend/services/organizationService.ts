@@ -629,6 +629,15 @@ export const toggleArchiveComptabilite = async (orgId: string, comptaId: string,
     await updateDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId), data);
 }
 
+export const toggleSuspendComptabilite = async (orgId: string, comptaId: string, isSuspended: boolean): Promise<void> => {
+    const db = getDb();
+    const data: Record<string, any> = {
+        isSuspended,
+        suspendedAt: isSuspended ? Date.now() : 0
+    };
+    await updateDoc(doc(db, 'organizations', orgId, 'comptabilites', comptaId), data);
+}
+
 export const listComptabilites = async (orgId: string): Promise<Comptabilite[]> => {
     const db = getDb();
     const snapshot = await getDocs(collection(db, 'organizations', orgId, 'comptabilites'));

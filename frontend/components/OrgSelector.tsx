@@ -15,6 +15,7 @@ import {
     createComptabilite,
     deleteComptabilite,
     toggleArchiveComptabilite,
+    toggleSuspendComptabilite,
     renameComptabilite,
     suggestNextComptaName,
     getComptaBalanceSummary,
@@ -23,7 +24,7 @@ import {
     buildPeriodFromClosingDate
 } from '../services/organizationService';
 import { getUserComptabilites } from '../services/userService';
-import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield, Edit2, Calendar, X, CheckCircle, Users, Camera } from 'lucide-react';
+import { Building2, Book, Plus, ArrowRight, Loader2, LogOut, Trash2, Archive, ArchiveRestore, Database, Sparkles, Shield, Edit2, Calendar, X, CheckCircle, Users, Camera, PauseCircle, PlayCircle } from 'lucide-react';
 import { logout } from '../services/authService';
 import { checkLegacyData, LegacyDataSummary, connectCurrentCompta, markLegacyMigrationDone } from '../services/migrationService';
 import { UnauthorizedView } from './UnauthorizedView';
@@ -195,7 +196,7 @@ export const OrgSelector: React.FC = () => {
         setOrgRole(isOrgAdmin ? 'admin' : 'member');
         
         setSelectedCompta(comptaData.compta);
-        if (comptaData.compta.isArchived) {
+        if (comptaData.compta.isArchived || comptaData.compta.isSuspended) {
             setComptaRole('viewer' as any); // Lecture seule
         } else {
             setComptaRole(comptaData.role);
@@ -227,6 +228,32 @@ export const OrgSelector: React.FC = () => {
             alert("Erreur lors de la création.");
         } finally {
             setIsCreatingCompta(null);
+        }
+    };
+
+    const handleToggleSuspend = async (e: React.MouseEvent, orgId: string, compta: Comptabilite) => {
+        e.stopPropagation();
+        const nextState = !compta.isSuspended;
+        const msg = nextState
+            ? `Mettre en pause (suspendre) la comptabilité « ${compta.name} » ?\n\nElle restera consultable en lecture seule (archives), mais plus aucune nouvelle écriture ou justificatif ne pourra y être ajouté.`
+            : `Réactiver la comptabilité « ${compta.name} » ?`;
+        if (!window.confirm(msg)) return;
+        try {
+            await toggleSuspendComptabilite(orgId, compta.id, nextState);
+            setComptasByOrg(prev => {
+                const orgList = prev[orgId] || [];
+                return {
+                    ...prev,
+                    [orgId]: orgList.map(item =>
+                        item.compta.id === compta.id
+                            ? { ...item, compta: { ...item.compta, isSuspended: nextState } }
+                            : item
+                    )
+                };
+            });
+        } catch (err) {
+            console.error(err);
+            alert("Erreur lors de la mise en pause de la comptabilité.");
         }
     };
 
@@ -829,6 +856,11 @@ export const OrgSelector: React.FC = () => {
                                                                                             Archivé
                                                                                         </span>
                                                                                     )}
+                                                                                    {item.compta.isSuspended && (
+                                                                                        <span className="text-[10px] uppercase tracking-wider bg-amber-950/60 text-amber-300 border border-amber-700/50 px-2 py-0.5 rounded">
+                                                                                            Suspendue
+                                                                                        </span>
+                                                                                    )}
                                                                                 </div>
                                                                                 {item.compta.description && (
                                                                                     <p className="text-xs text-slate-400 truncate mt-0.5">
@@ -858,6 +890,20 @@ export const OrgSelector: React.FC = () => {
                                                                                     title={item.compta.isArchived ? "Désarchiver" : "Clôturer l'exercice / Archiver"}
                                                                                 >
                                                                                     {item.compta.isArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+                                                                                </button>
+                                                                            )}
+                                                                            {canDelete && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={(e) => handleToggleSuspend(e, org.id, item.compta)}
+                                                                                    className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                                                                                        item.compta.isSuspended
+                                                                                            ? 'text-amber-400 hover:text-emerald-400 hover:bg-slate-800'
+                                                                                            : 'text-slate-400 hover:text-amber-400 hover:bg-slate-800'
+                                                                                    }`}
+                                                                                    title={item.compta.isSuspended ? "Réactiver la comptabilité" : "Suspendre / Mettre en pause (lecture seule)"}
+                                                                                >
+                                                                                    {item.compta.isSuspended ? <PlayCircle size={16} /> : <PauseCircle size={16} />}
                                                                                 </button>
                                                                             )}
                                                                             {canDelete && (

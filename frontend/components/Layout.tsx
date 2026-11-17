@@ -186,7 +186,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
                   })() : (
                     <p className="text-xs text-blue-400 truncate font-medium">Aucune compta</p>
                   )}
-                  {selectedCompta && isCaissier && !selectedCompta.isArchived && (
+                  {selectedCompta && isCaissier && !selectedCompta.isArchived && !selectedCompta.isSuspended && (
                     <button
                       onClick={handleQuickRenameCompta}
                       className="text-slate-500 hover:text-blue-300 transition-colors shrink-0"
