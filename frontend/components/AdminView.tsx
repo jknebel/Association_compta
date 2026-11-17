@@ -751,7 +751,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
         return <div className="p-8 text-center text-red-500">Accès refusé. Administrateurs uniquement.</div>;
     }
 
-    const sortedComptas = [...comptas].sort((a, b) => Number(!!a.isArchived) - Number(!!b.isArchived));
+    const sortedComptas = comptas.filter(c => !c.isArchived);
 
     return (
         <div className={orgOverride ? "w-full space-y-5" : "p-4 md:p-6 max-w-6xl mx-auto space-y-5"}>
@@ -1011,7 +1011,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                                         Accès Admin à toutes les comptabilités
                                                     </span>
                                                 ) : (() => {
-                                                    const validAccessEntries = accessEntries.filter(([cId]) => comptas.some(c => c.id === cId));
+                                                    const validAccessEntries = accessEntries.filter(([cId]) => comptas.some(c => c.id === cId && !c.isArchived));
                                                     if (validAccessEntries.length === 0) {
                                                         return <span className="text-xs text-slate-500 italic">Aucune comptabilité assignée</span>;
                                                     }
