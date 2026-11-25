@@ -205,8 +205,8 @@ service cloud.firestore {
         && request.resource.data.get('isSuperAdmin', false) == resource.data.get('isSuperAdmin', false);
       allow delete: if isAuthenticated() && (isOwner(userId) || isSuperAdmin());
       
-      // Allow access to personal subcollections (legacy accounts, transactions, receipts) only to owner
-      match /{document=**} {
+      // Allow access to personal subcollections (legacy accounts, transactions, receipts) only to owner (1+ segments only)
+      match /{subcollection}/{docPath=**} {
         allow read, write: if isAuthenticated() && isOwner(userId);
       }
     }
