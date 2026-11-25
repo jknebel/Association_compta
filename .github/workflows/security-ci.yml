@@ -36,6 +36,7 @@ jobs:
           node frontend/services/__tests__/mutation.web04.mjs
           node tests/mutation.sec07.mjs
           node tests/mutation.sec09.mjs
+          node tests/mutation.sec10.mjs
 
       - name: Build Frontend
         run: npm run build

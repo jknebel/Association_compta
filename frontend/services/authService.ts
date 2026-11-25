@@ -11,6 +11,7 @@ import {
 import type { User } from 'firebase/auth';
 import { useState, useEffect } from 'react';
 import { app } from './dataService'; // Import the initialized app instance
+import { purgeWebSensitiveStorage } from './sessionSecurity.ts';
 
 // Initialize Auth
 let auth: any;
@@ -39,8 +40,14 @@ export const registerWithEmail = async (email: string, pass: string) => {
 };
 
 export const logout = async () => {
-  if (!auth) return;
-  return signOut(auth);
+  const currentUid = auth?.currentUser?.uid;
+  try {
+    if (auth) {
+      await signOut(auth);
+    }
+  } finally {
+    purgeWebSensitiveStorage(undefined, currentUid ? [currentUid] : []);
+  }
 };
 
 export const useAuth = () => {

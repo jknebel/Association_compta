@@ -14,6 +14,11 @@ import type { FirebaseStorage } from 'firebase/storage';
 import { Account, Transaction, Receipt, TransactionStatus } from '../../types';
 import { useState, useEffect } from 'react';
 import type { User } from 'firebase/auth';
+import {
+    canUseWebLocalMode,
+    PROD_FIREBASE_MISSING_WEB_ERROR,
+    scopedWebStorageKey,
+} from './sessionSecurity.ts';
 
 // --- CONFIGURATION FIREBASE SÉCURISÉE ---
 // Les valeurs sont injectées par Vite (import.meta.env) au moment du build
@@ -45,7 +50,11 @@ try {
         storage = getStorage(app);
         isConfigured = true;
     } else {
-        console.warn("Firebase Config missing: Running in Offline Mode.");
+        console.warn(
+            import.meta.env.PROD
+                ? PROD_FIREBASE_MISSING_WEB_ERROR
+                : 'Firebase Config missing: Running in Offline Mode.'
+        );
     }
 } catch (e) {
     console.error("Firebase init error:", e);
@@ -71,15 +80,23 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const shouldUseLocalStorage = isGuest || !isConfigured;
+    const shouldUseLocalStorage = canUseWebLocalMode(
+        isConfigured,
+        isGuest,
+        Boolean(import.meta.env.PROD)
+    );
+    const accStorageKey = scopedWebStorageKey('asso_compta_accounts_v5', user?.uid);
+    const txnStorageKey = scopedWebStorageKey('asso_compta_transactions_v5', user?.uid);
+    const rcptStorageKey = scopedWebStorageKey('asso_compta_receipts_v5', user?.uid);
+    const aiCtxStorageKey = scopedWebStorageKey('asso_compta_ai_context_v5', user?.uid);
 
     useEffect(() => {
-        // CASE 1: Local Storage (Guest or Not Configured)
+        // CASE 1: Local Storage (Guest or Not Configured — blocked in PROD)
         if (shouldUseLocalStorage) {
-            const savedAcc = localStorage.getItem('asso_compta_accounts_v5');
-            const savedTxn = localStorage.getItem('asso_compta_transactions_v5');
-            const savedRcpt = localStorage.getItem('asso_compta_receipts_v5');
-            const savedContext = localStorage.getItem('asso_compta_ai_context_v5');
+            const savedAcc = localStorage.getItem(accStorageKey);
+            const savedTxn = localStorage.getItem(txnStorageKey);
+            const savedRcpt = localStorage.getItem(rcptStorageKey);
+            const savedContext = localStorage.getItem(aiCtxStorageKey);
 
             if (savedAcc) setAccounts(JSON.parse(savedAcc));
             if (savedTxn) setTransactions(JSON.parse(savedTxn));
@@ -167,7 +184,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
                 const newAccs = prev.some(a => a.id === account.id)
                     ? prev.map(a => a.id === account.id ? account : a)
                     : [...prev, account];
-                localStorage.setItem('asso_compta_accounts_v5', JSON.stringify(newAccs));
+                localStorage.setItem(accStorageKey, JSON.stringify(newAccs));
                 return newAccs;
             });
             return;
@@ -180,7 +197,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
     const replaceAllAccounts = async (newAccounts: Account[]) => {
         if (shouldUseLocalStorage) {
             const safeAccounts = newAccounts.map(a => ({ ...a }));
-            localStorage.setItem('asso_compta_accounts_v5', JSON.stringify(safeAccounts));
+            localStorage.setItem(accStorageKey, JSON.stringify(safeAccounts));
             setAccounts(safeAccounts);
             return;
         }
@@ -208,7 +225,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
         if (shouldUseLocalStorage) {
             setAccounts(prev => {
                 const newAccs = prev.filter(a => a.id !== id);
-                localStorage.setItem('asso_compta_accounts_v5', JSON.stringify(newAccs));
+                localStorage.setItem(accStorageKey, JSON.stringify(newAccs));
                 return newAccs;
             });
             return;
@@ -224,7 +241,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
                 const newTxns = prev.some(t => t.id === txn.id)
                     ? prev.map(t => t.id === txn.id ? txn : t)
                     : [...prev, txn];
-                localStorage.setItem('asso_compta_transactions_v5', JSON.stringify(newTxns));
+                localStorage.setItem(txnStorageKey, JSON.stringify(newTxns));
                 return newTxns;
             });
             return;
@@ -247,7 +264,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
                         updated.push(newItem);
                     }
                 });
-                localStorage.setItem('asso_compta_transactions_v5', JSON.stringify(updated));
+                localStorage.setItem(txnStorageKey, JSON.stringify(updated));
                 return updated;
             });
             return;
@@ -266,7 +283,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
         if (shouldUseLocalStorage) {
             setTransactions(prev => {
                 const newTxns = prev.filter(t => t.id !== id);
-                localStorage.setItem('asso_compta_transactions_v5', JSON.stringify(newTxns));
+                localStorage.setItem(txnStorageKey, JSON.stringify(newTxns));
                 return newTxns;
             });
             return;
@@ -280,24 +297,24 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
         if (shouldUseLocalStorage) {
             if (!ids) {
                 // DELETE ALL
-                localStorage.removeItem('asso_compta_transactions_v5');
+                localStorage.removeItem(txnStorageKey);
                 setTransactions([]);
                 // Unlink receipts
                 setReceipts(prev => {
                     const newR = prev.map(r => r.linkedTransactionId ? { ...r, linkedTransactionId: undefined } : r);
-                    localStorage.setItem('asso_compta_receipts_v5', JSON.stringify(newR));
+                    localStorage.setItem(rcptStorageKey, JSON.stringify(newR));
                     return newR;
                 });
             } else {
                 // DELETE SELECTIVE
                 setTransactions(prev => {
                     const newTxns = prev.filter(t => !ids.includes(t.id));
-                    localStorage.setItem('asso_compta_transactions_v5', JSON.stringify(newTxns));
+                    localStorage.setItem(txnStorageKey, JSON.stringify(newTxns));
                     return newTxns;
                 });
                 setReceipts(prev => {
                     const newR = prev.map(r => (r.linkedTransactionId && ids.includes(r.linkedTransactionId)) ? { ...r, linkedTransactionId: undefined } : r);
-                    localStorage.setItem('asso_compta_receipts_v5', JSON.stringify(newR));
+                    localStorage.setItem(rcptStorageKey, JSON.stringify(newR));
                     return newR;
                 });
             }
@@ -359,7 +376,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
 
     const saveGlobalAiContext = async (text: string) => {
         if (shouldUseLocalStorage) {
-            localStorage.setItem('asso_compta_ai_context_v5', text);
+            localStorage.setItem(aiCtxStorageKey, text);
             setGlobalAiContext(text);
             return;
         }
@@ -376,7 +393,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
                 const newR = prev.some(r => r.id === receipt.id)
                     ? prev.map(r => r.id === receipt.id ? receipt : r)
                     : [...prev, receipt];
-                localStorage.setItem('asso_compta_receipts_v5', JSON.stringify(newR));
+                localStorage.setItem(rcptStorageKey, JSON.stringify(newR));
                 return newR;
             });
             return;
@@ -390,7 +407,7 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
         if (shouldUseLocalStorage) {
             setReceipts(prev => {
                 const newR = prev.filter(r => r.id !== id);
-                localStorage.setItem('asso_compta_receipts_v5', JSON.stringify(newR));
+                localStorage.setItem(rcptStorageKey, JSON.stringify(newR));
                 return newR;
             });
             return;
@@ -440,14 +457,14 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
     const closeFiscalYear = async (finalAccounts: Account[], transactionsToArchive: Transaction[]) => {
         if (shouldUseLocalStorage) {
             // 1. Update Accounts in state & storage
-            localStorage.setItem('asso_compta_accounts_v5', JSON.stringify(finalAccounts));
+            localStorage.setItem(accStorageKey, JSON.stringify(finalAccounts));
             setAccounts(finalAccounts);
             
             // 2. Archive Transactions in state & storage
             const archivedIds = new Set(transactionsToArchive.map(t => t.id));
             setTransactions(prev => {
                 const updated = prev.map(t => archivedIds.has(t.id) ? { ...t, status: TransactionStatus.ARCHIVED } : t);
-                localStorage.setItem('asso_compta_transactions_v5', JSON.stringify(updated));
+                localStorage.setItem(txnStorageKey, JSON.stringify(updated));
                 return updated;
             });
             return;
