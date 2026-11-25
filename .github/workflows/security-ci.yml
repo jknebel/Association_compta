@@ -81,6 +81,7 @@ jobs:
         run: |
           python backend/tests/mutation_sec04.py
           python backend/tests/mutation_sec08.py
+          python backend/tests/mutation_sec14.py
 
   firebase-rules:
     name: Firebase Rules & Mutation (${{ matrix.shard }})

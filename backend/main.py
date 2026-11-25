@@ -27,9 +27,15 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 # LangChain / LangGraph
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
+from prompt_and_error_security import (
+    PROMPT_INJECTION_SYSTEM_GUARD,
+    wrap_untrusted_data,
+    sanitize_chat_history,
+    build_safe_500_detail,
+)
 
 # --- CONFIGURATION ---
 load_dotenv()
@@ -343,12 +349,13 @@ def balance_scout_node(state: AgentState):
         imgLast_b64 = base64.b64encode(pixLast.tobytes("png")).decode('utf-8')
         doc.close()
         
-        prompt = f"""
+        prompt = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
         Tu es un expert en relevés bancaires suisses (BCV, Raiffeisen, PostFinance).
         Analyse l'image et le texte OCR pour trouver les soldes exacts.
         
         DONNÉES OCR (Utilise-les pour confirmer les chiffres lus sur l'image) :
-        {text_scout}
+        {wrap_untrusted_data("bank_statement_ocr", text_scout, max_chars=25000)}
         
         OBJECTIF :
         1. SOLDE INITIAL : Le montant EXACT avant toute transaction. 
@@ -404,7 +411,7 @@ def vision_node(state: AgentState):
         print(f"PyMuPDF Error: {e}")
 
     # Fallback Vision (OCR par IA)
-    prompt = "Copie absolument TOUT le texte visible du document bancaire. Ne saute aucune ligne."
+    prompt = f"{PROMPT_INJECTION_SYSTEM_GUARD}\nCopie absolument TOUT le texte visible du document bancaire. Ne saute aucune ligne."
     message = HumanMessage(content=[{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{state.pdf_base64}"}}])
     
     try:
@@ -509,24 +516,33 @@ async def classification_consensus_node(state: AgentState):
 3. Renseigne TOUJOURS le champ 'accountId' avec l'identifiant exact ('ID') du compte dans le PLAN COMPTABLE (ex: 'acc_123'). Ne mets JAMAIS le nom ou le code du compte."""
 
             # Agent A (History) & Agent B (Members) in parallel
-            prompt_a = f"""Tu es le Comptable A (Expert Historique). Classe chaque transaction dans le bon compte.
+            wrapped_global = wrap_untrusted_data("global_context", global_ctx, max_chars=8000) if global_ctx else ""
+            wrapped_history = wrap_untrusted_data("history_context", history_context, max_chars=12000)
+            wrapped_accounts = wrap_untrusted_data("accounts_plan", accounts_info, max_chars=25000)
+            wrapped_txns = wrap_untrusted_data("transactions_batch", json.dumps(batch_data, ensure_ascii=False))
+
+            prompt_a = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
+Tu es le Comptable A (Expert Historique). Classe chaque transaction dans le bon compte.
 Utilise 'description_complete' et 'description_simplifiee' pour vérifier tes choix.
 {polarity_rules}
-{f"CONTEXTE GLOBAL : {global_ctx}" if global_ctx else ""}
-HISTORIQUE: {history_context}
+{f"CONTEXTE GLOBAL : {wrapped_global}" if wrapped_global else ""}
+HISTORIQUE: {wrapped_history}
 PLAN COMPTABLE:
-{accounts_info}
-TRANSACTIONS: {json.dumps(batch_data, ensure_ascii=False)}"""
+{wrapped_accounts}
+TRANSACTIONS: {wrapped_txns}"""
 
-            prompt_b = f"""Tu es le Comptable B (Expert Membres). Classe chaque transaction dans le bon compte.
+            prompt_b = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
+Tu es le Comptable B (Expert Membres). Classe chaque transaction dans le bon compte.
 Utilise 'description_simplifiee' pour identifier les noms de personnes.
 {polarity_rules}
-{f"CONTEXTE GLOBAL : {global_ctx}" if global_ctx else ""}
+{f"CONTEXTE GLOBAL : {wrapped_global}" if wrapped_global else ""}
 PLAN COMPTABLE:
-{accounts_info}
+{wrapped_accounts}
 RÈGLES: Si tu détectes un nom de personne, extrais-le dans detectedMemberName et assigne au compte Suivi: OUI.
 Utilise le 'Contexte IA' de chaque compte pour affiner ton choix.
-TRANSACTIONS: {json.dumps(batch_data, ensure_ascii=False)}"""
+TRANSACTIONS: {wrapped_txns}"""
             
             try:
                 task_a = struct_list.ainvoke(prompt_a)
@@ -534,12 +550,16 @@ TRANSACTIONS: {json.dumps(batch_data, ensure_ascii=False)}"""
                 res_a, res_b = await asyncio.gather(task_a, task_b)
                 
                 # Judge (Consensus)
-                prompt_j = f"""Tu es le Juge. Consolide les résultats des Comptables A et B.
+                wrapped_prop_a = wrap_untrusted_data("proposal_a", json.dumps([t.model_dump() for t in res_a.transactions], ensure_ascii=False))
+                wrapped_prop_b = wrap_untrusted_data("proposal_b", json.dumps([t.model_dump() for t in res_b.transactions], ensure_ascii=False))
+                prompt_j = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
+Tu es le Juge. Consolide les résultats des Comptables A et B.
 PLAN COMPTABLE:
-{accounts_info}
+{wrapped_accounts}
 {polarity_rules}
-PROPOSITION A: {json.dumps([t.model_dump() for t in res_a.transactions], ensure_ascii=False)}
-PROPOSITION B: {json.dumps([t.model_dump() for t in res_b.transactions], ensure_ascii=False)}
+PROPOSITION A: {wrapped_prop_a}
+PROPOSITION B: {wrapped_prop_b}
 RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Priorité à A sinon. Conserve impérativement le champ 'accountId' exact pour chaque transaction."""
 
                 res_j = await struct_list.ainvoke(prompt_j)
@@ -565,12 +585,14 @@ RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Prio
                     task_b = flash_struct.ainvoke(prompt_b)
                     res_a, res_b = await asyncio.gather(task_a, task_b)
                     
-                    prompt_j_fallback = f"""Tu es le Juge. Consolide les résultats des Comptables A et B.
+                    prompt_j_fallback = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
+Tu es le Juge. Consolide les résultats des Comptables A et B.
 PLAN COMPTABLE:
-{accounts_info}
+{wrapped_accounts}
 {polarity_rules}
-PROPOSITION A: {json.dumps([t.model_dump() for t in res_a.transactions], ensure_ascii=False)}
-PROPOSITION B: {json.dumps([t.model_dump() for t in res_b.transactions], ensure_ascii=False)}
+PROPOSITION A: {wrap_untrusted_data("proposal_a", json.dumps([t.model_dump() for t in res_a.transactions], ensure_ascii=False))}
+PROPOSITION B: {wrap_untrusted_data("proposal_b", json.dumps([t.model_dump() for t in res_b.transactions], ensure_ascii=False))}
 RÈGLE: Priorité à B si un membre est détecté sur un compte Suivi: OUI. Priorité à A sinon. Conserve impérativement le champ 'accountId' exact."""
 
                     res_j = await flash_struct.ainvoke(prompt_j_fallback)
@@ -645,7 +667,9 @@ async def description_simplifier_node(state: AgentState):
 
     async def process_batch(batch, idx):
         async with semaphore:
-            prompt = f"""Tu es un expert en simplification de relevés bancaires suisses.
+            prompt = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
+Tu es un expert en simplification de relevés bancaires suisses.
 
 MISSION : Pour chaque transaction, simplifie la description pour ne garder que l'essentiel.
 
@@ -668,7 +692,7 @@ EXEMPLES :
 - "VIRT CPTE DROUET E. & JENNY C. NOTRE REF.: 260... DONNEUR D'ORDRE: DROUET EMMANUEL ET JENNY... COMMUNICATIONS: Robin Jenny, cotisation TDGL..." → "VIRT Drouet Emmanuel et Jenny - Robin Jenny, cotisation TDGL"
 - "PAIEMENT COOP PRONTO 1234 MORGES" → "Coop Pronto Morges"
 
-TRANSACTIONS : {json.dumps([{'id': t.id, 'description': t.description} for t in batch], ensure_ascii=False)}"""
+TRANSACTIONS : {wrap_untrusted_data("simplifier_transactions", json.dumps([{'id': t.id, 'description': t.description} for t in batch], ensure_ascii=False))}"""
 
             try:
                 res = await struct_llm.ainvoke(prompt)
@@ -1386,9 +1410,7 @@ async def process_statement(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=build_safe_500_detail(e, "process-bank-statement"))
 
 @app.post("/process-receipt", dependencies=[Depends(verify_and_rate_limit_ai_user)])
 async def process_receipt(
@@ -1431,7 +1453,8 @@ async def process_receipt(
         flash_llm = get_llm()
         structured_llm = flash_llm.with_structured_output(ReceiptExtraction)
         
-        prompt = """
+        prompt = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
         Analyse cette pièce comptable (reçu/facture).
         Extrais à minima et dans cet ordre d'importance :
         1. Le montant TOTAL (amount) en float.
@@ -1560,9 +1583,7 @@ async def process_receipt(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=build_safe_500_detail(e, "process-receipt"))
 
 @app.post("/analyze-receipt", dependencies=[Depends(verify_and_rate_limit_ai_user)])
 async def analyze_receipt(request: AnalyzeReceiptRequest):
@@ -1576,7 +1597,8 @@ async def analyze_receipt(request: AnalyzeReceiptRequest):
         flash_llm = get_llm()
         structured_llm = flash_llm.with_structured_output(AnalyzeReceiptResponse)
         
-        prompt = """
+        prompt = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
         Analyze this receipt/invoice.
         Extract:
         1. The date of the transaction (Format YYYY-MM-DD).
@@ -1605,8 +1627,7 @@ async def analyze_receipt(request: AnalyzeReceiptRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Receipt Analysis Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=build_safe_500_detail(e, "analyze-receipt"))
 
 @app.post("/chat", dependencies=[Depends(verify_and_rate_limit_ai_user)])
 async def chat_agent(request: ChatRequest):
@@ -1618,7 +1639,8 @@ async def chat_agent(request: ChatRequest):
         income = sum(t.amount for t in request.context.transactions if t.amount > 0)
         expenses = sum(t.amount for t in request.context.transactions if t.amount < 0)
         
-        system_prompt = f"""
+        system_prompt = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
         You are an intelligent accounting assistant for an association.
         You have access to the current financial data:
         {accounts_summary} and {txns_summary}.
@@ -1632,16 +1654,13 @@ async def chat_agent(request: ChatRequest):
         
         messages = [SystemMessage(content=system_prompt)]
         
-        # Add History
-        for msg in request.history:
-             if msg.role == 'user':
-                 messages.append(HumanMessage(content=msg.text))
-             else:
-                 messages.append(HumanMessage(content=msg.text)) # LangChain usually uses AIMessage, but HumanMessage works for simple history if role is clear? 
-                 # Actually better to use AIMessage for model
+        # Add Sanitized History (AIMessage for assistant/model, untrusted HumanMessage for user, drops client system roles)
+        messages.extend(sanitize_chat_history(request.history))
                  
-        # Add new message
-        messages.append(HumanMessage(content=request.newMessage))
+        # Add new user message wrapped as untrusted data
+        messages.append(
+            HumanMessage(content=wrap_untrusted_data("user_message", request.newMessage, max_chars=8000))
+        )
         
         # Use Pro model if available, or fallback to Flash
         model_name = os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
@@ -1663,8 +1682,7 @@ async def chat_agent(request: ChatRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Chat Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=build_safe_500_detail(e, "chat"))
 
 @app.post("/suggest-category", dependencies=[Depends(verify_and_rate_limit_ai_user)])
 async def suggest_category(request: SuggestCategoryRequest):
@@ -1709,12 +1727,22 @@ async def suggest_category(request: SuggestCategoryRequest):
             }
             accounts_context.append(context_entry)
         
-        prompt = f"""
+        wrapped_desc = wrap_untrusted_data("description", request.description, max_chars=2000)
+        wrapped_raw = wrap_untrusted_data("full_raw_text", request.fullRawText or "N/A", max_chars=12000)
+        wrapped_fname = wrap_untrusted_data("receipt_file_name", request.receiptFileName or "N/A", max_chars=500)
+        wrapped_accounts = wrap_untrusted_data(
+            "accounts_list",
+            json.dumps([{"id": a.id, "label": a.label, "code": a.code, "type": a.type, "description": a.description, "iaContext": a.iaContext} for a in request.accounts]),
+            max_chars=25000,
+        )
+
+        prompt = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
         Analyze the transaction:
-        - Description (short): "{request.description}"
+        - Description (short): {wrapped_desc}
         - Amount: {request.amount or 'N/A'}
-        - Full Raw Text: "{request.fullRawText or 'N/A'}"
-        - Receipt File Name: "{request.receiptFileName or 'N/A'}"
+        - Full Raw Text: {wrapped_raw}
+        - Receipt File Name: {wrapped_fname}
         
         ATTENTION : Les deux champs LES PLUS IMPORTANTS pour ta décision sont 'amount' (signe et valeur) et 'fullRawText' (texte original complet).
         La 'Description' courte n'est qu'un résumé qui peut être trompeur.
@@ -1730,7 +1758,7 @@ async def suggest_category(request: SuggestCategoryRequest):
         
         Task 2: Extract 'memberName' if available in 'fullRawText' or 'description'.
         
-        Accounts: {json.dumps([{"id": a.id, "label": a.label, "code": a.code, "type": a.type, "description": a.description, "iaContext": a.iaContext} for a in request.accounts])}
+        Accounts: {wrapped_accounts}
         
         Return a strict JSON object: {{ "accountId": "ID_OR_NULL", "memberName": "EXTRACTED_NAME_OR_NULL" }}
         """
@@ -1769,16 +1797,20 @@ async def audit_ledger_endpoint(request: AuditRequest):
         txns_text = "\n".join([f"{t.date} | {t.description} | {t.amount} | ID: {t.accountId}" for t in request.transactions])
         accounts_text = "\n".join([f"ID: {a.id} | {a.code} - {a.label} ({a.type})" for a in request.accounts])
         
-        prompt = f"""
+        wrapped_audit_accounts = wrap_untrusted_data("audit_accounts", accounts_text, max_chars=25000)
+        wrapped_audit_txns = wrap_untrusted_data("audit_transactions", txns_text, max_chars=50000)
+
+        prompt = f"""{PROMPT_INJECTION_SYSTEM_GUARD}
+
         Tu es un Expert Comptable IA certifié. Ta mission est d'auditer la comptabilité de cette association pour la clôture.
         
         DONNÉES FINANCIÈRES :
         ---------------------
         Comptes :
-        {accounts_text}
+        {wrapped_audit_accounts}
         
         Transactions (Toutes validées) :
-        {txns_text}
+        {wrapped_audit_txns}
         
         RÉSUMÉ :
         Total Recettes : {income:.2f}
@@ -1814,8 +1846,7 @@ async def audit_ledger_endpoint(request: AuditRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Audit Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=build_safe_500_detail(e, "audit"))
 
 
 class SendEmailRequest(BaseModel):
@@ -1981,4 +2012,4 @@ async def send_email_endpoint(
             error_msg=str(e),
             actor_uid=actor_uid,
         )
-        raise HTTPException(status_code=500, detail=f"SMTP send failed: {e}")
+        raise HTTPException(status_code=500, detail=build_safe_500_detail(e, "send-email"))
