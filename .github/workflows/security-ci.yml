@@ -42,6 +42,7 @@ jobs:
           node tests/mutation.sec10.mjs
           node tests/mutation.sec12.mjs
           node tests/mutation.sec13.mjs
+          node tests/mutation.sec16.mjs
 
       - name: Build Frontend
         run: npm run build
@@ -82,6 +83,12 @@ jobs:
           python backend/tests/mutation_sec04.py
           python backend/tests/mutation_sec08.py
           python backend/tests/mutation_sec14.py
+
+      - name: Verify Backend Dockerfile Non-Root Runtime
+        run: |
+          docker build -t assocompta-backend:sec16 ./backend
+          test "$(docker run --rm --entrypoint id assocompta-backend:sec16 -un)" = "appuser"
+          test "$(docker run --rm --entrypoint id assocompta-backend:sec16 -u)" = "10001"
 
   firebase-rules:
     name: Firebase Rules & Mutation (${{ matrix.shard }})
