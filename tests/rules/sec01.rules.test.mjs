@@ -571,6 +571,7 @@ describe('[SEC-01] storage.rules — justificatifs', () => {
     await assertSucceeds(storageOf('cais1').ref('receipts/upl1/old.jpg').getDownloadURL());
     await assertFails(storageOf(null).ref('receipts/upl1/old.jpg').getDownloadURL());
     await assertSucceeds(storageOf('cais1').ref('receipts/upl1/old.jpg').delete());
+    await assertSucceeds(storageOf('cais1').ref('receipts/fichier.png').delete());
     await assertFails(put('upl1', 'receipts/upl1/old.txt', 100, 'text/plain'));
     await assertFails(put('upl1', 'receipts/upl1/gros.jpg', 6 * MB, 'image/jpeg'));
   });
