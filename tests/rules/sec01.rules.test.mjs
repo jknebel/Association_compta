@@ -87,6 +87,14 @@ async function seed() {
     await db.doc(`organizations/${ORG}/members/loc1`).set({ role: 'member', status: 'approved', comptaAccess: { c1: 'responsable_location' } });
     await db.doc(`organizations/${ORG}/members/cais3`).set({ role: 'member', status: 'approved', comptaAccess: { c1: ' Caissier ' } });
     await db.doc(`organizations/${ORG}/members/norole1`).set({ role: 'member', status: 'approved', comptaAccess: {} });
+
+    // Invitation existante pour tests SEC-02
+    await db.doc(`organizations/${ORG}/invitations/inv-seed`).set({
+      orgId: ORG,
+      uid: 'pending1',
+      email: 'Pending1@X.ch',
+      status: 'pending',
+    });
   });
 }
 
@@ -406,8 +414,9 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
       await assertSucceeds(dbOf('orgadmin').doc(`${C1}/members/upl1`).delete());
     });
 
-    it("l'écriture sur le document de l'organisation reste ouverte aux utilisateurs connectés (historique)", async () => {
-      await assertSucceeds(dbOf('cais1').doc(`organizations/${ORG}`).update({ name: 'Renommée' }));
+    it("l'écriture sur le document de l'organisation est réservée à l'admin d'organisation (SEC-02)", async () => {
+      await assertSucceeds(dbOf('orgadmin').doc(`organizations/${ORG}`).update({ name: 'Renommée' }));
+      await assertFails(dbOf('cais1').doc(`organizations/${ORG}`).update({ name: 'Renommée' }));
       await assertFails(anonDb().doc(`organizations/${ORG}`).update({ name: 'Pirate' }));
       await assertSucceeds(anonDb().doc(`organizations/${ORG}`).get());
     });
@@ -516,6 +525,70 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
       await assertFails(dbOf('cais1').doc(`${C1}/members/newadmin`).set({ uid: 'newadmin', role: 'admin' }));
       await assertFails(dbOf('cais1').doc(`${C1}/members/bad`).set({ uid: 'bad', role: '' }));
       await assertFails(dbOf('cais1').doc(`${C1}/members/bad2`).set({ uid: 'bad2', role: 123 }));
+    });
+  });
+
+  describe('[SEC-02] Anti-élévation de privilèges sur /organizations, /members et /invitations', () => {
+    it("POSITIF : SuperAdmin crée/supprime une organisation et change adminEmail/adminUid ; OrgAdmin modifie name/inviteCode/customFields", async () => {
+      const sa = dbOf('sa-user', { superAdmin: true });
+      await assertSucceeds(sa.doc('organizations/org-new').set({ name: 'Nouvelle Asso', createdBy: 'sa-user', adminEmail: 'a@x.ch' }));
+      await assertSucceeds(sa.doc('organizations/org-new').update({ adminEmail: 'b@x.ch', adminUid: 'u2' }));
+      await assertSucceeds(sa.doc('organizations/org-new').delete());
+
+      await assertSucceeds(dbOf('orgadmin').doc(`organizations/${ORG}`).update({ inviteCode: 'NEWCODE', customFields: [] }));
+    });
+
+    it("NÉGATIF : non-SuperAdmin ne peut ni créer/supprimer d'organisation ni changer createdBy/adminEmail/adminUid", async () => {
+      await assertFails(dbOf('orgadmin').doc('organizations/org-rogue').set({ name: 'Rogue' }));
+      await assertFails(dbOf('orgadmin').doc(`organizations/${ORG}`).delete());
+      await assertFails(dbOf('orgadmin').doc(`organizations/${ORG}`).update({ adminEmail: 'hacker@x.ch' }));
+      await assertFails(dbOf('orgadmin').doc(`organizations/${ORG}`).update({ adminUid: 'hacker' }));
+      await assertFails(dbOf('orgadmin').doc(`organizations/${ORG}`).update({ createdBy: 'hacker' }));
+      await assertFails(dbOf('cais1').doc(`organizations/${ORG}`).update({ inviteCode: 'HIJACK' }));
+      await assertFails(dbOf('upl1').doc(`organizations/${ORG}`).update({ name: 'Hijack' }));
+    });
+
+    it("NÉGATIF & LIMITES : impossible de s'auto-inscrire ou créer un membre org privilégié (admin, approved, comptaAccess non vide, uid forgé)", async () => {
+      // Un caissier/uploader ne peut créer aucun membre dans organizations/{orgId}/members
+      await assertFails(dbOf('cais1').doc(`organizations/${ORG}/members/rogue1`).set({ role: 'admin', status: 'approved' }));
+      await assertFails(dbOf('upl1').doc(`organizations/${ORG}/members/rogue2`).set({ role: 'admin', status: 'approved' }));
+
+      // Un nouvel inscrit ne peut pas s'auto-accorder role != member, status != pending, comptaAccess non vide ou uid d'autrui
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/members/newbie`).set({ role: 'admin', status: 'pending' }));
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/members/newbie`).set({ role: 'caissier', status: 'pending' }));
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/members/newbie`).set({ role: 'member', status: 'approved' }));
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/members/newbie`).set({ role: 'member' }));
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/members/newbie`).set({ role: 'member', status: 'pending', comptaAccess: { c1: 'caissier' } }));
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/members/newbie`).set({ role: 'member', status: 'pending', uid: 'orgadmin' }));
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/members/autre`).set({ role: 'member', status: 'pending' }));
+
+      // Un membre non-uploader ne peut pas modifier son status, uid, role ou comptaAccess sur sa propre fiche
+      await assertFails(dbOf('pending1').doc(`organizations/${ORG}/members/pending1`).update({ status: 'approved' }));
+      await assertFails(dbOf('cais1').doc(`organizations/${ORG}/members/cais1`).update({ role: 'admin' }));
+      await assertFails(dbOf('cais1').doc(`organizations/${ORG}/members/cais1`).update({ uid: 'orgadmin' }));
+      await assertFails(dbOf('cais1').doc(`organizations/${ORG}/members/cais1`).update({ 'comptaAccess.c2': 'caissier' }));
+    });
+
+    it("POSITIF, NÉGATIF & LIMITES : /invitations et collectionGroup('invitations')", async () => {
+      // Positif : créateur lit sa propre invitation (uid ou email) et orgadmin lit/approuve/supprime
+      await assertSucceeds(dbOf('pending1').doc(`organizations/${ORG}/invitations/inv-seed`).get());
+      await assertSucceeds(dbOf('other-uid', { email: 'pending1@x.ch' }).doc(`organizations/${ORG}/invitations/inv-seed`).get());
+      await assertSucceeds(dbOf('orgadmin').doc(`organizations/${ORG}/invitations/inv-seed`).get());
+      await assertSucceeds(dbOf('pending1').collectionGroup('invitations').where('uid', '==', 'pending1').get());
+      await assertSucceeds(dbOf('orgadmin').collectionGroup('invitations').where('orgId', '==', ORG).get());
+      await assertSucceeds(dbOf('orgadmin').doc(`organizations/${ORG}/invitations/inv-seed`).update({ status: 'approved', reviewedBy: 'orgadmin' }));
+
+      // Négatif : un tiers ne peut ni lire, ni modifier, ni supprimer l'invitation d'autrui, ni créer avec status/uid/orgId forgé
+      await assertFails(dbOf('cais1').doc(`organizations/${ORG}/invitations/inv-seed`).get());
+      await assertFails(dbOf('cais1').collectionGroup('invitations').get());
+      await assertFails(dbOf('pending1').doc(`organizations/${ORG}/invitations/inv-seed`).update({ status: 'approved' }));
+      await assertFails(dbOf('cais1').doc(`organizations/${ORG}/invitations/inv-seed`).update({ status: 'approved' }));
+      await assertFails(dbOf('cais1').doc(`organizations/${ORG}/invitations/inv-seed`).delete());
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/invitations/inv-bad1`).set({ uid: 'newbie', status: 'approved', orgId: ORG }));
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/invitations/inv-bad2`).set({ uid: 'orgadmin', status: 'pending', orgId: ORG }));
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/invitations/inv-bad3`).set({ uid: 'newbie', status: 'pending', orgId: 'autre-org' }));
+      await assertFails(dbOf('newbie').doc(`organizations/${ORG}/invitations/inv-bad4`).set({ uid: 'newbie' }));
+      await assertFails(anonDb().doc(`organizations/${ORG}/invitations/inv-seed`).get());
     });
   });
 });
