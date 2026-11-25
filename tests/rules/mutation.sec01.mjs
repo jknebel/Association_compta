@@ -84,7 +84,7 @@ const mutants = [
   { name: 'F41b caissier c1 peut s\'auto-ajouter sur c2 sans être créateur', file: F, find: "&& get(/databases/$(database)/documents/organizations/$(orgId)/comptabilites/$(comptaId)).data.get('createdBy', '') == request.auth.uid", replace: '' },
   { name: 'F42 auto-modification de fiche org ouverte à uploader', file: F, find: "allow update: if isAuthenticated() && (\n          isOrgAdmin(orgId)\n          || isSafeSelfMemberUpdate(memberId)\n        );", replace: 'allow update: if isAuthenticated();' },
   { name: 'F43 contrôle comptaAccess uploader neutralisé', file: F, find: ".values().hasAny(['uploader'])", replace: ".values().hasAny(['zzz'])" },
-  { name: 'F45 collectionGroup members fermé', file: F, find: 'match /{path=**}/members/{memberId} {\n      allow read: if isAuthenticated() && (', replace: 'match /{path=**}/members/{memberId} {\n      allow read: if false && (' },
+  { name: 'F45 collectionGroup members fermé', file: F, find: 'allow list: if isAuthenticated() && (', replace: 'allow list: if false && (' },
 
   // --- SEC-02 : Anti-élévation sur /organizations, /members et /invitations ---
   { name: 'F46 création organisation ouverte à orgAdmin', file: F, find: 'allow create: if isSuperAdmin()', replace: 'allow create: if isAuthenticated()' },
@@ -119,7 +119,7 @@ const mutants = [
   { name: 'F72 inviteCodes listable globalement', file: F, find: 'allow list: if false;', replace: 'allow list: if isAuthenticated();' },
   { name: 'F73 inviteCodes modifiable/supprimable par non-admin', file: F, find: "allow create, update: if isAuthenticated()\n        && request.resource.data.get('orgId', '') is string\n        && request.resource.data.orgId != ''\n        && isOrgAdmin(request.resource.data.orgId);", replace: 'allow create, update: if isAuthenticated();' },
   { name: 'F74 org members listable par non-membre / pending', file: F, find: 'allow list: if isAuthenticated() && isApprovedOrgMember(orgId);', replace: 'allow list: if isAuthenticated();' },
-  { name: 'F75 collectionGroup members lisible pour les fiches d autrui', file: F, find: 'match /{path=**}/members/{memberId} {\n      allow read: if isAuthenticated() && (', replace: 'match /{path=**}/members/{memberId} {\n      allow read: if isAuthenticated() || (' },
+  { name: 'F75 collectionGroup members lisible pour les fiches d autrui', file: F, find: 'allow list: if isAuthenticated() && (', replace: 'allow list: if isAuthenticated() || (' },
 
   // --- Storage (SEC-01, SEC-03 & SEC-05) ---
   { name: 'S25 storage authEmail sans contrôle email_verified', file: S, find: "&& 'email_verified' in request.auth.token\n        && request.auth.token.email_verified == true", replace: '' },

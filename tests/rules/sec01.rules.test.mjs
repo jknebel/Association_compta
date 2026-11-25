@@ -318,8 +318,8 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
       await assertSucceeds(db.doc(`${C1}/accounts/a1`).get());
     });
 
-    it("peut lire collectionGroup('members') pour retrouver ses rôles", async () => {
-      await assertSucceeds(dbOf('upl1').collectionGroup('members').get());
+    it("peut lire ses propres fiches via collectionGroup('members') filtré sur son uid", async () => {
+      await assertSucceeds(dbOf('upl1').collectionGroup('members').where('uid', '==', 'upl1').get());
     });
   });
 
@@ -817,6 +817,14 @@ describe('[SEC-06] Verrouillage /organizations, inviteCode, /users et /members',
   });
 
   it("NÉGATIF & LIMITES : inviteCode bloqué sur /organizations, /inviteCodes non listable, /users et /members isolés", async () => {
+    const mustFail = async (label, promise) => {
+      try {
+        await assertFails(promise);
+      } catch (err) {
+        throw new Error(`[SEC-06 mustFail:${label}] ${err.message}`);
+      }
+    };
+
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       const db = ctx.firestore();
       await db.doc(`organizations/${ORG}/private/invite`).set({ inviteCode: 'SECRET' });
@@ -830,33 +838,33 @@ describe('[SEC-06] Verrouillage /organizations, inviteCode, /users et /members',
     });
 
     // /organizations : anonyme bloqué ; inviteCode interdit sur création et update public
-    await assertFails(anonDb().doc(`organizations/${ORG}`).get());
-    await assertFails(anonDb().collection('organizations').get());
-    await assertFails(dbOf('sa-user', { superAdmin: true }).doc('organizations/org-bad').set({ name: 'Bad', inviteCode: 'LEAK' }));
-    await assertFails(dbOf('orgadmin').doc(`organizations/${ORG}`).update({ inviteCode: 'LEAK' }));
+    await mustFail('anon-org-get', anonDb().doc(`organizations/${ORG}`).get());
+    await mustFail('anon-org-list', anonDb().collection('organizations').get());
+    await mustFail('sa-org-create-inviteCode', dbOf('sa-user', { superAdmin: true }).doc('organizations/org-bad').set({ name: 'Bad', inviteCode: 'LEAK' }));
+    await mustFail('orgadmin-update-inviteCode', dbOf('orgadmin').doc(`organizations/${ORG}`).update({ inviteCode: 'LEAK' }));
 
     // /private/invite & /inviteCodes : non-admin bloqué, list global /inviteCodes refusé
-    await assertFails(dbOf('cais1').doc(`organizations/${ORG}/private/invite`).get());
-    await assertFails(dbOf('cais1').doc(`organizations/${ORG}/private/invite`).set({ inviteCode: 'HIJACK' }));
-    await assertFails(dbOf('cais1').collection('inviteCodes').get());
-    await assertFails(dbOf('cais1').doc('inviteCodes/ROGUE').set({ orgId: ORG }));
-    await assertFails(dbOf('orgadmin').doc('inviteCodes/ROGUE2').set({ orgId: '' }));
-    await assertFails(dbOf('cais1').doc('inviteCodes/SECRET').delete());
+    await mustFail('cais-priv-get', dbOf('cais1').doc(`organizations/${ORG}/private/invite`).get());
+    await mustFail('cais-priv-set', dbOf('cais1').doc(`organizations/${ORG}/private/invite`).set({ inviteCode: 'HIJACK' }));
+    await mustFail('cais-inviteCodes-list', dbOf('cais1').collection('inviteCodes').get());
+    await mustFail('cais-inviteCodes-set', dbOf('cais1').doc('inviteCodes/ROGUE').set({ orgId: ORG }));
+    await mustFail('orgadmin-inviteCodes-emptyOrgId', dbOf('orgadmin').doc('inviteCodes/ROGUE2').set({ orgId: '' }));
+    await mustFail('cais-inviteCodes-del', dbOf('cais1').doc('inviteCodes/SECRET').delete());
 
     // /users : tiers et OrgAdmin d'une autre org refusés ; auto-escalade isSuperAdmin bloquée ; purge tierce bloquée
-    await assertFails(dbOf('cais1').doc('users/victim').get());
-    await assertFails(dbOf('orgadmin').doc('users/victim').get());
-    await assertFails(dbOf('cais1').collection('users').get());
-    await assertFails(dbOf('esc1').doc('users/esc1').set({ email: 'e@x.ch', isSuperAdmin: true }));
+    await mustFail('cais-users-get', dbOf('cais1').doc('users/victim').get());
+    await mustFail('orgadmin-otherorg-users-get', dbOf('orgadmin').doc('users/victim').get());
+    await mustFail('cais-users-list', dbOf('cais1').collection('users').get());
+    await mustFail('esc-create-superadmin', dbOf('esc1').doc('users/esc1').set({ email: 'e@x.ch', isSuperAdmin: true }));
     await assertSucceeds(dbOf('esc1').doc('users/esc1').set({ email: 'e@x.ch' }));
-    await assertFails(dbOf('esc1').doc('users/esc1').update({ isSuperAdmin: true }));
-    await assertFails(dbOf('cais1').doc('users/victim').delete());
+    await mustFail('esc-update-superadmin', dbOf('esc1').doc('users/esc1').update({ isSuperAdmin: true }));
+    await mustFail('cais-users-del', dbOf('cais1').doc('users/victim').delete());
     await assertSucceeds(dbOf('sa-user', { superAdmin: true }).doc('users/victim').delete());
 
     // /members & collectionGroup('members') : étranger / pending ne liste pas ; collectionGroup d'autrui bloqué
-    await assertFails(dbOf('pending1').collection(`organizations/${ORG}/members`).get());
-    await assertFails(dbOf('stranger').collection(`organizations/${ORG}/members`).get());
-    await assertFails(dbOf('stranger').doc(`organizations/${ORG}/members/upl1`).get());
-    await assertFails(dbOf('cais1').collectionGroup('members').get());
+    await mustFail('pending-members-list', dbOf('pending1').collection(`organizations/${ORG}/members`).get());
+    await mustFail('stranger-members-list', dbOf('stranger').collection(`organizations/${ORG}/members`).get());
+    await mustFail('stranger-members-get-other', dbOf('stranger').doc(`organizations/${ORG}/members/upl1`).get());
+    await mustFail('cais-collectionGroup-members', dbOf('cais1').collectionGroup('members').get());
   });
 });

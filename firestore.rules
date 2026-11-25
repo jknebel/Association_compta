@@ -379,7 +379,7 @@ service cloud.firestore {
 
     // Autoriser la recherche de tous les rôles d'un utilisateur (uniquement ses propres fiches ou SuperAdmin)
     match /{path=**}/members/{memberId} {
-      allow read: if isAuthenticated() && (
+      allow get: if isAuthenticated() && (
         isSuperAdmin()
         || memberId == request.auth.uid
         || resource.data.get('uid', '') == request.auth.uid
@@ -387,6 +387,11 @@ service cloud.firestore {
           memberId.lower() == authEmail()
           || (resource.data.get('email', '') is string && resource.data.email.lower() == authEmail())
         ))
+      );
+      allow list: if isAuthenticated() && (
+        isSuperAdmin()
+        || resource.data.get('uid', '') == request.auth.uid
+        || (authEmail() != '' && resource.data.get('email', '') is string && resource.data.email.lower() == authEmail())
       );
     }
     match /{path=**}/invitations/{inviteId} {
