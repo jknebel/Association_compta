@@ -184,15 +184,26 @@ service cloud.firestore {
         && data.get('linkedTransactionId', null) == null;
     }
 
-    // Allow all authenticated users to read user profiles (needed for member/role assignment),
-    // and only the owner to write their own profile (or auto-purge of unverified robot accounts).
+    function isApprovedOrgMember(orgId) {
+      return isOrgAdmin(orgId)
+        || (exists(orgMemberPathByUid(orgId)) && isApprovedMemberDoc(get(orgMemberPathByUid(orgId)).data))
+        || (authEmail() != '' && exists(orgMemberPathByEmail(orgId)) && isApprovedMemberDoc(get(orgMemberPathByEmail(orgId)).data));
+    }
+
+    // SEC-06 : lecture limitée au propriétaire, SuperAdmin ou Admin de l'org déclarée ; pas de purge tierce côté client
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && isOwner(userId);
-      allow delete: if isAuthenticated() && (
-        isOwner(userId) ||
-        (resource.data.emailVerificationRequired == true && resource.data.emailVerified == false)
+      allow read: if isAuthenticated() && (
+        isOwner(userId)
+        || isSuperAdmin()
+        || ('orgId' in resource.data && resource.data.orgId is string && isOrgAdmin(resource.data.orgId))
       );
+      allow create: if isAuthenticated()
+        && isOwner(userId)
+        && request.resource.data.get('isSuperAdmin', false) == false;
+      allow update: if isAuthenticated()
+        && isOwner(userId)
+        && request.resource.data.get('isSuperAdmin', false) == resource.data.get('isSuperAdmin', false);
+      allow delete: if isAuthenticated() && (isOwner(userId) || isSuperAdmin());
       
       // Allow access to personal subcollections (legacy accounts, transactions, receipts) only to owner
       match /{document=**} {
@@ -200,13 +211,27 @@ service cloud.firestore {
       }
     }
 
-    // Phase 2 : Organisations
+    // Codes d'invitation : lecture par lookup direct (`get`) uniquement, pas de listage global
+    match /inviteCodes/{code} {
+      allow get: if isAuthenticated();
+      allow list: if false;
+      allow create, update: if isAuthenticated()
+        && request.resource.data.get('orgId', '') is string
+        && request.resource.data.orgId != ''
+        && isOrgAdmin(request.resource.data.orgId);
+      allow delete: if isAuthenticated()
+        && resource.data.get('orgId', '') is string
+        && isOrgAdmin(resource.data.orgId);
+    }
+
+    // Phase 2 : Organisations (lecture authentifiée uniquement, inviteCode interdit sur le doc public)
     match /organizations/{orgId} {
-      allow read: if true;
-      allow create, delete: if isSuperAdmin();
+      allow read: if isAuthenticated();
+      allow create: if isSuperAdmin() && !('inviteCode' in request.resource.data);
       allow update: if isAuthenticated()
         && isOrgAdmin(orgId)
         && request.resource.data.get('createdBy', null) == resource.data.get('createdBy', null)
+        && (!('inviteCode' in request.resource.data) || request.resource.data.get('inviteCode', null) == resource.data.get('inviteCode', null))
         && (
           isSuperAdmin()
           || (
@@ -214,9 +239,20 @@ service cloud.firestore {
             && request.resource.data.get('adminUid', null) == resource.data.get('adminUid', null)
           )
         );
+      allow delete: if isSuperAdmin();
+
+      match /private/{docId} {
+        allow read, write: if isAuthenticated() && isOrgAdmin(orgId);
+      }
 
       match /members/{memberId} {
-        allow read: if isAuthenticated();
+        allow get: if isAuthenticated() && (
+          isApprovedOrgMember(orgId)
+          || memberId == request.auth.uid
+          || (authEmail() != '' && memberId.lower() == authEmail())
+          || (resource != null && resource.data.get('uid', '') == request.auth.uid)
+        );
+        allow list: if isAuthenticated() && isApprovedOrgMember(orgId);
         allow create: if isAuthenticated() && (
           isOrgAdmin(orgId)
           || isSafeSelfJoinRequest(memberId)
@@ -341,9 +377,17 @@ service cloud.firestore {
       }
     }
 
-    // Autoriser la recherche de tous les rôles d'un utilisateur (collectionGroup 'members' & 'invitations')
+    // Autoriser la recherche de tous les rôles d'un utilisateur (uniquement ses propres fiches ou SuperAdmin)
     match /{path=**}/members/{memberId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        isSuperAdmin()
+        || memberId == request.auth.uid
+        || resource.data.get('uid', '') == request.auth.uid
+        || (authEmail() != '' && (
+          memberId.lower() == authEmail()
+          || (resource.data.get('email', '') is string && resource.data.email.lower() == authEmail())
+        ))
+      );
     }
     match /{path=**}/invitations/{inviteId} {
       allow read: if isAuthenticated() && (

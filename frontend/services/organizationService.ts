@@ -29,11 +29,20 @@ export const createOrganization = async (
         createdAt: Date.now(),
         createdBy: adminUid,
         adminEmail: normalizedAdminEmail,
-        inviteCode: Math.random().toString(36).substring(2, 10),
         customFields: []
     };
 
+    const initialInviteCode = Math.random().toString(36).substring(2, 10);
     await setDoc(orgRef, newOrg);
+    await setDoc(doc(db, 'organizations', orgId, 'private', 'invite'), {
+        inviteCode: initialInviteCode,
+        updatedAt: Date.now()
+    });
+    await setDoc(doc(db, 'inviteCodes', initialInviteCode), {
+        orgId,
+        orgName: name,
+        createdAt: Date.now()
+    });
     
     // Add Super Admin creator to members
     const creatorMemberRef = doc(db, 'organizations', orgId, 'members', adminUid);
@@ -708,14 +717,53 @@ export const transferReceiptToComptabilite = async (
 
 export const generateInviteLink = async (orgId: string, forceNew = false): Promise<string> => {
     const db = getDb();
-    if (!forceNew) {
-        const org = await getOrganization(orgId);
-        if (org?.inviteCode) {
-            return org.inviteCode;
+    const privateRef = doc(db, 'organizations', orgId, 'private', 'invite');
+    const org = await getOrganization(orgId);
+    let existingCode = '';
+    try {
+        const privSnap = await getDoc(privateRef);
+        if (privSnap.exists() && typeof privSnap.data().inviteCode === 'string') {
+            existingCode = privSnap.data().inviteCode.trim();
+        }
+    } catch {
+        // ignorer si absent
+    }
+    if (!existingCode && typeof org?.inviteCode === 'string' && org.inviteCode.trim()) {
+        existingCode = org.inviteCode.trim();
+    }
+
+    if (!forceNew && existingCode) {
+        await setDoc(privateRef, { inviteCode: existingCode, updatedAt: Date.now() }, { merge: true });
+        await setDoc(doc(db, 'inviteCodes', existingCode), {
+            orgId,
+            orgName: org?.name || orgId,
+            updatedAt: Date.now()
+        }, { merge: true });
+        return existingCode;
+    }
+
+    if (existingCode) {
+        try {
+            await deleteDoc(doc(db, 'inviteCodes', existingCode));
+        } catch {
+            // ignorer si absent
         }
     }
+
     const newCode = Math.random().toString(36).substring(2, 10);
-    await updateDoc(doc(db, 'organizations', orgId), { inviteCode: newCode });
+    await setDoc(privateRef, { inviteCode: newCode, updatedAt: Date.now() });
+    await setDoc(doc(db, 'inviteCodes', newCode), {
+        orgId,
+        orgName: org?.name || orgId,
+        createdAt: Date.now()
+    });
+    if (org?.inviteCode) {
+        try {
+            await updateDoc(doc(db, 'organizations', orgId), { inviteCode: deleteField() });
+        } catch {
+            // ignorer si non modifiable
+        }
+    }
     return newCode;
 }
 
@@ -911,11 +959,24 @@ export const updateMemberRole = async (orgId: string, comptaId: string, uid: str
 }
 
 export const getOrganizationByInviteCode = async (inviteCode: string): Promise<Organization | null> => {
+    const cleanCode = typeof inviteCode === 'string' ? inviteCode.trim() : '';
+    if (!cleanCode) return null;
     const db = getDb();
-    const q = query(collection(db, 'organizations'), where('inviteCode', '==', inviteCode));
+    try {
+        const codeSnap = await getDoc(doc(db, 'inviteCodes', cleanCode));
+        if (codeSnap.exists()) {
+            const orgId = codeSnap.data()?.orgId;
+            if (typeof orgId === 'string' && orgId) {
+                return await getOrganization(orgId);
+            }
+        }
+    } catch {
+        // Fallback pour anciens documents pendant la transition
+    }
+    const q = query(collection(db, 'organizations'), where('inviteCode', '==', cleanCode));
     const snapshot = await getDocs(q);
     if (!snapshot.empty) {
-        return snapshot.docs[0].data() as Organization;
+        return { ...(snapshot.docs[0].data() as Organization), id: snapshot.docs[0].id };
     }
     return null;
 }
@@ -955,12 +1016,15 @@ export const setMemberComptaAccess = async (
     // Check if user already exists in users collection
     let existingUid: string | undefined = knownUid || undefined;
     if (!existingUid) {
-        const usersSnap = await getDocs(collection(db, 'users'));
-        const matchedUser = usersSnap.docs.find(
-            d => (d.data().email || '').trim().toLowerCase() === normalizedEmail
-        );
-        if (matchedUser) {
-            existingUid = matchedUser.id;
+        try {
+            const usersSnap = await getDocs(
+                query(collection(db, 'users'), where('orgId', '==', orgId), where('email', '==', normalizedEmail))
+            );
+            if (!usersSnap.empty) {
+                existingUid = usersSnap.docs[0].id;
+            }
+        } catch {
+            // Ignorer si la lecture /users est restreinte
         }
     }
 
@@ -1081,12 +1145,15 @@ export const setSingleComptaMemberAccess = async (
 
     let existingUid: string | undefined = knownUid || undefined;
     if (!existingUid) {
-        const usersSnap = await getDocs(collection(db, 'users'));
-        const matchedUser = usersSnap.docs.find(
-            d => (d.data().email || '').trim().toLowerCase() === normalizedEmail
-        );
-        if (matchedUser) {
-            existingUid = matchedUser.id;
+        try {
+            const usersSnap = await getDocs(
+                query(collection(db, 'users'), where('orgId', '==', orgId), where('email', '==', normalizedEmail))
+            );
+            if (!usersSnap.empty) {
+                existingUid = usersSnap.docs[0].id;
+            }
+        } catch {
+            // Ignorer si la lecture /users est restreinte
         }
     }
 
@@ -1284,18 +1351,22 @@ export const getUserOrganizations = async (uid: string, userEmail?: string): Pro
                 continue;
             }
 
-            // 2. Check organizations/{orgId}/members collection directly (no collectionGroup index required)
-            const membersSnap = await getDocs(collection(db, 'organizations', orgId, 'members'));
-            const isApprovedMember = membersSnap.docs.some(mDoc => {
-                const m = mDoc.data();
-                if (m.status === 'rejected' || m.status === 'pending') return false;
-                const matchUid = mDoc.id === uid || m.uid === uid;
-                const matchEmail = normalizedEmail && (
-                    mDoc.id.toLowerCase() === normalizedEmail ||
-                    (m.email && m.email.trim().toLowerCase() === normalizedEmail)
-                );
-                return matchUid || matchEmail;
-            });
+            // 2. Check organizations/{orgId}/members by point reads on uid & normalizedEmail
+            let isApprovedMember = false;
+            const checkMemberDoc = async (docId: string): Promise<boolean> => {
+                try {
+                    const snap = await getDoc(doc(db, 'organizations', orgId, 'members', docId));
+                    if (!snap.exists()) return false;
+                    const m = snap.data();
+                    return m.status !== 'rejected' && m.status !== 'pending';
+                } catch {
+                    return false;
+                }
+            };
+            isApprovedMember = await checkMemberDoc(uid);
+            if (!isApprovedMember && normalizedEmail && normalizedEmail !== uid) {
+                isApprovedMember = await checkMemberDoc(normalizedEmail);
+            }
 
             if (isApprovedMember) {
                 seenOrgIds.add(orgId);
