@@ -55,7 +55,7 @@ async function seed() {
 
     // Comptabilités c1 & c2
     for (const c of [C1, C2]) {
-      await db.doc(c).set({ name: c.endsWith('c1') ? 'Compta 1' : 'Compta 2' });
+      await db.doc(c).set({ name: c.endsWith('c1') ? 'Compta 1' : 'Compta 2', createdBy: 'orgadmin' });
       await db.doc(`${c}/accounts/a1`).set({ code: '1000', name: 'Caisse' });
       await db.doc(`${c}/transactions/t1`).set({ amount: 10, description: 'Test' });
       await db.doc(`${c}/settings/aiConfig`).set({ context: 'ctx' });
@@ -373,9 +373,12 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
 
     it("création d'une nouvelle comptabilité et de son premier membre (flux createComptabilite)", async () => {
       const db = dbOf('cais1');
-      await assertSucceeds(db.doc(`organizations/${ORG}/comptabilites/c3`).set({ name: 'Nouvelle' }));
+      await assertSucceeds(db.doc(`organizations/${ORG}/comptabilites/c3`).set({ name: 'Nouvelle', createdBy: 'cais1' }));
       await assertSucceeds(db.doc(`organizations/${ORG}/comptabilites/c3/members/cais1`).set({ uid: 'cais1', role: 'comptable' }));
       await assertSucceeds(db.doc(`organizations/${ORG}/comptabilites/c3/accounts/a1`).set({ code: '1' }));
+      // Impossible de créer une compta avec un createdBy forgé ou absent
+      await assertFails(db.doc(`organizations/${ORG}/comptabilites/c4`).set({ name: 'Forged', createdBy: 'orgadmin' }));
+      await assertFails(db.doc(`organizations/${ORG}/comptabilites/c5`).set({ name: 'NoOwner' }));
     });
 
     it("demande d'adhésion : un nouvel utilisateur crée sa propre fiche membre et invitation", async () => {
@@ -499,7 +502,7 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
       await assertFails(db.doc(`${C1}/transactions/t1`).update({ amount: 1 }));
       await assertFails(db.doc(`${C1}/accounts/a1`).update({ code: '9999' }));
       await assertFails(db.doc(`${C1}/receipts/r-cais1`).get());
-      await assertFails(db.doc(`${C1}/members/loc1`).update({ role: 'caissier' }));
+      await assertFails(db.doc(`${C1}/members/loc1`).set({ uid: 'loc1', role: 'caissier' }));
     });
 
     it("valeurs limites : rôle 'admin' interdit en écriture dans comptabilites/{comptaId}/members par un caissier", async () => {

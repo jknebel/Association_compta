@@ -227,7 +227,9 @@ service cloud.firestore {
 
       match /comptabilites/{comptaId} {
         allow read: if isAuthenticated();
-        allow create: if isAuthenticated() && isOrgCaissier(orgId);
+        allow create: if isAuthenticated()
+          && isOrgCaissier(orgId)
+          && request.resource.data.get('createdBy', '') == request.auth.uid;
         allow update, delete: if isComptaAccountingWriter(orgId, comptaId);
 
         // Écritures bancaires : lecture autorisée pour caissier/vérificateur/lecteur uniquement ;
@@ -276,12 +278,21 @@ service cloud.firestore {
             || isComptaRentalManager(orgId, comptaId)
             || request.auth.uid == memberUid
           );
-          allow create, update: if (
+          allow create: if request.resource != null && (
             isComptaAccountingWriter(orgId, comptaId)
-            || (isOrgCaissier(orgId) && request.auth.uid == memberUid)
+            || (
+              isOrgCaissier(orgId)
+              && request.auth.uid == memberUid
+              && get(/databases/$(database)/documents/organizations/$(orgId)/comptabilites/$(comptaId)).data.get('createdBy', '') == request.auth.uid
+            )
           ) && normRole(request.resource.data.get('role', '')) in [
             'caissier', 'comptable', 'verificateur', 'viewer', 'uploader', 'responsable_location', 'location'
           ];
+          allow update: if request.resource != null
+            && isComptaAccountingWriter(orgId, comptaId)
+            && normRole(request.resource.data.get('role', '')) in [
+              'caissier', 'comptable', 'verificateur', 'viewer', 'uploader', 'responsable_location', 'location'
+            ];
           allow delete: if isComptaAccountingWriter(orgId, comptaId);
         }
 

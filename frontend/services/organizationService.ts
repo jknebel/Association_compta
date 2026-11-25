@@ -112,6 +112,7 @@ export const createComptabilite = async (orgId: string, data: Omit<Comptabilite,
     
     const newCompta: Comptabilite = {
         ...data,
+        createdBy: data.createdBy || creatorUid,
         id: comptaRef.id,
         createdAt: Date.now()
     };
