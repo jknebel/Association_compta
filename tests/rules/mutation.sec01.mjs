@@ -86,6 +86,23 @@ const mutants = [
   { name: 'F43 contrôle comptaAccess uploader neutralisé', file: F, find: ".values().hasAny(['uploader'])", replace: ".values().hasAny(['zzz'])" },
   { name: 'F45 collectionGroup members fermé', file: F, find: 'match /{path=**}/members/{memberId} {\n      allow read: if isAuthenticated();', replace: 'match /{path=**}/members/{memberId} {\n      allow read: if false;' },
 
+  // --- SEC-02 : Anti-élévation sur /organizations, /members et /invitations ---
+  { name: 'F46 création/suppression organisation ouverte à orgAdmin', file: F, find: 'allow create, delete: if isSuperAdmin();', replace: 'allow create, delete: if isAuthenticated();' },
+  { name: 'F47 orgAdmin peut modifier createdBy de l\'organisation', file: F, find: "&& request.resource.data.get('createdBy', null) == resource.data.get('createdBy', null)", replace: '' },
+  { name: 'F48 orgAdmin peut changer adminEmail de l\'organisation', file: F, find: "request.resource.data.get('adminEmail', null) == resource.data.get('adminEmail', null)", replace: 'true' },
+  { name: 'F49 orgAdmin peut changer adminUid de l\'organisation', file: F, find: "&& request.resource.data.get('adminUid', null) == resource.data.get('adminUid', null)", replace: '' },
+  { name: 'F50 selfJoin accepte role != member (ex: caissier)', file: F, find: "&& normRole(data.get('role', 'member')) == 'member'", replace: '' },
+  { name: 'F51 selfJoin accepte status approved', file: F, find: "&& data.get('status', '') == 'pending'", replace: '' },
+  { name: 'F52 selfJoin accepte comptaAccess non vide', file: F, find: "&& comptaAccessOf(data).size() == 0", replace: '' },
+  { name: 'F53 selfJoin accepte uid d\'autrui', file: F, find: "&& data.get('uid', request.auth.uid) == request.auth.uid;", replace: ';' },
+  { name: 'F54 selfMemberUpdate accepte changement de status', file: F, find: "&& request.resource.data.get('status', null) == resource.data.get('status', null)", replace: '' },
+  { name: 'F55 selfMemberUpdate accepte changement de uid', file: F, find: "&& request.resource.data.get('uid', null) == resource.data.get('uid', null)", replace: '' },
+  { name: 'F56 invitations lisibles par tout membre connecté', file: F, find: "allow read: if isAuthenticated() && (\n          isSuperAdmin()\n          || isOrgAdmin(orgId)", replace: 'allow read: if isAuthenticated() && (\n          true\n          || isOrgAdmin(orgId)' },
+  { name: 'F57 invitations créables avec statut approved', file: F, find: "&& request.resource.data.get('status', '') == 'pending'", replace: '' },
+  { name: 'F58 invitations créables pour autre orgId', file: F, find: "&& request.resource.data.get('orgId', orgId) == orgId;", replace: ';' },
+  { name: 'F59 invitations modifiables/supprimables par non-admin', file: F, find: 'allow update, delete: if isAuthenticated() && isOrgAdmin(orgId);', replace: 'allow update, delete: if isAuthenticated();' },
+  { name: 'F60 collectionGroup invitations lisible par tous', file: F, find: 'match /{path=**}/invitations/{inviteId} {\n      allow read: if isAuthenticated() && (', replace: 'match /{path=**}/invitations/{inviteId} {\n      allow read: if isAuthenticated() || (' },
+
   // --- Storage ---
   { name: 'S01 taille <= 5 Mo', file: S, find: 'request.resource.size < 5 * 1024 * 1024', replace: 'request.resource.size <= 5 * 1024 * 1024' },
   { name: 'S02 taille < 6 Mo', file: S, find: 'request.resource.size < 5 * 1024 * 1024', replace: 'request.resource.size < 6 * 1024 * 1024' },

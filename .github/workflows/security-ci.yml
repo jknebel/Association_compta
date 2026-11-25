@@ -56,8 +56,11 @@ jobs:
           - shard: rules-and-F0-F1
             filter: '^F[01]'
             run_base: true
-          - shard: F2-F4
-            filter: '^F[234]'
+          - shard: F2-F3
+            filter: '^F[23]'
+            run_base: false
+          - shard: F4-F6
+            filter: '^F[456]'
             run_base: false
           - shard: Storage-S
             filter: '^S'
