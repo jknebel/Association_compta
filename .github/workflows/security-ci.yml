@@ -64,11 +64,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt pytest httpx
 
-      - name: Run SEC-04 & SEC-05 Backend Security Tests
+      - name: Run SEC-04, SEC-05 & SEC-08 Backend Security Tests
         run: pytest -v backend/tests/test_sec*.py
 
-      - name: Run SEC-04 Python Mutation Tests
-        run: python backend/tests/mutation_sec04.py
+      - name: Run SEC-04, SEC-05 & SEC-08 Python Mutation Tests
+        run: |
+          python backend/tests/mutation_sec04.py
+          python backend/tests/mutation_sec08.py
 
   firebase-rules:
     name: Firebase Rules & Mutation (${{ matrix.shard }})

@@ -1154,6 +1154,22 @@ try:
         verified_token_email,
         verify_mailer_secret,
     )
+    from request_security import (
+        AI_RATE_LIMIT_MAX_REQUESTS,
+        AI_RATE_LIMIT_WINDOW_SEC,
+        ALLOWED_RECEIPT_MIMES,
+        ALLOWED_STATEMENT_MIMES,
+        BoundedRoleCache,
+        InvalidUploadMediaError,
+        MAX_PDF_PAGES,
+        MAX_RECEIPT_BYTES,
+        MAX_STATEMENT_BYTES,
+        PayloadTooLargeError,
+        read_upload_bounded,
+        validate_base64_receipt_payload,
+        validate_pdf_page_count,
+        validate_upload_mime,
+    )
 except ImportError:
     from backend.email_security import (
         EmailRateLimiter,
@@ -1162,6 +1178,22 @@ except ImportError:
         verified_token_email,
         verify_mailer_secret,
     )
+    from backend.request_security import (
+        AI_RATE_LIMIT_MAX_REQUESTS,
+        AI_RATE_LIMIT_WINDOW_SEC,
+        ALLOWED_RECEIPT_MIMES,
+        ALLOWED_STATEMENT_MIMES,
+        BoundedRoleCache,
+        InvalidUploadMediaError,
+        MAX_PDF_PAGES,
+        MAX_RECEIPT_BYTES,
+        MAX_STATEMENT_BYTES,
+        PayloadTooLargeError,
+        read_upload_bounded,
+        validate_base64_receipt_payload,
+        validate_pdf_page_count,
+        validate_upload_mime,
+    )
 
 _SUPER_ADMIN_EMAILS = {
     "jean.francois.knebel@gmail.com",
@@ -1169,6 +1201,10 @@ _SUPER_ADMIN_EMAILS = {
     "quokka@tdgl.ch",
 }
 _EMAIL_RATE_LIMITER = EmailRateLimiter()
+_AI_RATE_LIMITER = EmailRateLimiter(
+    max_requests=AI_RATE_LIMIT_MAX_REQUESTS,
+    window_seconds=AI_RATE_LIMIT_WINDOW_SEC,
+)
 _VALID_ROLES = {
     "admin",
     "caissier",
@@ -1179,8 +1215,7 @@ _VALID_ROLES = {
     "responsable_location",
     "location",
 }
-_ROLE_CACHE: Dict[tuple, tuple] = {}  # (uid, verified_email) -> (has_role: bool, expires_at: float)
-_ROLE_CACHE_TTL_SEC = 60.0
+_ROLE_CACHE = BoundedRoleCache(positive_ttl_sec=60.0, negative_ttl_sec=15.0, max_entries=1000)
 
 def _is_valid_role(raw_role: Any) -> bool:
     return isinstance(raw_role, str) and raw_role.strip().lower() in _VALID_ROLES
@@ -1192,13 +1227,14 @@ def _user_has_any_role(uid: str, email: str) -> bool:
     if not db:
         return False
 
-    now = _time.time()
+    now = _time.monotonic()
     cache_key = (uid, norm_email)
-    cached = _ROLE_CACHE.get(cache_key)
-    if cached and cached[1] > now:
-        return cached[0]
+    cached = _ROLE_CACHE.get_valid(cache_key, now)
+    if cached is not None:
+        return cached
 
     has_role = False
+    lookup_failed = False
     try:
         # 1. Check if user is admin/creator of any organization
         for org_doc in db.collection("organizations").stream():
@@ -1239,9 +1275,10 @@ def _user_has_any_role(uid: str, email: str) -> bool:
     except Exception as role_err:
         print(f"Role lookup failed for uid={uid}: {role_err}")
         has_role = False
+        lookup_failed = True
 
-    if has_role:
-        _ROLE_CACHE[cache_key] = (True, now + _ROLE_CACHE_TTL_SEC)
+    if not lookup_failed:
+        _ROLE_CACHE.store(cache_key, has_role, now)
     return has_role
 
 async def verify_firebase_token(authorization: Optional[str] = Header(default=None)):
@@ -1268,23 +1305,41 @@ async def verify_firebase_token(authorization: Optional[str] = Header(default=No
         )
     return decoded
 
+async def verify_and_rate_limit_ai_user(decoded: dict = Depends(verify_firebase_token)) -> dict:
+    """Enforces per-authenticated-user rate limiting (15/60s) on AI endpoints."""
+    uid = decoded.get("uid") or ""
+    email = verified_token_email(decoded)
+    actor_key = uid or email or "anon"
+    if not _AI_RATE_LIMITER.allow(actor_key):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many AI requests. Please retry in a minute.",
+        )
+    return decoded
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "AssoCompta Backend"}
 
-@app.post("/process-bank-statement", dependencies=[Depends(verify_firebase_token)])
+@app.post("/process-bank-statement")
 async def process_statement(
     file: UploadFile = File(...),
     accounts: str = Form(...),
-    userId: str = Form(...),
-    context: Optional[str] = Form("")
+    userId: Optional[str] = Form(default=None),
+    context: Optional[str] = Form(""),
+    decoded_token: dict = Depends(verify_and_rate_limit_ai_user),
 ):
     try:
-        print(f"Processing file: {file.filename} for user: {userId}")
+        effective_user_id = (decoded_token.get("uid") or "").strip()
+        if not effective_user_id:
+            raise HTTPException(status_code=401, detail="Authenticated token missing uid.")
+        print(f"Processing file: {file.filename} for user: {effective_user_id}")
         print(f"Global Context length: {len(context) if context else 0}")
         if context:
             print(f"Global Context preview: {context[:200]}...")
-        content = await file.read()
+        content = await read_upload_bounded(file, MAX_STATEMENT_BYTES)
+        validate_upload_mime(file.content_type, ALLOWED_STATEMENT_MIMES, content)
+        validate_pdf_page_count(content, MAX_PDF_PAGES, open_pdf_fn=fitz.open)
         b64_pdf = base64.b64encode(content).decode("utf-8")
         
         # Safe Account Parsing
@@ -1301,7 +1356,7 @@ async def process_statement(
             raise HTTPException(status_code=400, detail="Invalid accounts JSON format")
         
         initial_state = AgentState(
-            user_id=userId,
+            user_id=effective_user_id,
             pdf_base64=b64_pdf,
             existing_accounts=accounts_list,
             global_context=context or ""
@@ -1324,34 +1379,45 @@ async def process_statement(
             "logs": output["logs"]
         }
         
+    except PayloadTooLargeError as size_err:
+        raise HTTPException(status_code=413, detail=str(size_err))
+    except InvalidUploadMediaError as media_err:
+        raise HTTPException(status_code=400, detail=str(media_err))
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/process-receipt", dependencies=[Depends(verify_firebase_token)])
+@app.post("/process-receipt", dependencies=[Depends(verify_and_rate_limit_ai_user)])
 async def process_receipt(
     file: UploadFile = File(...),
     transactions: str = Form(...) 
 ):
     try:
         print(f"Processing receipt: {file.filename} ({file.content_type})")
-        content = await file.read()
+        content = await read_upload_bounded(file, MAX_RECEIPT_BYTES)
+        norm_mime = validate_upload_mime(file.content_type, ALLOWED_RECEIPT_MIMES, content)
         
         # If it's a PDF, we convert the first page to an image for Gemini Vision
-        if file.content_type == "application/pdf":
+        if norm_mime == "application/pdf":
+            validate_pdf_page_count(content, MAX_PDF_PAGES, open_pdf_fn=fitz.open)
+            pdf_doc = None
             try:
                 pdf_doc = fitz.open(stream=content, filetype="pdf")
                 first_page = pdf_doc.load_page(0)
                 pix = first_page.get_pixmap(matrix=fitz.Matrix(2, 2)) # 2x zoom for better text readability
                 content = pix.tobytes("jpeg")
                 mime_type = "image/jpeg"
-                pdf_doc.close()
             except Exception as e:
                 print(f"PDF conversion error: {e}")
                 raise HTTPException(status_code=400, detail="Could not read PDF file")
+            finally:
+                if pdf_doc is not None:
+                    pdf_doc.close()
         else:
-            mime_type = file.content_type
+            mime_type = norm_mime
 
         b64_file = base64.b64encode(content).decode("utf-8")
         
@@ -1487,14 +1553,26 @@ async def process_receipt(
             "extracted": extraction.model_dump(),
             "matchedTransactionId": matched_id
         }
+    except PayloadTooLargeError as size_err:
+        raise HTTPException(status_code=413, detail=str(size_err))
+    except InvalidUploadMediaError as media_err:
+        raise HTTPException(status_code=400, detail=str(media_err))
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/analyze-receipt", dependencies=[Depends(verify_firebase_token)])
+@app.post("/analyze-receipt", dependencies=[Depends(verify_and_rate_limit_ai_user)])
 async def analyze_receipt(request: AnalyzeReceiptRequest):
     try:
+        decoded_bytes = validate_base64_receipt_payload(request.base64Data, request.mimeType)
+        norm_mime = validate_upload_mime(request.mimeType, ALLOWED_RECEIPT_MIMES, decoded_bytes)
+        if norm_mime == "application/pdf":
+            validate_pdf_page_count(decoded_bytes, MAX_PDF_PAGES, open_pdf_fn=fitz.open)
+        clean_b64 = base64.b64encode(decoded_bytes).decode("utf-8")
+
         flash_llm = get_llm()
         structured_llm = flash_llm.with_structured_output(AnalyzeReceiptResponse)
         
@@ -1513,18 +1591,24 @@ async def analyze_receipt(request: AnalyzeReceiptRequest):
                 {"type": "text", "text": prompt},
                 {
                     "type": "image_url", 
-                    "image_url": {"url": f"data:{request.mimeType};base64,{request.base64Data}"}
+                    "image_url": {"url": f"data:{norm_mime};base64,{clean_b64}"}
                 }
             ]
         )
         
         result = structured_llm.invoke([message])
         return result
+    except PayloadTooLargeError as size_err:
+        raise HTTPException(status_code=413, detail=str(size_err))
+    except InvalidUploadMediaError as media_err:
+        raise HTTPException(status_code=400, detail=str(media_err))
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Receipt Analysis Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/chat", dependencies=[Depends(verify_firebase_token)])
+@app.post("/chat", dependencies=[Depends(verify_and_rate_limit_ai_user)])
 async def chat_agent(request: ChatRequest):
     try:
         # Prepare Context
@@ -1576,11 +1660,13 @@ async def chat_agent(request: ChatRequest):
             text_out = extract_llm_text(response)
         
         return ChatResponse(response=text_out)
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Chat Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/suggest-category", dependencies=[Depends(verify_firebase_token)])
+@app.post("/suggest-category", dependencies=[Depends(verify_and_rate_limit_ai_user)])
 async def suggest_category(request: SuggestCategoryRequest):
     try:
         print("--- [Agent: SUGGEST_CATEGORY][INPUT_START] ---")
@@ -1658,6 +1744,8 @@ async def suggest_category(request: SuggestCategoryRequest):
         print("--- [Agent: SUGGEST_CATEGORY][OUTPUT_END] ---")
 
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Suggest Category Error: {e}")
         # Return empty/null result instead of crashing
@@ -1669,7 +1757,7 @@ class AuditRequest(BaseModel):
     transactions: List[Transaction]
     accounts: List[Account]
 
-@app.post("/audit", dependencies=[Depends(verify_firebase_token)])
+@app.post("/audit", dependencies=[Depends(verify_and_rate_limit_ai_user)])
 async def audit_ledger_endpoint(request: AuditRequest):
     try:
         # Pre-calc totals
@@ -1723,6 +1811,8 @@ async def audit_ledger_endpoint(request: AuditRequest):
         
         return {"report": report_text}
     
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Audit Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
