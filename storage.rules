@@ -7,14 +7,14 @@ service firebase.storage {
     }
 
     function authEmail() {
-      return request.auth.token.email != null
+      return ('email' in request.auth.token && request.auth.token.email is string)
         ? request.auth.token.email.lower()
         : '';
     }
 
     function isSuperAdmin() {
       return isAuthenticated() && (
-        request.auth.token.get('superAdmin', false) == true
+        ('superAdmin' in request.auth.token && request.auth.token.superAdmin == true)
         || authEmail() in [
           'jean.francois.knebel@gmail.com',
           'jean-francois@knebel.ch',
@@ -95,7 +95,12 @@ service firebase.storage {
     // Justificatifs rattachés à une comptabilité (app web + app mobile "uploader")
     match /receipts/{orgId}/{comptaId}/{allPaths=**} {
       allow read: if isAuthenticated() && canReadComptaReceipt(orgId, comptaId);
-      allow create: if isAuthenticated() && canCreateComptaReceipt(orgId, comptaId) && isValidReceiptFile();
+      allow create: if isAuthenticated()
+        && isValidReceiptFile()
+        && (
+          (resource == null && canCreateComptaReceipt(orgId, comptaId))
+          || canManageComptaReceipt(orgId, comptaId)
+        );
       allow update: if isAuthenticated() && canManageComptaReceipt(orgId, comptaId) && isValidReceiptFile();
       allow delete: if isAuthenticated() && canManageComptaReceipt(orgId, comptaId);
     }

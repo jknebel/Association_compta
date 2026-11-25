@@ -682,6 +682,10 @@ describe('[SEC-01] storage.rules — justificatifs', () => {
     await assertFails(put('cais1', 'receipts/o1/c1/remplace.jpg', 100, 'text/html'));
     await assertFails(put('cais1', 'receipts/o1/c1/remplace.jpg', 100, 'image/svg+xml'));
     await assertSucceeds(put('cais1', 'receipts/o1/c1/remplace.jpg', 200, 'image/jpeg'));
+    await assertFails(storageOf('upl1').ref('receipts/o1/c1/remplace.jpg').updateMetadata({ contentType: 'image/jpeg' }));
+    await assertFails(storageOf('cais1').ref('receipts/o1/c1/remplace.jpg').updateMetadata({ contentType: 'text/html' }));
+    await assertFails(storageOf('cais1').ref('receipts/o1/c1/remplace.jpg').updateMetadata({ contentType: 'image/svg+xml' }));
+    await assertSucceeds(storageOf('cais1').ref('receipts/o1/c1/remplace.jpg').updateMetadata({ customMetadata: { rev: '2' } }));
   });
 });
 
