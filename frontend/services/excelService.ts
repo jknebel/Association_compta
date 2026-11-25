@@ -1,5 +1,11 @@
 import * as XLSX from 'xlsx';
 import { Account, Transaction, AccountType, TransactionStatus } from '../../types';
+import {
+  SAFE_XLSX_READ_OPTIONS,
+  validateExcelUploadFile,
+  enforceExcelRowLimit,
+  sanitizeExcelTextCell,
+} from './excelSecurity.ts';
 
 /**
  * Generates a full accounting report (Bilan + Journal)
@@ -246,18 +252,20 @@ export const generateAccountingReport = (transactions: Transaction[], accounts: 
     const rootParent = grandParent || parent;
 
     return {
-      Date: t.date,
-      Libellé: t.description,
+      Date: sanitizeExcelTextCell(t.date),
+      Libellé: sanitizeExcelTextCell(t.description),
       Débit: t.amount < 0 ? Number(Math.abs(t.amount).toFixed(2)) : '',
       Crédit: t.amount > 0 ? Number(t.amount.toFixed(2)) : '',
       Montant: Number(t.amount.toFixed(2)),
-      CodeCompte: acc?.code || 'Non Catégorisé',
-      SousCompte: acc?.label || 'Non Catégorisé',
-      CompteParent: rootParent ? `${rootParent.code} - ${rootParent.label}` : (acc ? `${acc.code} - ${acc.label}` : '-'),
-      CheminComplet: getAccountFullPath(acc),
-      Membre: t.detectedMemberName || '',
-      Statut: t.status,
-      Notes: t.notes || ''
+      CodeCompte: sanitizeExcelTextCell(acc?.code || 'Non Catégorisé'),
+      SousCompte: sanitizeExcelTextCell(acc?.label || 'Non Catégorisé'),
+      CompteParent: sanitizeExcelTextCell(
+        rootParent ? `${rootParent.code} - ${rootParent.label}` : (acc ? `${acc.code} - ${acc.label}` : '-')
+      ),
+      CheminComplet: sanitizeExcelTextCell(getAccountFullPath(acc)),
+      Membre: sanitizeExcelTextCell(t.detectedMemberName || ''),
+      Statut: sanitizeExcelTextCell(t.status),
+      Notes: sanitizeExcelTextCell(t.notes || '')
     };
   });
 
@@ -286,17 +294,23 @@ export const generateAccountingReport = (transactions: Transaction[], accounts: 
  * Parses an existing Excel ledger
  */
 export const parseExcelLedger = async (file: File): Promise<Transaction[]> => {
+  const fileCheck = validateExcelUploadFile(file);
+  if (!fileCheck.valid) {
+    throw new Error(fileCheck.error || 'Fichier Excel invalide.');
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const data = e.target?.result;
-        const workbook = XLSX.read(data, { type: 'binary' });
+        const workbook = XLSX.read(data, { type: 'binary', ...SAFE_XLSX_READ_OPTIONS });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
 
         // Get raw JSON
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        enforceExcelRowLimit(jsonData);
 
         // Simple heuristic: Assume headers are in row 0
         // Look for common column names

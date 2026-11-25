@@ -3,6 +3,12 @@ import { Account, Transaction } from '../../types';
 import { Edit2, Save, X, AlertTriangle, CheckCircle, XCircle, FileSpreadsheet, RefreshCw, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useComptaContext } from '../contexts/AppContext';
+import {
+    SAFE_XLSX_READ_OPTIONS,
+    validateExcelUploadFile,
+    enforceExcelRowLimit,
+    sanitizeExcelTextCell,
+} from '../services/excelSecurity.ts';
 
 interface MembersViewProps {
     accounts: Account[];
@@ -45,9 +51,9 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
             const txns = transactions.filter(t => t.accountId === acc.id && t.amount > 0);
             txns.forEach(t => {
                 data.push({
-                    "Compte": acc.label,
-                    "Date Paiement": t.date,
-                    "Membre Détecté": t.detectedMemberName || "Inconnu",
+                    "Compte": sanitizeExcelTextCell(acc.label),
+                    "Date Paiement": sanitizeExcelTextCell(t.date),
+                    "Membre Détecté": sanitizeExcelTextCell(t.detectedMemberName || "Inconnu"),
                     "Montant": t.amount,
                     "Statut": "PAYÉ"
                 });
@@ -69,14 +75,21 @@ export const MembersView: React.FC<MembersViewProps> = ({ accounts, transactions
         const file = e.target.files?.[0];
         if (!file) return;
 
+        const fileCheck = validateExcelUploadFile(file);
+        if (!fileCheck.valid) {
+            alert(fileCheck.error || "Fichier Excel invalide.");
+            return;
+        }
+
         const reader = new FileReader();
         reader.onload = (evt) => {
             try {
                 const bstr = evt.target?.result;
-                const wb = XLSX.read(bstr, { type: 'binary' });
+                const wb = XLSX.read(bstr, { type: 'binary', ...SAFE_XLSX_READ_OPTIONS });
                 const wsname = wb.SheetNames[0];
                 const ws = wb.Sheets[wsname];
                 const data = XLSX.utils.sheet_to_json(ws);
+                enforceExcelRowLimit(data);
 
                 if (data.length === 0) {
                     alert("Le fichier semble vide.");

@@ -27,7 +27,6 @@ import {
     PROD_FIREBASE_MISSING_WEB_ERROR,
 } from './frontend/services/sessionSecurity.ts';
 import { sendEmailVerification } from 'firebase/auth';
-import * as XLSX from 'xlsx';
 import { matchTransactionsWithReceipts } from './frontend/services/matchingService';
 import { suggestCategory, parseBankStatementPDF } from './frontend/services/geminiService';
 import { deleteFileFromStorage } from './frontend/services/storageService';
