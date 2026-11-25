@@ -417,10 +417,11 @@ export const useDataService = (user: User | null, isGuest: boolean = false, orgI
 
         // Try Firebase Storage first
         try {
-            const basePath = orgId && comptaId ? `receipts/${orgId}/${comptaId}` : `receipts/${user?.uid}`;
-            const path = user
-                ? `${basePath}/${Date.now()}_${file.name}`
-                : `receipts/public/${Date.now()}_${file.name}`;
+            if (!user?.uid) {
+                throw new Error("Authentification requise pour téléverser un justificatif.");
+            }
+            const basePath = orgId && comptaId ? `receipts/${orgId}/${comptaId}` : `receipts/${user.uid}`;
+            const path = `${basePath}/${Date.now()}_${file.name}`;
 
             const storageRef = ref(storage, path);
             const snapshot = await uploadBytes(storageRef, file);

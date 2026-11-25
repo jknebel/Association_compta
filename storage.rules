@@ -2,27 +2,122 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // SEC-01 : un justificatif doit être une image ou un PDF de moins de 5 Mo
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function authEmail() {
+      return ('email' in request.auth.token && request.auth.token.email is string)
+        ? request.auth.token.email.lower()
+        : '';
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        ('superAdmin' in request.auth.token && request.auth.token.superAdmin == true)
+        || authEmail() in [
+          'jean.francois.knebel@gmail.com',
+          'jean-francois@knebel.ch',
+          'quokka@tdgl.ch'
+        ]
+        || (
+          firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+          && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.get('isSuperAdmin', false) == true
+        )
+      );
+    }
+
+    function normRole(r) {
+      return r is string ? r.trim().lower() : '';
+    }
+
+    function orgMemberPath(orgId, memberId) {
+      return /databases/(default)/documents/organizations/$(orgId)/members/$(memberId);
+    }
+
+    function comptaMemberPath(orgId, comptaId, memberId) {
+      return /databases/(default)/documents/organizations/$(orgId)/comptabilites/$(comptaId)/members/$(memberId);
+    }
+
+    function comptaAccessOf(docData) {
+      return docData.get('comptaAccess', {});
+    }
+
+    function hasOrgComptaOrAdminRole(data, comptaId, roles) {
+      return data.get('status', 'approved') == 'approved' && (
+        normRole(data.get('role', '')) == 'admin'
+        || (
+          comptaId in comptaAccessOf(data)
+          && normRole(comptaAccessOf(data)[comptaId]) in roles
+        )
+      );
+    }
+
+    function hasComptaAccessOrOrgAdmin(orgId, comptaId, roles) {
+      return isSuperAdmin() || (
+        firestore.exists(orgMemberPath(orgId, request.auth.uid))
+        && hasOrgComptaOrAdminRole(firestore.get(orgMemberPath(orgId, request.auth.uid)).data, comptaId, roles)
+      ) || (
+        firestore.exists(comptaMemberPath(orgId, comptaId, request.auth.uid))
+        && normRole(firestore.get(comptaMemberPath(orgId, comptaId, request.auth.uid)).data.get('role', '')) in roles
+      );
+    }
+
+    function canReadComptaReceipt(orgId, comptaId) {
+      return hasComptaAccessOrOrgAdmin(orgId, comptaId, [
+        'caissier', 'comptable', 'admin', 'verificateur', 'viewer',
+        'uploader', 'responsable_location', 'location', 'locations'
+      ]);
+    }
+
+    function canCreateComptaReceipt(orgId, comptaId) {
+      return hasComptaAccessOrOrgAdmin(orgId, comptaId, [
+        'caissier', 'comptable', 'admin',
+        'uploader', 'responsable_location', 'location', 'locations'
+      ]);
+    }
+
+    function canManageComptaReceipt(orgId, comptaId) {
+      return hasComptaAccessOrOrgAdmin(orgId, comptaId, [
+        'caissier', 'comptable', 'admin'
+      ]);
+    }
+
+    // SEC-03 : un justificatif doit peser entre 1 octet et < 5 Mo, sans SVG (anti-XSS)
     function isValidReceiptFile() {
       return request.resource != null
+        && request.resource.size > 0
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType != null
-        && request.resource.contentType.matches('image/.*|application/pdf');
+        && request.resource.contentType.matches('image/(jpeg|jpg|png|gif|webp|heic|heif|bmp|tiff)|application/pdf');
     }
 
     // Justificatifs rattachés à une comptabilité (app web + app mobile "uploader")
     match /receipts/{orgId}/{comptaId}/{allPaths=**} {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null && isValidReceiptFile();
-      allow delete: if request.auth != null;
+      allow read: if isAuthenticated() && canReadComptaReceipt(orgId, comptaId);
+      allow create: if isAuthenticated()
+        && isValidReceiptFile()
+        && (
+          (resource == null && canCreateComptaReceipt(orgId, comptaId))
+          || canManageComptaReceipt(orgId, comptaId)
+        );
+      allow update: if isAuthenticated() && canManageComptaReceipt(orgId, comptaId) && isValidReceiptFile();
+      allow delete: if isAuthenticated() && canManageComptaReceipt(orgId, comptaId);
     }
 
-    // Anciens chemins (receipts/{uid}/..., receipts/public/..., receipts/...)
-    match /receipts/{allPaths=**} {
-      // Autorise la lecture/écriture seulement aux utilisateurs connectés.
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null && isValidReceiptFile();
-      allow delete: if request.auth != null;
+    // Justificatifs personnels (compte sans organisation) : strictement limités au propriétaire
+    match /receipts/{userId}/{fileName} {
+      allow read: if isAuthenticated() && (
+        (request.auth.uid == userId && userId != 'public')
+        || isSuperAdmin()
+      );
+      allow create, update: if isAuthenticated()
+        && ((request.auth.uid == userId && userId != 'public') || isSuperAdmin())
+        && isValidReceiptFile();
+      allow delete: if isAuthenticated() && (
+        (request.auth.uid == userId && userId != 'public')
+        || isSuperAdmin()
+      );
     }
   }
 }
