@@ -186,17 +186,24 @@ def test_payload_validation_positive_and_dedup():
 
 
 def test_payload_validation_negative_and_injection_and_boundaries():
-    # Header injection across every header-bearing field
+    # Header injection (CRLF & NUL) across every header-bearing field, incl. trailing CRLF before .strip()
     with pytest.raises(ValueError):
         email_security.validate_and_sanitize_email_payload(["a@x.ch\r\nBcc: evil@x.ch"], "Ok", text="Body")
+    with pytest.raises(ValueError):
+        email_security.validate_and_sanitize_email_payload(["a@x.ch\r\n"], "Ok", text="Body")
     with pytest.raises(ValueError):
         email_security.validate_and_sanitize_email_payload(["a@x.ch"], "Sujet\nBcc: evil@x.ch", text="Body")
     with pytest.raises(ValueError):
         email_security.validate_and_sanitize_email_payload(["a@x.ch"], "Sujet\r", text="Body")
     with pytest.raises(ValueError):
+        email_security.validate_and_sanitize_email_payload(["a@x.ch"], "Sujet\x00", text="Body")
+    with pytest.raises(ValueError):
         email_security.validate_and_sanitize_email_payload(["a@x.ch"], "Sujet", text="Body", from_name="Fake <spoof@x.ch>")
     with pytest.raises(ValueError):
         email_security.validate_and_sanitize_email_payload(["a@x.ch"], "Sujet", text="Body", from_name="Ok\nFrom: evil@x.ch")
+    with pytest.raises(ValueError):
+        email_security.validate_and_sanitize_email_payload(["a@x.ch"], "Sujet", text="Body", from_name="Ok\x00")
+    assert email_security.validate_and_sanitize_email_payload(["a@b.c"], "Ok", text="Body")["to"] == ["a@b.c"]
     with pytest.raises(ValueError):
         email_security.validate_and_sanitize_email_payload(["a@x.ch"], "Sujet", text="Body", reply_to="x@y.ch\nBcc: e@e.ch")
     with pytest.raises(ValueError):

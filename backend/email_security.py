@@ -42,7 +42,7 @@ def is_valid_email_address(addr: str) -> bool:
         return False
     if has_header_injection(addr):
         return False
-    if len(addr) < 3 or len(addr) > 254:
+    if len(addr) > 254:
         return False
     return bool(_EMAIL_RE.match(addr))
 
@@ -52,7 +52,7 @@ def verify_mailer_secret(provided: Optional[str], configured_secret: Optional[st
     if not isinstance(provided, str) or not isinstance(configured_secret, str):
         return False
     secret = configured_secret.strip()
-    if len(secret) < MIN_INTERNAL_SECRET_LEN or not provided or has_header_injection(provided):
+    if len(secret) < MIN_INTERNAL_SECRET_LEN or not provided:
         return False
     return hmac.compare_digest(provided.encode("utf-8"), secret.encode("utf-8"))
 
