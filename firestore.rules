@@ -27,6 +27,10 @@ service cloud.firestore {
       return value is string ? value.trim().lower() : '';
     }
 
+    function isApprovedMemberDoc(data) {
+      return data.get('status', 'approved') == 'approved';
+    }
+
     function orgMemberPathByUid(orgId) {
       return /databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid);
     }
@@ -41,7 +45,9 @@ service cloud.firestore {
 
     function comptaSubRole(orgId, comptaId) {
       let path = comptaMemberPath(orgId, comptaId);
-      return exists(path) ? normRole(get(path).data.get('role', '')) : '';
+      return exists(path)
+        ? ('role' in get(path).data ? normRole(get(path).data.role) : 'comptable')
+        : '';
     }
 
     // comptaAccess peut être absent ou null sur d'anciennes fiches : on retombe alors sur une map vide
@@ -50,17 +56,15 @@ service cloud.firestore {
     }
 
     function orgMemberAccessRole(path, comptaId) {
-      return exists(path) ? normRole(comptaAccessOf(get(path).data).get(comptaId, '')) : '';
+      return exists(path) && isApprovedMemberDoc(get(path).data)
+        ? normRole(comptaAccessOf(get(path).data).get(comptaId, ''))
+        : '';
     }
 
     function orgMemberOrgRole(path) {
-      return exists(path) ? normRole(get(path).data.get('role', '')) : '';
-    }
-
-    function hasAnyOrgComptaAccess(path) {
-      return exists(path)
-        && get(path).data.get('status', 'approved') != 'rejected'
-        && comptaAccessOf(get(path).data).size() > 0;
+      return exists(path) && isApprovedMemberDoc(get(path).data)
+        ? normRole(get(path).data.get('role', ''))
+        : '';
     }
 
     function isOrgAdmin(orgId) {
@@ -69,18 +73,72 @@ service cloud.firestore {
         || (authEmail() != '' && orgMemberOrgRole(orgMemberPathByEmail(orgId)) == 'admin');
     }
 
-    // Vérifie que l'utilisateur possède au moins un rôle actif dans l'organisation ou la comptabilité
-    function hasAnyRoleInOrgOrCompta(orgId, comptaId) {
+    function hasRoleOnCompta(orgId, comptaId, allowedRoles) {
+      return comptaSubRole(orgId, comptaId) in allowedRoles
+        || orgMemberAccessRole(orgMemberPathByUid(orgId), comptaId) in allowedRoles
+        || (authEmail() != '' && orgMemberAccessRole(orgMemberPathByEmail(orgId), comptaId) in allowedRoles);
+    }
+
+    function isComptaAccountingWriter(orgId, comptaId) {
+      return isAuthenticated() && (
+        isOrgAdmin(orgId)
+        || hasRoleOnCompta(orgId, comptaId, ['caissier', 'comptable', 'admin'])
+      );
+    }
+
+    function isComptaVerificateur(orgId, comptaId) {
+      return isAuthenticated()
+        && hasRoleOnCompta(orgId, comptaId, ['verificateur']);
+    }
+
+    function isComptaViewer(orgId, comptaId) {
+      return isAuthenticated()
+        && hasRoleOnCompta(orgId, comptaId, ['viewer']);
+    }
+
+    function isComptaRentalManager(orgId, comptaId) {
+      return isAuthenticated() && (
+        orgMemberOrgRole(orgMemberPathByUid(orgId)) in ['responsable_location', 'location']
+        || (authEmail() != '' && orgMemberOrgRole(orgMemberPathByEmail(orgId)) in ['responsable_location', 'location'])
+        || hasRoleOnCompta(orgId, comptaId, ['responsable_location', 'location'])
+      );
+    }
+
+    function isComptaUploader(orgId, comptaId) {
+      return isAuthenticated()
+        && hasRoleOnCompta(orgId, comptaId, ['uploader']);
+    }
+
+    function canReadCompta(orgId, comptaId) {
+      return isComptaAccountingWriter(orgId, comptaId)
+        || isComptaVerificateur(orgId, comptaId)
+        || isComptaViewer(orgId, comptaId);
+    }
+
+    function hasOrgCaissierDoc(path) {
+      return exists(path)
+        && isApprovedMemberDoc(get(path).data)
+        && (
+          normRole(get(path).data.get('role', '')) in ['caissier', 'comptable']
+          || comptaAccessOf(get(path).data).values().hasAny(['caissier', 'comptable', 'admin'])
+        );
+    }
+
+    function isOrgCaissier(orgId) {
       return isOrgAdmin(orgId)
-        || exists(comptaMemberPath(orgId, comptaId))
-        || hasAnyOrgComptaAccess(orgMemberPathByUid(orgId))
-        || (authEmail() != '' && hasAnyOrgComptaAccess(orgMemberPathByEmail(orgId)));
+        || hasOrgCaissierDoc(orgMemberPathByUid(orgId))
+        || (authEmail() != '' && hasOrgCaissierDoc(orgMemberPathByEmail(orgId)));
+    }
+
+    // Conservation temporaire pour create/members au niveau org (durcissement dédié dans SEC-02)
+    function hasAnyOrgComptaAccess(path) {
+      return exists(path)
+        && isApprovedMemberDoc(get(path).data)
+        && comptaAccessOf(get(path).data).size() > 0;
     }
 
     function hasUploaderRole(orgId, comptaId) {
-      return comptaSubRole(orgId, comptaId) == 'uploader'
-        || orgMemberAccessRole(orgMemberPathByUid(orgId), comptaId) == 'uploader'
-        || (authEmail() != '' && orgMemberAccessRole(orgMemberPathByEmail(orgId), comptaId) == 'uploader');
+      return hasRoleOnCompta(orgId, comptaId, ['uploader']);
     }
 
     // true si l'utilisateur est "uploader" sur cette comptabilité et n'a aucun rôle supérieur
@@ -89,13 +147,6 @@ service cloud.firestore {
         && !isSuperAdmin()
         && hasUploaderRole(orgId, comptaId)
         && !isOrgAdmin(orgId);
-    }
-
-    // Un utilisateur avec rôle supérieur à "uploader" (caissier, comptable, vérificateur, viewer, admin)
-    function hasFullComptaRole(orgId, comptaId) {
-      return isAuthenticated()
-        && hasAnyRoleInOrgOrCompta(orgId, comptaId)
-        && !isUploaderOnly(orgId, comptaId);
     }
 
     // Un uploader ne peut pas modifier son propre profil membre (anti-élévation de privilèges)
@@ -176,50 +227,88 @@ service cloud.firestore {
 
       match /comptabilites/{comptaId} {
         allow read: if isAuthenticated();
-        allow create: if isAuthenticated() && (
-          isOrgAdmin(orgId)
-          || hasAnyOrgComptaAccess(orgMemberPathByUid(orgId))
-          || (authEmail() != '' && hasAnyOrgComptaAccess(orgMemberPathByEmail(orgId)))
-        );
-        allow update, delete: if hasFullComptaRole(orgId, comptaId);
+        allow create: if isAuthenticated() && isOrgCaissier(orgId);
+        allow update, delete: if isComptaAccountingWriter(orgId, comptaId);
 
-        // Sous-collections génériques (accounts, transactions, settings, categories...)
-        // Un "uploader" ne peut PAS lire les écritures bancaires ("transactions"), et un inscrit sans rôle ne peut rien lire ni écrire.
+        // Écritures bancaires : lecture autorisée pour caissier/vérificateur/lecteur uniquement ;
+        // écriture complète pour caissier/admin ; propositions & commentaires encadrés pour vérificateur/lecteur.
+        match /transactions/{txId} {
+          allow read: if canReadCompta(orgId, comptaId);
+          allow create, delete: if isComptaAccountingWriter(orgId, comptaId);
+          allow update: if isComptaAccountingWriter(orgId, comptaId)
+            || (
+              isComptaVerificateur(orgId, comptaId)
+              && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['amount', 'date', 'id', 'runningBalance'])
+            )
+            || (
+              isComptaViewer(orgId, comptaId)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['comments'])
+            );
+        }
+
+        // Sous-collections génériques (accounts, settings, categories, notifications...)
+        // Un "uploader" ne peut lire que 'accounts' pour préparer un dépôt, et ne peut rien écrire.
         match /{sub}/{docId=**} {
           allow read: if isAuthenticated()
             && sub != 'receipts'
-            && hasAnyRoleInOrgOrCompta(orgId, comptaId)
-            && (sub != 'transactions' || !isUploaderOnly(orgId, comptaId));
-          allow write: if sub != 'receipts'
+            && sub != 'transactions'
             && sub != 'members'
-            && hasFullComptaRole(orgId, comptaId);
+            && sub != 'rentals'
+            && (
+              canReadCompta(orgId, comptaId)
+              || (sub == 'accounts' && (isComptaUploader(orgId, comptaId) || isComptaRentalManager(orgId, comptaId)))
+            );
+          allow write: if sub != 'receipts'
+            && sub != 'transactions'
+            && sub != 'members'
+            && sub != 'rentals'
+            && (
+              isComptaAccountingWriter(orgId, comptaId)
+              || (sub == 'notifications' && isComptaRentalManager(orgId, comptaId))
+            );
         }
 
-        // Membres de la comptabilité (rôles) : un uploader ou sans-rôle ne peut pas s'auto-promouvoir
+        // Membres de la comptabilité (rôles) : gestion réservée aux caissiers/admins (jamais d'auto-promotion)
         match /members/{memberUid} {
-          allow read: if isAuthenticated();
-          allow write: if hasFullComptaRole(orgId, comptaId);
+          allow read: if isAuthenticated() && (
+            canReadCompta(orgId, comptaId)
+            || isComptaUploader(orgId, comptaId)
+            || isComptaRentalManager(orgId, comptaId)
+            || request.auth.uid == memberUid
+          );
+          allow create, update: if (
+            isComptaAccountingWriter(orgId, comptaId)
+            || (isOrgCaissier(orgId) && request.auth.uid == memberUid)
+          ) && normRole(request.resource.data.get('role', '')) in [
+            'caissier', 'comptable', 'verificateur', 'viewer', 'uploader', 'responsable_location', 'location'
+          ];
+          allow delete: if isComptaAccountingWriter(orgId, comptaId);
         }
 
         // Locations de locaux (responsable des locations, caissier, admin)
         match /rentals/{rentalId} {
-          allow read, write: if isAuthenticated() && hasAnyRoleInOrgOrCompta(orgId, comptaId);
+          allow read: if canReadCompta(orgId, comptaId) || isComptaRentalManager(orgId, comptaId);
+          allow write: if isComptaAccountingWriter(orgId, comptaId) || isComptaRentalManager(orgId, comptaId);
         }
 
-        // Justificatifs : un uploader crée et relit uniquement ses propres envois ; aucun accès pour les inscrits sans rôle
+        // Justificatifs : un uploader crée et relit uniquement ses propres envois ;
+        // un lecteur lit uniquement ; un vérificateur peut lier une pièce ; un caissier/admin gère tout.
         match /receipts/{receiptId} {
-          allow read: if isAuthenticated()
-            && hasAnyRoleInOrgOrCompta(orgId, comptaId)
-            && (
-              !isUploaderOnly(orgId, comptaId) ||
-              resource.data.get('submittedByUid', '') == request.auth.uid
-            );
-          allow create: if isAuthenticated()
-            && hasAnyRoleInOrgOrCompta(orgId, comptaId)
-            && (
-              !isUploaderOnly(orgId, comptaId) || isValidUploaderReceipt()
-            );
-          allow update, delete: if hasFullComptaRole(orgId, comptaId);
+          allow read: if canReadCompta(orgId, comptaId)
+            || ((isComptaUploader(orgId, comptaId) || isComptaRentalManager(orgId, comptaId))
+              && resource != null
+              && resource.data.get('submittedByUid', '') == request.auth.uid)
+            || (resource == null && isOrgCaissier(orgId));
+          allow create: if isComptaAccountingWriter(orgId, comptaId)
+            || ((isComptaUploader(orgId, comptaId) || isComptaRentalManager(orgId, comptaId)) && isValidUploaderReceipt())
+            || (isOrgCaissier(orgId) && (
+              request.resource.data.get('submittedByUid', '') == request.auth.uid
+              || 'transferRequest' in request.resource.data
+            ));
+          allow update: if isComptaAccountingWriter(orgId, comptaId)
+            || (isComptaVerificateur(orgId, comptaId)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['linkedTransactionId']));
+          allow delete: if isComptaAccountingWriter(orgId, comptaId);
         }
       }
     }
