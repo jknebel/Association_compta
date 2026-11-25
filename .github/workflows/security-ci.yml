@@ -63,8 +63,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt pytest httpx
 
-      - name: Run SEC-04 Backend Security Tests
-        run: pytest -v backend/tests/test_sec04_email.py
+      - name: Run SEC-04 & SEC-05 Backend Security Tests
+        run: pytest -v backend/tests/test_sec*.py
 
       - name: Run SEC-04 Python Mutation Tests
         run: python backend/tests/mutation_sec04.py

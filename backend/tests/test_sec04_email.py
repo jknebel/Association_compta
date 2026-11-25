@@ -131,7 +131,7 @@ def patched_app(monkeypatch):
         "tok-rejected": {"uid": "rejected-cais", "email": "rej@asso.ch"},
         "tok-stranger": {"uid": "stranger", "email": "stranger@asso.ch"},
         "tok-super-claim": {"uid": "sa-claim", "email": "sa@asso.ch", "superAdmin": True},
-        "tok-super-email": {"uid": "any-uid", "email": "Quokka@tdgl.ch"},
+        "tok-super-email": {"uid": "any-uid", "email": "Quokka@tdgl.ch", "email_verified": True},
         "tok-no-uid": {"email": "cais1@asso.ch"},
     }
 

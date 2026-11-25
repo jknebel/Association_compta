@@ -13,13 +13,19 @@ service cloud.firestore {
     }
 
     function authEmail() {
-      return ('email' in request.auth.token) ? request.auth.token.email.lower() : '';
+      return (
+        'email' in request.auth.token
+        && request.auth.token.email is string
+        && request.auth.token.get('email_verified', false) == true
+      )
+        ? request.auth.token.email.lower()
+        : '';
     }
 
     function isSuperAdmin() {
       return isAuthenticated() && (
         request.auth.token.get('superAdmin', false) == true
-        || authEmail() in ['jean.francois.knebel@gmail.com', 'jean-francois@knebel.ch']
+        || authEmail() in ['jean.francois.knebel@gmail.com', 'jean-francois@knebel.ch', 'quokka@tdgl.ch']
       );
     }
 

@@ -43,6 +43,12 @@ MUTANTS: List[Dict[str, Any]] = [
     {"name": "M22 endpoint disables rate limiter", "file": M, "find": "if not _EMAIL_RATE_LIMITER.allow(actor_key):", "replace": "if False:"},
     {"name": "M23 endpoint ignores ValueError from payload validation", "file": M, "find": '    except ValueError as val_err:\n        raise HTTPException(status_code=400, detail=str(val_err))', "replace": '    except ValueError:\n        sanitized = {"to": list(request.to or []), "subject": request.subject or "", "text": request.text or "", "html": request.html, "from_name": request.from_name or "Asso", "reply_to": request.reply_to}'},
     {"name": "M24 endpoint skips server audit mail logging", "file": M, "find": 'db.collection("mail").add({', "replace": 'if False: db.collection("mail").add({'},
+    # SEC-05 mutants
+    {"name": "M25 verified_token_email skips email_verified check", "file": E, "find": 'if decoded_token.get("email_verified") is not True:\n        return ""', "replace": "pass"},
+    {"name": "M26 verified_token_email accepts truthy non-bool strings/ints", "file": E, "find": 'decoded_token.get("email_verified") is not True', "replace": 'not decoded_token.get("email_verified")'},
+    {"name": "M27 verify_firebase_token ignores email_verified", "file": M, "find": '    uid = decoded.get("uid") or ""\n    email = verified_token_email(decoded)\n    if not _user_has_any_role(uid, email):', "replace": '    uid = decoded.get("uid") or ""\n    email = decoded.get("email") or ""\n    if not _user_has_any_role(uid, email):'},
+    {"name": "M28 send_email_endpoint ignores email_verified", "file": M, "find": '        uid = decoded.get("uid") or ""\n        email = verified_token_email(decoded)\n        if not uid:', "replace": '        uid = decoded.get("uid") or ""\n        email = decoded.get("email") or ""\n        if not uid:'},
+    {"name": "M29 _user_has_any_role accepts pending members", "file": M, "find": 'if (m_data.get("status") or "approved").strip().lower() != "approved":', "replace": 'if (m_data.get("status") or "").strip().lower() == "rejected":'},
 ]
 
 
@@ -56,7 +62,7 @@ def main() -> int:
     survivors: List[str] = []
     invalid: List[str] = []
 
-    print(f"SEC-04 Python Mutation Test: evaluating {len(MUTANTS)} mutants...")
+    print(f"SEC-04/SEC-05 Python Mutation Test: evaluating {len(MUTANTS)} mutants...")
     for mut in MUTANTS:
         src = originals[mut["file"]]
         find = mut["find"]
@@ -78,7 +84,7 @@ def main() -> int:
 
             env = {**os.environ, "SEC04_BACKEND_DIR": str(tmp_path)}
             res = subprocess.run(
-                [sys.executable, "-m", "pytest", "-q", str(TEST_FILE)],
+                [sys.executable, "-m", "pytest", "-q", str(BACKEND_DIR / "tests")],
                 cwd=str(BACKEND_DIR.parent),
                 env=env,
                 capture_output=True,
