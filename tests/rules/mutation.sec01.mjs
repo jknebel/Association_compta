@@ -104,8 +104,11 @@ const mutants = [
   { name: 'F60 collectionGroup invitations lisible par tous', file: F, find: 'match /{path=**}/invitations/{inviteId} {\n      allow read: if isAuthenticated() && (', replace: 'match /{path=**}/invitations/{inviteId} {\n      allow read: if isAuthenticated() || (' },
   { name: 'F61 collection mail lisible par tout connecté', file: F, find: 'match /mail/{mailId} {\n      allow read: if isSuperAdmin();', replace: 'match /mail/{mailId} {\n      allow read: if isAuthenticated();' },
   { name: 'F62 collection mail écrivable côté client', file: F, find: 'match /mail/{mailId} {\n      allow read: if isSuperAdmin();\n      allow write: if false;', replace: 'match /mail/{mailId} {\n      allow read: if isSuperAdmin();\n      allow write: if isAuthenticated();' },
+  // --- SEC-05 : email_verified obligatoire ---
+  { name: 'F63 firestore authEmail sans contrôle email_verified', file: F, find: "&& request.auth.token.get('email_verified', false) == true", replace: '' },
 
-  // --- Storage (SEC-01 & SEC-03) ---
+  // --- Storage (SEC-01, SEC-03 & SEC-05) ---
+  { name: 'S25 storage authEmail sans contrôle email_verified', file: S, find: "&& 'email_verified' in request.auth.token\n        && request.auth.token.email_verified == true", replace: '' },
   { name: 'S01 taille <= 5 Mo', file: S, find: 'request.resource.size < 5 * 1024 * 1024', replace: 'request.resource.size <= 5 * 1024 * 1024' },
   { name: 'S02 taille < 6 Mo', file: S, find: 'request.resource.size < 5 * 1024 * 1024', replace: 'request.resource.size < 6 * 1024 * 1024' },
   { name: 'S03 taille < 4 Mo', file: S, find: 'request.resource.size < 5 * 1024 * 1024', replace: 'request.resource.size < 4 * 1024 * 1024' },

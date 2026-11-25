@@ -31,6 +31,16 @@ _EMAIL_RE = re.compile(
 )
 
 
+def verified_token_email(decoded_token: Any) -> str:
+    """Return normalized email only when Firebase ID token asserts email_verified is strictly True."""
+    if not isinstance(decoded_token, dict):
+        return ""
+    if decoded_token.get("email_verified") is not True:
+        return ""
+    raw_email = decoded_token.get("email")
+    return raw_email.strip().lower() if isinstance(raw_email, str) else ""
+
+
 def has_header_injection(value: str) -> bool:
     """Return True if value contains CR, LF, or NUL bytes."""
     return "\r" in value or "\n" in value or "\x00" in value

@@ -1151,6 +1151,7 @@ try:
         EmailRateLimiter,
         user_can_send_email,
         validate_and_sanitize_email_payload,
+        verified_token_email,
         verify_mailer_secret,
     )
 except ImportError:
@@ -1158,6 +1159,7 @@ except ImportError:
         EmailRateLimiter,
         user_can_send_email,
         validate_and_sanitize_email_payload,
+        verified_token_email,
         verify_mailer_secret,
     )
 
@@ -1177,7 +1179,7 @@ _VALID_ROLES = {
     "responsable_location",
     "location",
 }
-_ROLE_CACHE: Dict[str, tuple] = {}  # uid -> (has_role: bool, expires_at: float)
+_ROLE_CACHE: Dict[tuple, tuple] = {}  # (uid, verified_email) -> (has_role: bool, expires_at: float)
 _ROLE_CACHE_TTL_SEC = 60.0
 
 def _is_valid_role(raw_role: Any) -> bool:
@@ -1191,7 +1193,8 @@ def _user_has_any_role(uid: str, email: str) -> bool:
         return False
 
     now = _time.time()
-    cached = _ROLE_CACHE.get(uid)
+    cache_key = (uid, norm_email)
+    cached = _ROLE_CACHE.get(cache_key)
     if cached and cached[1] > now:
         return cached[0]
 
@@ -1222,7 +1225,7 @@ def _user_has_any_role(uid: str, email: str) -> bool:
                 )
                 if not matches:
                     continue
-                if (m_data.get("status") or "").strip().lower() == "rejected":
+                if (m_data.get("status") or "approved").strip().lower() != "approved":
                     continue
 
                 if _is_valid_role(m_data.get("role")):
@@ -1238,7 +1241,7 @@ def _user_has_any_role(uid: str, email: str) -> bool:
         has_role = False
 
     if has_role:
-        _ROLE_CACHE[uid] = (True, now + _ROLE_CACHE_TTL_SEC)
+        _ROLE_CACHE[cache_key] = (True, now + _ROLE_CACHE_TTL_SEC)
     return has_role
 
 async def verify_firebase_token(authorization: Optional[str] = Header(default=None)):
@@ -1257,7 +1260,7 @@ async def verify_firebase_token(authorization: Optional[str] = Header(default=No
         raise HTTPException(status_code=401, detail="Invalid or expired Firebase ID token.")
 
     uid = decoded.get("uid") or ""
-    email = decoded.get("email") or ""
+    email = verified_token_email(decoded)
     if not _user_has_any_role(uid, email):
         raise HTTPException(
             status_code=403,
@@ -1821,7 +1824,7 @@ async def send_email_endpoint(
             raise HTTPException(status_code=401, detail="Invalid or expired Firebase ID token.")
 
         uid = decoded.get("uid") or ""
-        email = decoded.get("email") or ""
+        email = verified_token_email(decoded)
         if not uid:
             raise HTTPException(status_code=401, detail="Invalid Firebase token payload.")
         if not (decoded.get("superAdmin") is True or user_can_send_email(uid, email, _SUPER_ADMIN_EMAILS, db)):

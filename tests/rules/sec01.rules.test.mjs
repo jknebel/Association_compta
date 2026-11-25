@@ -160,7 +160,7 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
 
     it("un uploader hérité (profil identifié par e-mail, casse différente) peut créer", async () => {
       await assertSucceeds(
-        dbOf('leg1', { email: 'Legacy@X.ch' }).doc(`${C1}/receipts/new13`).set(newReceipt('leg1'))
+        dbOf('leg1', { email: 'Legacy@X.ch', email_verified: true }).doc(`${C1}/receipts/new13`).set(newReceipt('leg1'))
       );
     });
 
@@ -250,7 +250,7 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
     });
 
     it("un uploader hérité (e-mail) ne peut pas modifier son profil ni les écritures", async () => {
-      const db = dbOf('leg1', { email: 'legacy@x.ch' });
+      const db = dbOf('leg1', { email: 'legacy@x.ch', email_verified: true });
       await assertFails(db.doc(`organizations/${ORG}/members/legacy@x.ch`).update({ 'comptaAccess.c1': 'caissier' }));
       await assertFails(db.doc(`${C1}/transactions/t1`).delete());
     });
@@ -262,7 +262,7 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
     });
 
     it("un uploader ne peut pas contourner la restriction en créant son profil uid (profil e-mail existant)", async () => {
-      const db = dbOf('leg1', { email: 'legacy@x.ch' });
+      const db = dbOf('leg1', { email: 'legacy@x.ch', email_verified: true });
       await db.doc(`organizations/${ORG}/members/leg1`).set({ role: 'member', comptaAccess: { c1: 'caissier' } }).catch(() => {});
       await assertFails(db.doc(`${C1}/transactions/t1`).delete());
     });
@@ -386,7 +386,7 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
     });
 
     it("un utilisateur sans rôle sur la comptabilité conserve le comportement historique (super-admins codés en dur)", async () => {
-      const db = dbOf('stranger', { email: 'jean-francois@knebel.ch' });
+      const db = dbOf('stranger', { email: 'jean-francois@knebel.ch', email_verified: true });
       await assertSucceeds(db.doc(`${C1}/transactions/t1`).update({ amount: 2 }));
       await assertSucceeds(db.doc(`${C1}/receipts/r-cais1`).get());
     });
@@ -579,7 +579,7 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
     it("POSITIF, NÉGATIF & LIMITES : /invitations et collectionGroup('invitations')", async () => {
       // Positif : créateur lit sa propre invitation (uid ou email) et orgadmin lit/approuve/supprime
       await assertSucceeds(dbOf('pending1').doc(`organizations/${ORG}/invitations/inv-seed`).get());
-      await assertSucceeds(dbOf('other-uid', { email: 'pending1@x.ch' }).doc(`organizations/${ORG}/invitations/inv-seed`).get());
+      await assertSucceeds(dbOf('other-uid', { email: 'pending1@x.ch', email_verified: true }).doc(`organizations/${ORG}/invitations/inv-seed`).get());
       await assertSucceeds(dbOf('orgadmin').doc(`organizations/${ORG}/invitations/inv-seed`).get());
       await assertSucceeds(dbOf('pending1').collectionGroup('invitations').where('uid', '==', 'pending1').get());
       await assertSucceeds(dbOf('orgadmin').collectionGroup('invitations').where('orgId', '==', ORG).get());
@@ -743,5 +743,44 @@ describe('[SEC-04] firestore.rules — verrouillage /mail', () => {
     await assertFails(dbOf('sa-user', { superAdmin: true }).doc('mail/m-new').set({ to: ['x@x.ch'] }));
     await assertFails(dbOf('sa-user', { superAdmin: true }).doc('mail/m-seed').update({ subject: 'Tamper' }));
     await assertFails(dbOf('sa-user', { superAdmin: true }).doc('mail/m-seed').delete());
+  });
+});
+
+describe('[SEC-05] email_verified obligatoire (Firestore & Storage)', () => {
+  beforeEach(seed);
+
+  const bytes = (size) => new Uint8Array(size);
+  const storageOf = (uid, claims) => testEnv.authenticatedContext(uid, claims).storage();
+
+  it('POSITIF : un compte avec email_verified: true accède via son e-mail (legacy, invitation, superAdmin)', async () => {
+    await assertSucceeds(dbOf('leg1', { email: 'Legacy@X.ch', email_verified: true }).doc(`${C1}/receipts/sec05-ok`).set(newReceipt('leg1')));
+    await assertSucceeds(dbOf('other-uid', { email: 'pending1@x.ch', email_verified: true }).doc(`organizations/${ORG}/invitations/inv-seed`).get());
+    await assertSucceeds(dbOf('quokka-uid', { email: 'quokka@tdgl.ch', email_verified: true }).doc('mail/m-seed').get());
+    await assertSucceeds(storageOf('quokka-uid', { email: 'quokka@tdgl.ch', email_verified: true }).ref('receipts/o1/c1/sa-verif.jpg').put(bytes(100), { contentType: 'image/jpeg' }));
+  });
+
+  it("NÉGATIF & LIMITES : email_verified false, absent ou non booléen n'accorde aucun droit par e-mail", async () => {
+    // Firestore : pré-inscription legacy@x.ch bloquée si email non vérifié
+    for (const badClaims of [
+      { email: 'legacy@x.ch', email_verified: false },
+      { email: 'legacy@x.ch' },
+      { email: 'legacy@x.ch', email_verified: 'true' },
+      { email: 'legacy@x.ch', email_verified: 1 },
+      { email: 'legacy@x.ch', email_verified: null },
+    ]) {
+      await assertFails(dbOf('attacker-leg', badClaims).doc(`${C1}/receipts/sec05-bad`).set(newReceipt('attacker-leg')));
+    }
+
+    // Firestore : invitation d'autrui inaccessible si email non vérifié
+    await assertFails(dbOf('attacker-inv', { email: 'pending1@x.ch', email_verified: false }).doc(`organizations/${ORG}/invitations/inv-seed`).get());
+    await assertFails(dbOf('attacker-inv2', { email: 'pending1@x.ch' }).doc(`organizations/${ORG}/invitations/inv-seed`).get());
+
+    // Firestore : email SuperAdmin non vérifié refusé
+    await assertFails(dbOf('attacker-sa', { email: 'jean-francois@knebel.ch', email_verified: false }).doc('mail/m-seed').get());
+    await assertFails(dbOf('attacker-sa2', { email: 'quokka@tdgl.ch' }).doc(`${C1}/transactions/t1`).update({ amount: 999 }));
+
+    // Storage : email SuperAdmin non vérifié refusé
+    await assertFails(storageOf('attacker-sa', { email: 'quokka@tdgl.ch', email_verified: false }).ref('receipts/o1/c1/hijack.jpg').put(bytes(100), { contentType: 'image/jpeg' }));
+    await assertFails(storageOf('attacker-sa2', { email: 'jean-francois@knebel.ch' }).ref('receipts/o1/c1/hijack2.jpg').put(bytes(100), { contentType: 'image/jpeg' }));
   });
 });
