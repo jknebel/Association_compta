@@ -7,6 +7,10 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -56,9 +60,43 @@ jobs:
         run: |
           pip install -r backend/requirements.txt
 
-  # 3. BUILD & DEPLOY BACKEND (Cloud Run)
+  # 3. BUILD CHECK (Runs on PR and push without secrets or live deploys)
+  build-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run SEC-07 Workflow & Mutation Tests
+        run: |
+          node --test tests/sec07.workflows.test.mjs
+          node tests/mutation.sec07.mjs
+
+      - name: Build Frontend (Safe Check)
+        run: npm run build
+        env:
+          VITE_API_URL: https://example.invalid
+          VITE_FIREBASE_API_KEY: dummy
+          VITE_FIREBASE_AUTH_DOMAIN: dummy.firebaseapp.com
+          VITE_FIREBASE_PROJECT_ID: demo-sec07
+          VITE_FIREBASE_STORAGE_BUCKET: demo-sec07.appspot.com
+          VITE_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+          VITE_FIREBASE_APP_ID: 1:000000000000:web:dummy
+
+  # 4. BUILD & DEPLOY BACKEND (Cloud Run - Manual workflow_dispatch only on legacy main)
   deploy-backend:
     needs: changes
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
@@ -125,10 +163,10 @@ jobs:
              echo "url=$EXISTING_URL" >> $GITHUB_OUTPUT
           fi
 
-  # 4. BUILD & DEPLOY FRONTEND (Firebase Hosting)
+  # 5. BUILD & DEPLOY FRONTEND (Firebase Hosting - Manual workflow_dispatch only on legacy main)
   deploy-frontend:
     needs: [changes, deploy-backend]
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       checks: write
@@ -141,15 +179,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: Install Dependencies
-        run: npm install
+        run: npm ci
 
       # Build with environment variables
       - name: Build Frontend
         run: npm run build
         env:
-          VITE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           VITE_API_URL: ${{ needs.deploy-backend.outputs.backend_url }}
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
