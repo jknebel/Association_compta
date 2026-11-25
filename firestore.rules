@@ -181,7 +181,16 @@ service cloud.firestore {
       return data.get('submittedByUid', '') == request.auth.uid
         && !data.keys().hasAny(['reimbursedAt', 'reimbursedByUid', 'reimbursedByName', 'transferRequest', 'transferHistory'])
         && data.get('reimbursementStatus', null) in ['PENDING', null]
-        && data.get('linkedTransactionId', null) == null;
+        && data.get('linkedTransactionId', null) == null
+        && (
+          data.get('url', null) == null
+          || (
+            data.url is string
+            && data.url.size() > 0
+            && data.url.size() <= 2048
+            && data.url.matches('^https://(firebasestorage\\.googleapis\\.com|storage\\.googleapis\\.com|[a-zA-Z0-9-]+\\.firebasestorage\\.app)/.*')
+          )
+        );
     }
 
     function isApprovedOrgMember(orgId) {

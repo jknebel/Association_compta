@@ -120,6 +120,8 @@ const mutants = [
   { name: 'F73 inviteCodes modifiable/supprimable par non-admin', file: F, find: "allow create, update: if isAuthenticated()\n        && request.resource.data.get('orgId', '') is string\n        && request.resource.data.orgId != ''\n        && isOrgAdmin(request.resource.data.orgId);", replace: 'allow create, update: if isAuthenticated();' },
   { name: 'F74 org members listable par non-membre / pending', file: F, find: 'allow list: if isAuthenticated() && isApprovedOrgMember(orgId);', replace: 'allow list: if isAuthenticated();' },
   { name: 'F75 collectionGroup members lisible pour les fiches d autrui', file: F, find: 'allow list: if isAuthenticated() && (', replace: 'allow list: if isAuthenticated() || (' },
+  // --- SEC-09 : URL safe receipt ---
+  { name: 'F76 uploader receipt accepte URL non autorisée (XSS/SSRF)', file: F, find: "&& data.url.matches('^https://(firebasestorage\\\\.googleapis\\\\.com|storage\\\\.googleapis\\\\.com|[a-zA-Z0-9-]+\\\\.firebasestorage\\\\.app)/.*')", replace: '' },
 
   // --- Storage (SEC-01, SEC-03 & SEC-05) ---
   { name: 'S25 storage authEmail sans contrôle email_verified', file: S, find: "&& 'email_verified' in request.auth.token\n        && request.auth.token.email_verified == true", replace: '' },

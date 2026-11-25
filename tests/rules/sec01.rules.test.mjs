@@ -110,7 +110,7 @@ const anonDb = () => testEnv.unauthenticatedContext().firestore();
 
 const newReceipt = (uid, extra = {}) => ({
   fileName: 'ticket.jpg',
-  url: 'https://example.com/x.jpg',
+  url: 'https://firebasestorage.googleapis.com/v0/b/compta-ai.appspot.com/o/ticket.jpg?alt=media',
   uploadDate: '2026-10-21',
   isAnalyzed: false,
   submittedByUid: uid,
@@ -866,5 +866,39 @@ describe('[SEC-06] Verrouillage /organizations, inviteCode, /users et /members',
     await mustFail('stranger-members-list', dbOf('stranger').collection(`organizations/${ORG}/members`).get());
     await mustFail('stranger-members-get-other', dbOf('stranger').doc(`organizations/${ORG}/members/upl1`).get());
     await mustFail('cais-collectionGroup-members', dbOf('cais1').collectionGroup('members').get());
+  });
+});
+
+describe('[SEC-09] Validation URL Firebase Storage sur receipts uploadés', () => {
+  beforeEach(seed);
+
+  it('POSITIF : accepte URLs firebasestorage.googleapis.com, storage.googleapis.com et *.firebasestorage.app', async () => {
+    await assertSucceeds(
+      dbOf('upl1').doc(`${C1}/receipts/sec09-fs`).set(
+        newReceipt('upl1', { url: 'https://firebasestorage.googleapis.com/v0/b/compta-ai.appspot.com/o/r.pdf?alt=media' })
+      )
+    );
+    await assertSucceeds(
+      dbOf('upl1').doc(`${C1}/receipts/sec09-gcs`).set(
+        newReceipt('upl1', { url: 'https://storage.googleapis.com/compta-ai.appspot.com/r.png' })
+      )
+    );
+    await assertSucceeds(
+      dbOf('upl1').doc(`${C1}/receipts/sec09-app`).set(
+        newReceipt('upl1', { url: 'https://compta-ai.firebasestorage.app/o/r.jpg' })
+      )
+    );
+  });
+
+  it('NÉGATIF & LIMITES : refuse javascript:, data:, http://, domaine externe et URL > 2048 caractères', async () => {
+    await assertFails(dbOf('upl1').doc(`${C1}/receipts/sec09-js`).set(newReceipt('upl1', { url: 'javascript:alert(1)' })));
+    await assertFails(dbOf('upl1').doc(`${C1}/receipts/sec09-data`).set(newReceipt('upl1', { url: 'data:text/html,<script>alert(1)</script>' })));
+    await assertFails(dbOf('upl1').doc(`${C1}/receipts/sec09-http`).set(newReceipt('upl1', { url: 'http://firebasestorage.googleapis.com/o/x.jpg' })));
+    await assertFails(dbOf('upl1').doc(`${C1}/receipts/sec09-evil`).set(newReceipt('upl1', { url: 'https://evil.example.com/firebasestorage.googleapis.com/x.jpg' })));
+    await assertFails(
+      dbOf('upl1').doc(`${C1}/receipts/sec09-long`).set(
+        newReceipt('upl1', { url: `https://firebasestorage.googleapis.com/${'a'.repeat(2049)}` })
+      )
+    );
   });
 });

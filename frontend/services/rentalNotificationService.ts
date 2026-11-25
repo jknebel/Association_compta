@@ -1,6 +1,7 @@
 import { collection, addDoc, doc, getDoc, getDocs, setDoc, updateDoc, getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { app } from './dataService';
+import { escapeHtml } from './urlAndHtmlSanitizer';
 import type { Rental, Receipt } from '../../types';
 
 const getDb = () => {
@@ -104,17 +105,20 @@ export const notifyRentalManagerOnVisa = async (
   const subject = `[AssoCompta TDGL] Location visée & confirmée : ${rental.renterName} (${rental.roomName})`;
   const textBody = `Bonjour ${rental.createdByName || 'Responsable des locations'},\n\nLa location pour « ${rental.renterName} » (${rental.roomName} - CHF ${rental.amount.toFixed(2)}) du ${rental.startDate} a bien été visée et enregistrée comme payée par ${caissierName}.\n\nLe statut a été mis à jour dans votre application mobile.\n\nCordialement,\nL'équipe AssoCompta TDGL`;
 
+  const endDateSuffix =
+    rental.endDate && rental.endDate !== rental.startDate ? `au ${escapeHtml(rental.endDate)}` : '';
+
   const htmlBody = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; rounded: 12px; background: #ffffff;">
       <h2 style="color: #059669; margin-top: 0;">✓ Location visée et confirmée</h2>
-      <p>Bonjour <strong>${rental.createdByName || 'Responsable des locations'}</strong>,</p>
+      <p>Bonjour <strong>${escapeHtml(rental.createdByName || 'Responsable des locations')}</strong>,</p>
       <p>La location suivante a bien été <strong>pointée et visée par la trésorerie</strong> :</p>
       <div style="background: #f8fafc; border-left: 4px solid #10b981; padding: 12px 16px; margin: 16px 0;">
-        <p style="margin: 4px 0;"><strong>Locataire :</strong> ${rental.renterName}</p>
-        <p style="margin: 4px 0;"><strong>Local / Salle :</strong> ${rental.roomName}</p>
-        <p style="margin: 4px 0;"><strong>Date(s) :</strong> ${rental.startDate} ${rental.endDate && rental.endDate !== rental.startDate ? 'au ' + rental.endDate : ''}</p>
-        <p style="margin: 4px 0;"><strong>Montant :</strong> <span style="color: #059669; font-weight: bold; font-size: 16px;">CHF ${rental.amount.toFixed(2)}</span></p>
-        <p style="margin: 4px 0;"><strong>Visé par :</strong> ${caissierName}</p>
+        <p style="margin: 4px 0;"><strong>Locataire :</strong> ${escapeHtml(rental.renterName)}</p>
+        <p style="margin: 4px 0;"><strong>Local / Salle :</strong> ${escapeHtml(rental.roomName)}</p>
+        <p style="margin: 4px 0;"><strong>Date(s) :</strong> ${escapeHtml(rental.startDate)} ${endDateSuffix}</p>
+        <p style="margin: 4px 0;"><strong>Montant :</strong> <span style="color: #059669; font-weight: bold; font-size: 16px;">CHF ${escapeHtml(rental.amount.toFixed(2))}</span></p>
+        <p style="margin: 4px 0;"><strong>Visé par :</strong> ${escapeHtml(caissierName)}</p>
       </div>
       <p style="color: #475569; font-size: 13px;">Le statut a été automatiquement actualisé en vert sur votre application mobile.</p>
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
@@ -198,11 +202,11 @@ export const checkAndAlertCaissierPendingRentals5Days = async (
           <p>Bonjour,</p>
           <p>La réservation suivante a été saisie il y a plus de 5 jours et est toujours <strong>en attente de visa / règlement bancaire</strong> :</p>
           <div style="background: #ffffff; border: 1px solid #fed7aa; border-left: 4px solid #f97316; padding: 12px 16px; margin: 16px 0; border-radius: 8px;">
-            <p style="margin: 4px 0;"><strong>Locataire :</strong> ${r.renterName}</p>
-            <p style="margin: 4px 0;"><strong>Local :</strong> ${r.roomName}</p>
-            <p style="margin: 4px 0;"><strong>Date début :</strong> ${r.startDate}</p>
-            <p style="margin: 4px 0;"><strong>Montant attendu :</strong> <span style="color: #ea580c; font-weight: bold; font-size: 16px;">CHF ${r.amount.toFixed(2)}</span></p>
-            <p style="margin: 4px 0;"><strong>Saisie le :</strong> ${r.createdAt.split('T')[0]} par ${r.createdByName || 'Responsable'}</p>
+            <p style="margin: 4px 0;"><strong>Locataire :</strong> ${escapeHtml(r.renterName)}</p>
+            <p style="margin: 4px 0;"><strong>Local :</strong> ${escapeHtml(r.roomName)}</p>
+            <p style="margin: 4px 0;"><strong>Date début :</strong> ${escapeHtml(r.startDate)}</p>
+            <p style="margin: 4px 0;"><strong>Montant attendu :</strong> <span style="color: #ea580c; font-weight: bold; font-size: 16px;">CHF ${escapeHtml(r.amount.toFixed(2))}</span></p>
+            <p style="margin: 4px 0;"><strong>Saisie le :</strong> ${escapeHtml(r.createdAt.split('T')[0])} par ${escapeHtml(r.createdByName || 'Responsable')}</p>
           </div>
           <p style="color: #475569; font-size: 13px;">Vous pouvez la viser directement dans votre journal ou dans l'onglet « Locations » dès constatation du virement sur le compte groupe.</p>
         </div>
@@ -369,14 +373,14 @@ export const sendReimbursementSynthesisEmail = async (
       const amt = Number(r.extractedAmount || 0).toFixed(2);
       return `
         <tr style="border-bottom: 1px solid #e2e8f0;">
-          <td style="padding: 10px 8px; font-size: 13px; color: #334155;">${dateStr}</td>
+          <td style="padding: 10px 8px; font-size: 13px; color: #334155;">${escapeHtml(dateStr)}</td>
           <td style="padding: 10px 8px; font-size: 13px; color: #0f172a;">
-            <strong>${member}</strong>
-            ${email ? `<br/><span style="font-size: 11px; color: #64748b;">${email}</span>` : ''}
+            <strong>${escapeHtml(member)}</strong>
+            ${email ? `<br/><span style="font-size: 11px; color: #64748b;">${escapeHtml(email)}</span>` : ''}
           </td>
-          <td style="padding: 10px 8px; font-size: 13px; color: #334155;">${motif}</td>
-          <td style="padding: 10px 8px; font-size: 12px; font-family: monospace; color: #0f172a;">${iban}</td>
-          <td style="padding: 10px 8px; font-size: 13px; font-weight: bold; color: #d97706; text-align: right; white-space: nowrap;">CHF ${amt}</td>
+          <td style="padding: 10px 8px; font-size: 13px; color: #334155;">${escapeHtml(motif)}</td>
+          <td style="padding: 10px 8px; font-size: 12px; font-family: monospace; color: #0f172a;">${escapeHtml(iban)}</td>
+          <td style="padding: 10px 8px; font-size: 13px; font-weight: bold; color: #d97706; text-align: right; white-space: nowrap;">CHF ${escapeHtml(amt)}</td>
         </tr>
       `;
     })
@@ -385,14 +389,14 @@ export const sendReimbursementSynthesisEmail = async (
   const htmlBody = `
     <div style="font-family: sans-serif; max-width: 680px; margin: 0 auto; padding: 24px; border: 1px solid #fde68a; border-radius: 12px; background: #ffffff;">
       <div style="border-bottom: 2px solid #f59e0b; padding-bottom: 12px; margin-bottom: 16px;">
-        <h2 style="color: #b45309; margin: 0; font-size: 18px;">💶 Synthèse des remboursements en attente — ${comptaName}</h2>
+        <h2 style="color: #b45309; margin: 0; font-size: 18px;">💶 Synthèse des remboursements en attente — ${escapeHtml(comptaName)}</h2>
         <p style="color: #64748b; font-size: 12px; margin: 4px 0 0 0;">Récapitulatif hebdomadaire du vendredi 12h00 pour exécution rapide des virements</p>
       </div>
 
       <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 14px 16px; margin-bottom: 20px;">
         <p style="margin: 0; font-size: 14px; color: #92400e;">
           <strong>${pending.length} demande${pending.length > 1 ? 's' : ''} à rembourser</strong> pour un total de
-          <strong style="font-size: 17px; color: #b45309;"> CHF ${totalAmount.toFixed(2)}</strong>
+          <strong style="font-size: 17px; color: #b45309;"> CHF ${escapeHtml(totalAmount.toFixed(2))}</strong>
         </p>
       </div>
 
@@ -552,14 +556,14 @@ export const notifyMemberOnReimbursementDone = async (
   const htmlBody = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #a7f3d0; border-radius: 12px; background: #ffffff;">
       <h2 style="color: #059669; margin-top: 0;">✅ Votre remboursement a été effectué</h2>
-      <p>Bonjour <strong>${memberName || 'Membre'}</strong>,</p>
-      <p>Le caissier (<strong>${caissierName}</strong>) vient de valider et d'exécuter votre demande de remboursement :</p>
+      <p>Bonjour <strong>${escapeHtml(memberName || 'Membre')}</strong>,</p>
+      <p>Le caissier (<strong>${escapeHtml(caissierName)}</strong>) vient de valider et d'exécuter votre demande de remboursement :</p>
       <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #10b981; padding: 14px 16px; margin: 16px 0; border-radius: 8px;">
-        <p style="margin: 4px 0;"><strong>Comptabilité :</strong> ${comptaName}</p>
-        <p style="margin: 4px 0;"><strong>Commerce / Motif :</strong> ${motif}</p>
-        <p style="margin: 4px 0;"><strong>Date du justificatif :</strong> ${dateStr}</p>
-        <p style="margin: 4px 0;"><strong>IBAN :</strong> <span style="font-family: monospace;">${ibanStr}</span></p>
-        <p style="margin: 6px 0 0 0;"><strong>Montant remboursé :</strong> <span style="color: #059669; font-weight: bold; font-size: 17px;">CHF ${amount.toFixed(2)}</span></p>
+        <p style="margin: 4px 0;"><strong>Comptabilité :</strong> ${escapeHtml(comptaName)}</p>
+        <p style="margin: 4px 0;"><strong>Commerce / Motif :</strong> ${escapeHtml(motif)}</p>
+        <p style="margin: 4px 0;"><strong>Date du justificatif :</strong> ${escapeHtml(dateStr)}</p>
+        <p style="margin: 4px 0;"><strong>IBAN :</strong> <span style="font-family: monospace;">${escapeHtml(ibanStr)}</span></p>
+        <p style="margin: 6px 0 0 0;"><strong>Montant remboursé :</strong> <span style="color: #059669; font-weight: bold; font-size: 17px;">CHF ${escapeHtml(amount.toFixed(2))}</span></p>
       </div>
       <p style="color: #334155; font-size: 13px;">
         Vous pouvez vérifier la réception du virement sur votre compte bancaire. Le statut de votre justificatif est également passé à <strong>« ✅ Remboursé »</strong> dans votre application mobile (<a href="https://justificatifs-tdgl.web.app" style="color: #059669;">justificatifs-tdgl.web.app</a>).
