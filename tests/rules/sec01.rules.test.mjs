@@ -95,6 +95,13 @@ async function seed() {
       email: 'Pending1@X.ch',
       status: 'pending',
     });
+
+    // Document journal d'e-mail existant pour tests SEC-04
+    await db.doc('mail/m-seed').set({
+      to: ['dest@x.ch'],
+      subject: 'Audit',
+      createdAt: '2026-11-25T00:00:00Z',
+    });
   });
 }
 
@@ -715,5 +722,26 @@ describe('[SEC-03] storage.rules — isolation inter-comptabilités et rôles', 
     await put('cais1', 'receipts/o1/c1/locked.jpg', 100, 'image/jpeg');
     await assertFails(storageOf('upl1').ref('receipts/o1/c2/cross_read.jpg').getDownloadURL());
     await assertFails(put('upl1', 'receipts/o1/c1/img.webp', 0, 'image/webp'));
+  });
+});
+
+describe('[SEC-04] firestore.rules — verrouillage /mail', () => {
+  beforeEach(seed);
+
+  it('POSITIF : seul un SuperAdmin peut lire le journal /mail', async () => {
+    await assertSucceeds(dbOf('sa-user', { superAdmin: true }).doc('mail/m-seed').get());
+  });
+
+  it('NÉGATIF & LIMITES : aucun client (même SuperAdmin/OrgAdmin/Caissier) ne peut écrire dans /mail et les non-SuperAdmin ne peuvent pas le lire', async () => {
+    await assertFails(dbOf('orgadmin').doc('mail/m-seed').get());
+    await assertFails(dbOf('cais1').doc('mail/m-seed').get());
+    await assertFails(dbOf('upl1').doc('mail/m-seed').get());
+    await assertFails(anonDb().doc('mail/m-seed').get());
+
+    await assertFails(dbOf('cais1').doc('mail/m-new').set({ to: ['x@x.ch'] }));
+    await assertFails(dbOf('orgadmin').doc('mail/m-new').set({ to: ['x@x.ch'] }));
+    await assertFails(dbOf('sa-user', { superAdmin: true }).doc('mail/m-new').set({ to: ['x@x.ch'] }));
+    await assertFails(dbOf('sa-user', { superAdmin: true }).doc('mail/m-seed').update({ subject: 'Tamper' }));
+    await assertFails(dbOf('sa-user', { superAdmin: true }).doc('mail/m-seed').delete());
   });
 });

@@ -348,9 +348,10 @@ service cloud.firestore {
       );
     }
 
-    // File d'attente d'envoi d'e-mails (locations, rappels 5j, synthèse remboursements vendredi 12h)
+    // SEC-04 : file d'attente/journal d'e-mails strictement côté backend Admin SDK
     match /mail/{mailId} {
-      allow create, read: if isAuthenticated();
+      allow read: if isSuperAdmin();
+      allow write: if false;
     }
   }
 }

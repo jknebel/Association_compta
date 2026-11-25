@@ -102,6 +102,8 @@ const mutants = [
   { name: 'F58 invitations créables pour autre orgId', file: F, find: "&& request.resource.data.get('orgId', orgId) == orgId;", replace: ';' },
   { name: 'F59 invitations modifiables/supprimables par non-admin', file: F, find: 'allow update, delete: if isAuthenticated() && isOrgAdmin(orgId);', replace: 'allow update, delete: if isAuthenticated();' },
   { name: 'F60 collectionGroup invitations lisible par tous', file: F, find: 'match /{path=**}/invitations/{inviteId} {\n      allow read: if isAuthenticated() && (', replace: 'match /{path=**}/invitations/{inviteId} {\n      allow read: if isAuthenticated() || (' },
+  { name: 'F61 collection mail lisible par tout connecté', file: F, find: 'match /mail/{mailId} {\n      allow read: if isSuperAdmin();', replace: 'match /mail/{mailId} {\n      allow read: if isAuthenticated();' },
+  { name: 'F62 collection mail écrivable côté client', file: F, find: 'match /mail/{mailId} {\n      allow read: if isSuperAdmin();\n      allow write: if false;', replace: 'match /mail/{mailId} {\n      allow read: if isSuperAdmin();\n      allow write: if isAuthenticated();' },
 
   // --- Storage (SEC-01 & SEC-03) ---
   { name: 'S01 taille <= 5 Mo', file: S, find: 'request.resource.size < 5 * 1024 * 1024', replace: 'request.resource.size <= 5 * 1024 * 1024' },

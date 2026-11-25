@@ -27,7 +27,6 @@ const dispatchEmail = async (params: {
   html: string;
   fromName?: string;
 }): Promise<boolean> => {
-  const db = getDb();
   let sentViaBackend = false;
   let errorMsg: string | null = null;
 
@@ -66,28 +65,6 @@ const dispatchEmail = async (params: {
   } catch (err) {
     errorMsg = err instanceof Error ? err.message : String(err);
     console.warn('Backend email dispatch error:', errorMsg);
-  }
-
-  if (db) {
-    try {
-      await addDoc(collection(db, 'mail'), {
-        to: params.to,
-        from: `${params.fromName || 'AssoCompta (Ne pas répondre)'} <assocompta.app@gmail.com>`,
-        message: {
-          subject: params.subject,
-          text: params.text,
-          html: params.html,
-        },
-        delivery: {
-          state: sentViaBackend ? 'SUCCESS' : 'ERROR',
-          error: errorMsg,
-          endTime: new Date().toISOString(),
-        },
-        createdAt: new Date().toISOString(),
-      });
-    } catch (logErr) {
-      console.warn('Impossible de journaliser le mail dans Firestore:', logErr);
-    }
   }
 
   return sentViaBackend;
