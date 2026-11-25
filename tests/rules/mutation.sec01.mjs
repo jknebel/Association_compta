@@ -84,10 +84,11 @@ const mutants = [
   { name: 'F41b caissier c1 peut s\'auto-ajouter sur c2 sans être créateur', file: F, find: "&& get(/databases/$(database)/documents/organizations/$(orgId)/comptabilites/$(comptaId)).data.get('createdBy', '') == request.auth.uid", replace: '' },
   { name: 'F42 auto-modification de fiche org ouverte à uploader', file: F, find: "allow update: if isAuthenticated() && (\n          isOrgAdmin(orgId)\n          || isSafeSelfMemberUpdate(memberId)\n        );", replace: 'allow update: if isAuthenticated();' },
   { name: 'F43 contrôle comptaAccess uploader neutralisé', file: F, find: ".values().hasAny(['uploader'])", replace: ".values().hasAny(['zzz'])" },
-  { name: 'F45 collectionGroup members fermé', file: F, find: 'match /{path=**}/members/{memberId} {\n      allow read: if isAuthenticated();', replace: 'match /{path=**}/members/{memberId} {\n      allow read: if false;' },
+  { name: 'F45 collectionGroup members fermé', file: F, find: 'allow list: if isAuthenticated() && (', replace: 'allow list: if false && (' },
 
   // --- SEC-02 : Anti-élévation sur /organizations, /members et /invitations ---
-  { name: 'F46 création/suppression organisation ouverte à orgAdmin', file: F, find: 'allow create, delete: if isSuperAdmin();', replace: 'allow create, delete: if isAuthenticated();' },
+  { name: 'F46 création organisation ouverte à orgAdmin', file: F, find: 'allow create: if isSuperAdmin()', replace: 'allow create: if isAuthenticated()' },
+  { name: 'F46b suppression organisation ouverte à orgAdmin', file: F, find: 'allow delete: if isSuperAdmin();', replace: 'allow delete: if isAuthenticated();' },
   { name: 'F47 orgAdmin peut modifier createdBy de l\'organisation', file: F, find: "&& request.resource.data.get('createdBy', null) == resource.data.get('createdBy', null)", replace: '' },
   { name: 'F48 orgAdmin peut changer adminEmail de l\'organisation', file: F, find: "request.resource.data.get('adminEmail', null) == resource.data.get('adminEmail', null)", replace: 'true' },
   { name: 'F49 orgAdmin peut changer adminUid de l\'organisation', file: F, find: "&& request.resource.data.get('adminUid', null) == resource.data.get('adminUid', null)", replace: '' },
@@ -106,6 +107,19 @@ const mutants = [
   { name: 'F62 collection mail écrivable côté client', file: F, find: 'match /mail/{mailId} {\n      allow read: if isSuperAdmin();\n      allow write: if false;', replace: 'match /mail/{mailId} {\n      allow read: if isSuperAdmin();\n      allow write: if isAuthenticated();' },
   // --- SEC-05 : email_verified obligatoire ---
   { name: 'F63 firestore authEmail sans contrôle email_verified', file: F, find: "&& request.auth.token.get('email_verified', false) == true", replace: '' },
+  // --- SEC-06 : verrouillage /organizations, inviteCode, /users et /members ---
+  { name: 'F64 users lisible par n importe quel connecté', file: F, find: 'match /users/{userId} {\n      allow read: if isAuthenticated() && (', replace: 'match /users/{userId} {\n      allow read: if isAuthenticated() || (' },
+  { name: 'F65 users create accepte isSuperAdmin true', file: F, find: "&& request.resource.data.get('isSuperAdmin', false) == false;", replace: ';' },
+  { name: 'F66 users update accepte élévation isSuperAdmin', file: F, find: "&& request.resource.data.get('isSuperAdmin', false) == resource.data.get('isSuperAdmin', false);", replace: ';' },
+  { name: 'F67 users delete ouvert à un autre utilisateur', file: F, find: 'allow delete: if isAuthenticated() && (isOwner(userId) || isSuperAdmin());', replace: 'allow delete: if isAuthenticated();' },
+  { name: 'F68 organizations lisible anonymement', file: F, find: 'match /organizations/{orgId} {\n      allow read: if isAuthenticated();', replace: 'match /organizations/{orgId} {\n      allow read: if true;' },
+  { name: 'F69 organizations create accepte inviteCode public', file: F, find: "&& !('inviteCode' in request.resource.data);", replace: ';' },
+  { name: 'F70 organizations update accepte modification inviteCode public', file: F, find: "&& (!('inviteCode' in request.resource.data) || request.resource.data.get('inviteCode', null) == resource.data.get('inviteCode', null))", replace: '' },
+  { name: 'F71 private invite accessible à non-admin', file: F, find: 'match /private/{docId} {\n        allow read, write: if isAuthenticated() && isOrgAdmin(orgId);', replace: 'match /private/{docId} {\n        allow read, write: if isAuthenticated();' },
+  { name: 'F72 inviteCodes listable globalement', file: F, find: 'allow list: if false;', replace: 'allow list: if isAuthenticated();' },
+  { name: 'F73 inviteCodes modifiable/supprimable par non-admin', file: F, find: "allow create, update: if isAuthenticated()\n        && request.resource.data.get('orgId', '') is string\n        && request.resource.data.orgId != ''\n        && isOrgAdmin(request.resource.data.orgId);", replace: 'allow create, update: if isAuthenticated();' },
+  { name: 'F74 org members listable par non-membre / pending', file: F, find: 'allow list: if isAuthenticated() && isApprovedOrgMember(orgId);', replace: 'allow list: if isAuthenticated();' },
+  { name: 'F75 collectionGroup members lisible pour les fiches d autrui', file: F, find: 'allow list: if isAuthenticated() && (', replace: 'allow list: if isAuthenticated() || (' },
 
   // --- Storage (SEC-01, SEC-03 & SEC-05) ---
   { name: 'S25 storage authEmail sans contrôle email_verified', file: S, find: "&& 'email_verified' in request.auth.token\n        && request.auth.token.email_verified == true", replace: '' },

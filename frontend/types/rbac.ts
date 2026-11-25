@@ -153,7 +153,7 @@ export interface Organization {
     createdBy: string;
     adminEmail?: string;
     adminUid?: string;
-    inviteCode: string;
+    inviteCode?: string;
     customFields: CustomField[];
 }
 

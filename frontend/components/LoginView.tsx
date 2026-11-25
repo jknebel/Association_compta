@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { loginWithGoogle, loginWithEmail, registerWithEmail } from '../services/authService';
 import { Lock, Mail, ArrowRight, AlertCircle, LayoutDashboard, User as UserIcon, Building2 } from 'lucide-react';
 import { createUserProfile } from '../services/userService';
-import { listAllOrganizations } from '../services/organizationService';
 import { Organization } from '../types/rbac';
 import { getAuth, sendEmailVerification } from 'firebase/auth';
 import { app } from '../services/dataService';
@@ -47,38 +46,33 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
 
   const currentDomain = window.location.hostname;
 
-  // Charger les associations disponibles pour l'inscription
+  // Initialiser la liste des associations disponibles sans requête non authentifiée
   useEffect(() => {
-    const fetchOrgs = async () => {
-      try {
-        const params = new URLSearchParams(window.location.search);
-        const urlOrgId = params.get('org');
-        const orgs = await listAllOrganizations();
-        if (orgs.length > 0) {
-          setOrganizations(orgs);
-          if (urlOrgId && orgs.some(o => o.id === urlOrgId)) {
-            setSelectedOrgId(urlOrgId);
-          } else {
-            const tdglOrg = orgs.find(o => o.name?.toLowerCase().includes('tdgl') || o.id === 'TDGL');
-            setSelectedOrgId(tdglOrg ? tdglOrg.id : orgs[0].id);
-          }
-        } else {
-          setOrganizations([{
-            id: 'TDGL',
-            name: 'TDGL',
-            description: 'Association TDGL',
-            createdAt: Date.now(),
-            createdBy: 'system',
-            inviteCode: '',
-            customFields: []
-          }]);
-          setSelectedOrgId('TDGL');
-        }
-      } catch (err) {
-        console.error("Erreur lors de la récupération des associations:", err);
+    const params = new URLSearchParams(window.location.search);
+    const urlOrgId = (params.get('org') || '').trim();
+    const fallbackId = urlOrgId || 'TDGL';
+    const options: Organization[] = [
+      {
+        id: 'TDGL',
+        name: 'TDGL',
+        description: 'Association TDGL',
+        createdAt: Date.now(),
+        createdBy: 'system',
+        customFields: []
       }
-    };
-    fetchOrgs();
+    ];
+    if (urlOrgId && urlOrgId !== 'TDGL') {
+      options.unshift({
+        id: urlOrgId,
+        name: urlOrgId,
+        description: `Organisation ${urlOrgId}`,
+        createdAt: Date.now(),
+        createdBy: 'system',
+        customFields: []
+      });
+    }
+    setOrganizations(options);
+    setSelectedOrgId(fallbackId);
   }, []);
 
   // Détection des paramètres d'invitation

@@ -85,6 +85,9 @@ jobs:
           - shard: F4-F6
             filter: '^F[456]'
             run_base: false
+          - shard: F7-F9
+            filter: '^F[789]'
+            run_base: false
           - shard: Storage-S
             filter: '^S'
             run_base: false

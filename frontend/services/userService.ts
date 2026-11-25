@@ -89,13 +89,27 @@ export const getUserComptabilites = async (uid: string, userEmail?: string): Pro
     const normalizedEmail = userEmail?.trim().toLowerCase();
 
     try {
-        // 1. Parcourir directement les organisations et leurs membres (ne dépend d'aucun index collectionGroup)
+        // 1. Vérifier les fiches membres de l'utilisateur par lecture ciblée (uid et e-mail)
         const orgsSnap = await getDocs(collection(db, 'organizations'));
         for (const orgDoc of orgsSnap.docs) {
             const orgId = orgDoc.id;
-            const membersSnap = await getDocs(collection(db, 'organizations', orgId, 'members'));
+            const memberSnaps: any[] = [];
+            try {
+                const uidSnap = await getDoc(doc(db, 'organizations', orgId, 'members', uid));
+                if (uidSnap.exists()) memberSnaps.push(uidSnap);
+            } catch {
+                // ignorer si non autorisé
+            }
+            if (normalizedEmail && normalizedEmail !== uid) {
+                try {
+                    const emailSnap = await getDoc(doc(db, 'organizations', orgId, 'members', normalizedEmail));
+                    if (emailSnap.exists()) memberSnaps.push(emailSnap);
+                } catch {
+                    // ignorer si non autorisé
+                }
+            }
 
-            for (const memberDoc of membersSnap.docs) {
+            for (const memberDoc of memberSnaps) {
                 const mData = memberDoc.data();
                 const matchesUid = memberDoc.id === uid || mData.uid === uid;
                 const matchesEmail = normalizedEmail && (
@@ -103,7 +117,7 @@ export const getUserComptabilites = async (uid: string, userEmail?: string): Pro
                     (mData.email && mData.email.trim().toLowerCase() === normalizedEmail)
                 );
 
-                if ((matchesUid || matchesEmail) && mData.status !== 'rejected') {
+                if ((matchesUid || matchesEmail) && (mData.status || 'approved') === 'approved') {
                     const comptaAccess = mData.comptaAccess as Record<string, ComptaRole> | undefined;
                     if (comptaAccess) {
                         for (const [comptaId, role] of Object.entries(comptaAccess)) {
@@ -155,8 +169,10 @@ export const listAllRegisteredUsers = async (
 ): Promise<Array<{ uid: string; email: string; displayName: string; firstName?: string; lastName?: string; orgId?: string; orgName?: string }>> => {
     try {
         const db = getDb();
-        const snap = await getDocs(collection(db, 'users'));
-        const now = Date.now();
+        const usersQuery = filterOrgId
+            ? query(collection(db, 'users'), where('orgId', '==', filterOrgId))
+            : collection(db, 'users');
+        const snap = await getDocs(usersQuery);
         const validDocs = [];
 
         for (const d of snap.docs) {
@@ -167,15 +183,6 @@ export const listAllRegisteredUsers = async (
                 continue;
             }
             if (data.emailVerificationRequired === true && data.emailVerified === false) {
-                const createdAt = Number(data.createdAt || 0);
-                if (createdAt > 0 && now - createdAt > UNVERIFIED_EXPIRATION_MS) {
-                    // Compte non vérifié après 10 jours -> suppression automatique (anti-robot)
-                    try {
-                        await deleteDoc(d.ref);
-                    } catch (err) {
-                        console.warn("Could not delete expired unverified user doc:", err);
-                    }
-                }
                 // Tant que le mail n'est pas vérifié, ne pas l'afficher dans la liste d'attribution des rôles
                 continue;
             }
