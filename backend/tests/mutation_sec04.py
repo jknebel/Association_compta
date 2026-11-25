@@ -14,6 +14,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 TEST_FILE = BACKEND_DIR / "tests" / "test_sec04_email.py"
 
 E = "email_security.py"
+P = "prompt_and_error_security.py"
 M = "main.py"
 
 MUTANTS: List[Dict[str, Any]] = [
@@ -55,6 +56,7 @@ MUTANTS: List[Dict[str, Any]] = [
 def main() -> int:
     originals = {
         E: (BACKEND_DIR / E).read_text(encoding="utf-8").replace("\r\n", "\n"),
+        P: (BACKEND_DIR / P).read_text(encoding="utf-8").replace("\r\n", "\n"),
         M: (BACKEND_DIR / M).read_text(encoding="utf-8").replace("\r\n", "\n"),
     }
 

@@ -15,6 +15,7 @@ TEST_FILE = BACKEND_DIR / "tests" / "test_sec08_backend.py"
 
 E = "email_security.py"
 R = "request_security.py"
+P = "prompt_and_error_security.py"
 M = "main.py"
 
 MUTANTS: List[Dict[str, Any]] = [
@@ -42,7 +43,7 @@ MUTANTS: List[Dict[str, Any]] = [
     {"name": "R20 /chat drops AI rate limiter", "file": M, "find": '@app.post("/chat", dependencies=[Depends(verify_and_rate_limit_ai_user)])', "replace": '@app.post("/chat", dependencies=[Depends(verify_firebase_token)])'},
     {"name": "R21 /suggest-category drops AI rate limiter", "file": M, "find": '@app.post("/suggest-category", dependencies=[Depends(verify_and_rate_limit_ai_user)])', "replace": '@app.post("/suggest-category", dependencies=[Depends(verify_firebase_token)])'},
     {"name": "R22 /audit drops AI rate limiter", "file": M, "find": '@app.post("/audit", dependencies=[Depends(verify_and_rate_limit_ai_user)])', "replace": '@app.post("/audit", dependencies=[Depends(verify_firebase_token)])'},
-    {"name": "R23 /process-bank-statement maps PayloadTooLargeError to 500 instead of 413", "file": M, "find": "    except PayloadTooLargeError as size_err:\n        raise HTTPException(status_code=413, detail=str(size_err))\n    except InvalidUploadMediaError as media_err:\n        raise HTTPException(status_code=400, detail=str(media_err))\n    except HTTPException:\n        raise\n    except Exception as e:\n        import traceback\n        traceback.print_exc()\n        raise HTTPException(status_code=500, detail=str(e))\n\n@app.post(\"/process-receipt\"", "replace": "    except PayloadTooLargeError as size_err:\n        raise HTTPException(status_code=500, detail=str(size_err))\n    except InvalidUploadMediaError as media_err:\n        raise HTTPException(status_code=400, detail=str(media_err))\n    except HTTPException:\n        raise\n    except Exception as e:\n        import traceback\n        traceback.print_exc()\n        raise HTTPException(status_code=500, detail=str(e))\n\n@app.post(\"/process-receipt\""},
+    {"name": "R23 /process-bank-statement maps PayloadTooLargeError to 500 instead of 413", "file": M, "find": "    except PayloadTooLargeError as size_err:\n        raise HTTPException(status_code=413, detail=str(size_err))\n    except InvalidUploadMediaError as media_err:\n        raise HTTPException(status_code=400, detail=str(media_err))\n    except HTTPException:\n        raise\n    except Exception as e:\n        raise HTTPException(status_code=500, detail=build_safe_500_detail(e, \"process-bank-statement\"))\n\n@app.post(\"/process-receipt\"", "replace": "    except PayloadTooLargeError as size_err:\n        raise HTTPException(status_code=500, detail=str(size_err))\n    except InvalidUploadMediaError as media_err:\n        raise HTTPException(status_code=400, detail=str(media_err))\n    except HTTPException:\n        raise\n    except Exception as e:\n        raise HTTPException(status_code=500, detail=build_safe_500_detail(e, \"process-bank-statement\"))\n\n@app.post(\"/process-receipt\""},
 ]
 
 
@@ -50,6 +51,7 @@ def main() -> int:
     originals = {
         E: (BACKEND_DIR / E).read_text(encoding="utf-8").replace("\r\n", "\n"),
         R: (BACKEND_DIR / R).read_text(encoding="utf-8").replace("\r\n", "\n"),
+        P: (BACKEND_DIR / P).read_text(encoding="utf-8").replace("\r\n", "\n"),
         M: (BACKEND_DIR / M).read_text(encoding="utf-8").replace("\r\n", "\n"),
     }
 
