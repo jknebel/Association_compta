@@ -67,7 +67,7 @@ const mutants = [
   { name: 'F29 vérificateur bloqué sur les propositions', file: F, find: "isComptaVerificateur(orgId, comptaId)", replace: 'false', nth: 2 },
   { name: 'F30 viewer peut modifier le statut d\'une transaction', file: F, find: "affectedKeys().hasOnly(['comments'])", replace: 'true' },
   { name: 'F31 viewer bloqué pour commenter une transaction', file: F, find: "isComptaViewer(orgId, comptaId)", replace: 'false', nth: 2 },
-  { name: 'F32 sous-collection générique écrase transactions', file: F, find: "&& sub != 'transactions'\n", replace: '', nth: 1 },
+  { name: 'F32 sous-collections génériques ouvertes en lecture à tout connecté', file: F, find: "canReadCompta(orgId, comptaId)\n              || (sub == 'accounts' && (isComptaUploader(orgId, comptaId) || isComptaRentalManager(orgId, comptaId)))", replace: 'isAuthenticated()' },
   { name: 'F33 sous-collection générique écrase members en écriture', file: F, find: "&& sub != 'members'\n", replace: '', nth: 2 },
   { name: 'F34 lecture accounts refusée à uploader', file: F, find: "sub == 'accounts' && (isComptaUploader(orgId, comptaId) || isComptaRentalManager(orgId, comptaId))", replace: 'false' },
   { name: 'F35 création de comptabilité ouverte à tout connecté', file: F, find: "allow create: if isAuthenticated()\n          && isOrgCaissier(orgId)\n          && request.resource.data.get('createdBy', '') == request.auth.uid;", replace: 'allow create: if isAuthenticated();' },
@@ -84,7 +84,6 @@ const mutants = [
   { name: 'F41b caissier c1 peut s\'auto-ajouter sur c2 sans être créateur', file: F, find: "&& get(/databases/$(database)/documents/organizations/$(orgId)/comptabilites/$(comptaId)).data.get('createdBy', '') == request.auth.uid", replace: '' },
   { name: 'F42 auto-modification de fiche org ouverte à uploader', file: F, find: "allow update: if isAuthenticated() && (\n          isOrgAdmin(orgId)\n          || isSafeSelfMemberUpdate(memberId)\n        );", replace: 'allow update: if isAuthenticated();' },
   { name: 'F43 contrôle comptaAccess uploader neutralisé', file: F, find: ".values().hasAny(['uploader'])", replace: ".values().hasAny(['zzz'])" },
-  { name: 'F44 admin-uploader bloqué sur sa fiche', file: F, find: "resource.data.get('role', '') != 'admin'", replace: 'true' },
   { name: 'F45 collectionGroup members fermé', file: F, find: 'match /{path=**}/members/{memberId} {\n      allow read: if isAuthenticated();', replace: 'match /{path=**}/members/{memberId} {\n      allow read: if false;' },
 
   // --- Storage ---
@@ -97,7 +96,7 @@ const mutants = [
   { name: 'S07 tous types acceptés', file: S, find: "'image/.*|application/pdf'", replace: "'.*'" },
   { name: 'S08 tous types application/*', file: S, find: "'image/.*|application/pdf'", replace: "'image/.*|application/.*'" },
   { name: 'S09 type contenant image accepté', file: S, find: "'image/.*|application/pdf'", replace: "'.*image/.*|.*application/pdf'" },
-  { name: 'S10 contentType non requis', file: S, find: "&& request.resource.contentType != null", replace: '&& true' },
+  { name: 'S10 lecture anonyme (anciens chemins)', file: S, find: 'allow read: if request.auth != null;', replace: 'allow read: if true;', nth: 2 },
   { name: 'S11 contraintes retirées (chemin org/compta, create/update)', file: S, find: 'allow create, update: if request.auth != null && isValidReceiptFile();', replace: 'allow create, update: if request.auth != null;', nth: 1 },
   { name: 'S12 contraintes retirées (anciens chemins, create/update)', file: S, find: 'allow create, update: if request.auth != null && isValidReceiptFile();', replace: 'allow create, update: if request.auth != null;', nth: 2 },
   { name: 'S13 écriture anonyme (chemin org/compta)', file: S, find: 'allow create, update: if request.auth != null && isValidReceiptFile();', replace: 'allow create, update: if isValidReceiptFile();', nth: 1 },

@@ -153,7 +153,6 @@ service cloud.firestore {
     function isRestrictedSelfMember(memberId) {
       return !isSuperAdmin()
         && (memberId == request.auth.uid || (authEmail() != '' && memberId == authEmail()))
-        && resource.data.get('role', '') != 'admin'
         && comptaAccessOf(resource.data).values().hasAny(['uploader']);
     }
 

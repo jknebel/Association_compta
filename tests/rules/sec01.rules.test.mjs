@@ -82,8 +82,10 @@ async function seed() {
 
     // Membres avec statuts non approuvés / rôles additionnels / utilisateur sans rôle
     await db.doc(`organizations/${ORG}/members/pending1`).set({ role: 'member', status: 'pending', comptaAccess: { c1: 'caissier' } });
+    await db.doc(`organizations/${ORG}/members/orgpending`).set({ role: 'admin', status: 'pending' });
     await db.doc(`organizations/${ORG}/members/rejected1`).set({ role: 'member', status: 'rejected', comptaAccess: { c1: 'caissier' } });
     await db.doc(`organizations/${ORG}/members/loc1`).set({ role: 'member', status: 'approved', comptaAccess: { c1: 'responsable_location' } });
+    await db.doc(`organizations/${ORG}/members/cais3`).set({ role: 'member', status: 'approved', comptaAccess: { c1: ' Caissier ' } });
     await db.doc(`organizations/${ORG}/members/norole1`).set({ role: 'member', status: 'approved', comptaAccess: {} });
   });
 }
@@ -225,8 +227,9 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
       await assertFails(dbOf('upl1').doc(`${C1}/members/autre`).set({ uid: 'autre', role: 'comptable' }));
     });
 
-    it("ne peut pas modifier ou supprimer son propre profil membre d'organisation", async () => {
+    it("un uploader ne peut pas modifier son propre profil membre d'organisation (même displayName)", async () => {
       await assertFails(dbOf('upl1').doc(`organizations/${ORG}/members/upl1`).update({ 'comptaAccess.c1': 'caissier' }));
+      await assertFails(dbOf('upl1').doc(`organizations/${ORG}/members/upl1`).update({ displayName: 'Hack' }));
       await assertFails(dbOf('upl1').doc(`organizations/${ORG}/members/upl1`).delete());
       await assertFails(dbOf('upl1').doc(`organizations/${ORG}/members/upl1`).set({ role: 'admin', comptaAccess: { c1: 'caissier' } }));
     });
@@ -237,8 +240,10 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
       await assertFails(db.doc(`${C1}/transactions/t1`).delete());
     });
 
-    it("un rôle écrit avec espaces/majuscules (' Uploader ') est tout de même restreint", async () => {
+    it("un rôle écrit avec espaces/majuscules (' Uploader ' / ' Caissier ') est correctement normalisé", async () => {
       await assertFails(dbOf('upl3').doc(`${C1}/transactions/t1`).delete());
+      await assertSucceeds(dbOf('upl3').doc(`${C1}/receipts/new-upl3`).set(newReceipt('upl3')));
+      await assertSucceeds(dbOf('cais3').doc(`${C1}/transactions/t1`).update({ amount: 42 }));
     });
 
     it("un uploader ne peut pas contourner la restriction en créant son profil uid (profil e-mail existant)", async () => {
@@ -443,13 +448,14 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
     });
 
     it("un inscrit sans rôle ni membre pending/rejected ne peut rien lire ni écrire dans c1", async () => {
-      for (const uid of ['norole1', 'pending1', 'rejected1', 'stranger99']) {
+      for (const uid of ['norole1', 'pending1', 'orgpending', 'rejected1', 'stranger99']) {
         await assertFails(dbOf(uid).doc(`${C1}/transactions/t1`).get());
         await assertFails(dbOf(uid).doc(`${C1}/accounts/a1`).get());
+        await assertFails(dbOf(uid).doc(`${C1}/settings/aiConfig`).get());
         await assertFails(dbOf(uid).doc(`${C1}/receipts/r-upl1`).get());
         await assertFails(dbOf(uid).doc(`${C1}/receipts/x-${uid}`).set(newReceipt(uid)));
         await assertFails(dbOf(uid).doc(`${C1}/rentals/rent1`).get());
-        await assertFails(dbOf(uid).doc(`organizations/${ORG}/comptabilites/c-new-${uid}`).set({ name: 'Rogue' }));
+        await assertFails(dbOf(uid).doc(`organizations/${ORG}/comptabilites/c-new-${uid}`).set({ name: 'Rogue', createdBy: uid }));
       }
     });
 
@@ -507,6 +513,7 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
 
     it("valeurs limites : rôle 'admin' interdit en écriture dans comptabilites/{comptaId}/members par un caissier", async () => {
       await assertFails(dbOf('cais1').doc(`${C1}/members/upl1`).update({ role: 'admin' }));
+      await assertFails(dbOf('cais1').doc(`${C1}/members/newadmin`).set({ uid: 'newadmin', role: 'admin' }));
       await assertFails(dbOf('cais1').doc(`${C1}/members/bad`).set({ uid: 'bad', role: '' }));
       await assertFails(dbOf('cais1').doc(`${C1}/members/bad2`).set({ uid: 'bad2', role: 123 }));
     });
@@ -561,6 +568,9 @@ describe('[SEC-01] storage.rules — justificatifs', () => {
     await assertSucceeds(put('upl1', 'receipts/upl1/old.jpg', 100, 'image/jpeg'));
     await assertSucceeds(put('upl1', 'receipts/public/old.pdf', 100, 'application/pdf'));
     await assertSucceeds(put('upl1', 'receipts/fichier.png', 100, 'image/png'));
+    await assertSucceeds(storageOf('cais1').ref('receipts/upl1/old.jpg').getDownloadURL());
+    await assertFails(storageOf(null).ref('receipts/upl1/old.jpg').getDownloadURL());
+    await assertSucceeds(storageOf('cais1').ref('receipts/upl1/old.jpg').delete());
     await assertFails(put('upl1', 'receipts/upl1/old.txt', 100, 'text/plain'));
     await assertFails(put('upl1', 'receipts/upl1/gros.jpg', 6 * MB, 'image/jpeg'));
   });

@@ -47,8 +47,21 @@ jobs:
           VITE_FIREBASE_APP_ID: 1:000000000000:web:dummy
 
   firebase-rules:
-    name: Firebase Rules & Mutation Tests
+    name: Firebase Rules & Mutation (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: rules-and-F0-F1
+            filter: '^F[01]'
+            run_base: true
+          - shard: F2-F4
+            filter: '^F[234]'
+            run_base: false
+          - shard: Storage-S
+            filter: '^S'
+            run_base: false
     steps:
       - uses: actions/checkout@v4
 
@@ -69,5 +82,10 @@ jobs:
           npm ci
           npm install --no-save --legacy-peer-deps @firebase/rules-unit-testing@3.0.4 firebase-tools@13.30.0
 
-      - name: Run Firebase Rules Tests & Mutation Suite
-        run: npx firebase-tools emulators:exec --only firestore,storage --project demo-sec01 "node --test tests/rules/sec01.rules.test.mjs && node tests/rules/mutation.sec01.mjs"
+      - name: Run Firebase Rules Tests & Mutation Shard
+        run: |
+          if [ "${{ matrix.run_base }}" = "true" ]; then
+            npx firebase-tools emulators:exec --only firestore,storage --project demo-sec01 "node --test tests/rules/sec01.rules.test.mjs && node tests/rules/mutation.sec01.mjs '${{ matrix.filter }}'"
+          else
+            npx firebase-tools emulators:exec --only firestore,storage --project demo-sec01 "node tests/rules/mutation.sec01.mjs '${{ matrix.filter }}'"
+          fi
