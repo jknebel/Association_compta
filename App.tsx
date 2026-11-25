@@ -22,6 +22,10 @@ import { useDataService } from './frontend/services/dataService';
 import { useAuthContext, useOrgContext, useComptaContext } from './frontend/contexts/AppContext';
 import { isExemptFromEmailVerification, updateUserProfile } from './frontend/services/userService';
 import { logout } from './frontend/services/authService';
+import {
+    canUseWebLocalMode,
+    PROD_FIREBASE_MISSING_WEB_ERROR,
+} from './frontend/services/sessionSecurity.ts';
 import { sendEmailVerification } from 'firebase/auth';
 import * as XLSX from 'xlsx';
 import { matchTransactionsWithReceipts } from './frontend/services/matchingService';
@@ -651,12 +655,34 @@ function App() {
         );
     }
 
-    // IF NO USER, NO GUEST MODE, AND CLOUD CONFIGURED -> SHOW LOGIN
-    if (!user && !guestMode && isConfigured) {
-        return <LoginView onGuestAccess={() => setGuestMode(true)} />;
+    const localModeAllowed = canUseWebLocalMode(
+        isConfigured,
+        guestMode,
+        Boolean(import.meta.env.PROD)
+    );
+
+    // PRODUCTION GUARDRAIL: never fall back to local demo/guest mode when Firebase is missing in PROD
+    if (Boolean(import.meta.env.PROD) && !isConfigured) {
+        return (
+            <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-950 text-slate-200 p-6">
+                <div className="max-w-md w-full bg-slate-900 border border-red-900/50 rounded-xl p-6 text-center space-y-3">
+                    <h2 className="text-lg font-bold text-red-400">Configuration requise</h2>
+                    <p className="text-sm text-slate-300">{PROD_FIREBASE_MISSING_WEB_ERROR}</p>
+                </div>
+            </div>
+        );
     }
 
-    if (user && !guestMode) {
+    // IF NO USER, NO ALLOWED GUEST MODE, AND CLOUD CONFIGURED -> SHOW LOGIN
+    if (!user && !localModeAllowed && isConfigured) {
+        return (
+            <LoginView
+                onGuestAccess={!import.meta.env.PROD ? () => setGuestMode(true) : undefined}
+            />
+        );
+    }
+
+    if (user && !localModeAllowed) {
         const params = new URLSearchParams(window.location.search);
         const joinOrgId = params.get('org');
         if (joinOrgId) {
@@ -780,7 +806,7 @@ function App() {
             pendingReimbursementsCount={pendingReimbursementsCount}
             pendingRentalsCount={pendingRentalsCount}
         >
-            {(!isConfigured || guestMode) && (
+            {localModeAllowed && (
                 <div className="bg-orange-900/20 border-b border-orange-900/50 text-orange-200 px-4 py-2 text-xs flex items-center justify-center gap-2">
                     <CloudOff size={14} />
                     <span>{guestMode ? "Mode Invité" : "Mode Démo"}. Les données sont stockées uniquement dans votre navigateur (LocalStorage). Connectez-vous pour sauvegarder dans le cloud.</span>
