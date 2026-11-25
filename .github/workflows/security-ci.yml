@@ -28,12 +28,13 @@ jobs:
         run: npm ci
 
       - name: Run Unit Tests
-        run: node --experimental-transform-types --test frontend/types/__tests__/*.test.mjs frontend/services/__tests__/*.test.mjs
+        run: node --experimental-transform-types --test frontend/types/__tests__/*.test.mjs frontend/services/__tests__/*.test.mjs tests/*.test.mjs
 
-      - name: Run Mutation Tests (TypeScript logic)
+      - name: Run Mutation Tests (TypeScript logic & CI/CD Security)
         run: |
           node frontend/services/__tests__/mutation.web03.mjs
           node frontend/services/__tests__/mutation.web04.mjs
+          node tests/mutation.sec07.mjs
 
       - name: Build Frontend
         run: npm run build
@@ -82,8 +83,11 @@ jobs:
           - shard: F2-F3
             filter: '^F[23]'
             run_base: false
-          - shard: F4-F6
-            filter: '^F[456]'
+          - shard: F4-F5
+            filter: '^F[45]'
+            run_base: false
+          - shard: F6
+            filter: '^F6'
             run_base: false
           - shard: F7-F9
             filter: '^F[789]'

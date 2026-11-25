@@ -45,9 +45,9 @@ jobs:
 
       - name: Build
         run: npm run build
-        # INJECTION DES CLÉS VIA GITHUB SECRETS
+        # INJECTION DE LA CONFIG NON-SECRÈTE VIA GITHUB SECRETS (Gemini reste côté backend)
         env:
-          VITE_API_KEY: \${{ secrets.VITE_API_KEY }}
+          VITE_API_URL: \${{ secrets.VITE_API_URL }}
           VITE_FIREBASE_API_KEY: \${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: \${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: \${{ secrets.VITE_FIREBASE_PROJECT_ID }}
@@ -89,8 +89,8 @@ jobs:
             <ShieldCheck className="text-emerald-400 shrink-0 mt-1" size={24} />
             <div className="text-sm text-emerald-200">
                 <strong className="block mb-1 text-base">Sécurité Renforcée</strong>
-                Le code source ne contient plus aucune clé API en dur.
-                Lors du déploiement, GitHub Actions injectera les clés dans l'application via le processus de build (Vite).
+                Le code source frontend ne contient aucune clé Google Gemini ni secret serveur :
+                tous les appels IA transitent par le backend Cloud Run authentifié via Firebase Auth.
             </div>
       </div>
 
@@ -133,8 +133,8 @@ jobs:
                 </p>
                 <div className="space-y-3 text-xs font-mono">
                     <div className="flex justify-between items-center bg-slate-950 p-2 rounded border border-slate-800">
-                        <span className="text-yellow-400">VITE_API_KEY</span>
-                        <span className="text-slate-500">Clé Google Gemini AI</span>
+                        <span className="text-emerald-400">VITE_API_URL</span>
+                        <span className="text-slate-500">URL du backend Cloud Run (Gemini côté serveur)</span>
                     </div>
                     
                     <div className="p-2 rounded border border-slate-800 bg-slate-950/50 space-y-2">

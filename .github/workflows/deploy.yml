@@ -8,6 +8,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: europe-west1
@@ -56,9 +59,10 @@ jobs:
         run: |
           pip install -r backend/requirements.txt
 
-  # 3. BUILD & DEPLOY BACKEND (Cloud Run)
+  # 3. BUILD & DEPLOY BACKEND (Cloud Run - Only on push to main)
   deploy-backend:
     needs: changes
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
@@ -121,6 +125,7 @@ jobs:
             GOOGLE_GENAI_USE_VERTEXAI=true
             SMTP_USER=${{ secrets.SMTP_USER }}
             SMTP_PASS=${{ secrets.SMTP_PASS }}
+            MAILER_INTERNAL_SECRET=${{ secrets.MAILER_INTERNAL_SECRET }}
 
       # ALWAYS GET URL (Even if we didn't deploy, we need the URL for frontend)
       - id: 'get-url'
@@ -134,10 +139,40 @@ jobs:
              echo "url=$EXISTING_URL" >> $GITHUB_OUTPUT
           fi
 
-  # 4. BUILD & DEPLOY FRONTEND (Firebase Hosting)
+  # 4. PR FRONTEND BUILD CHECK (No secrets, no deploy)
+  build-frontend-check:
+    needs: changes
+    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Frontend (PR Check)
+        run: npm run build
+        env:
+          VITE_API_URL: https://example.invalid
+          VITE_FIREBASE_API_KEY: dummy
+          VITE_FIREBASE_AUTH_DOMAIN: dummy.firebaseapp.com
+          VITE_FIREBASE_PROJECT_ID: demo-sec07
+          VITE_FIREBASE_STORAGE_BUCKET: demo-sec07.appspot.com
+          VITE_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+          VITE_FIREBASE_APP_ID: 1:000000000000:web:dummy
+
+  # 5. BUILD & DEPLOY FRONTEND (Firebase Hosting - Only on push to main)
   deploy-frontend:
     needs: [changes, deploy-backend]
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       checks: write
@@ -150,9 +185,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: Install Dependencies
-        run: npm install
+        run: npm ci
 
       # Build with environment variables
       - name: Build Frontend
