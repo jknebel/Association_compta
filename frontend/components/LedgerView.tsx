@@ -7,7 +7,7 @@ import { auditLedger } from '../services/geminiService';
 import { AuditModal } from './AuditModal';
 import { Check, X, AlertTriangle, Search, Filter, Calendar, Coins, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck, Plus, MessageSquare, CheckCircle, Send } from 'lucide-react';
 import { formatDate, dateToTimestamp } from '../services/formatUtils';
-import { useAuthContext, useComptaContext } from '../contexts/AppContext';
+import { useAuthContext, useComptaContext, useOrgContext } from '../contexts/AppContext';
 import { TransactionCommentsModal } from './TransactionCommentsModal';
 import { TransactionComment } from '../types/rbac';
 
@@ -45,7 +45,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   onCloseFiscalYear
 }) => {
   const { user } = useAuthContext();
-  const { comptaRole } = useComptaContext();
+  const { comptaRole, selectedCompta } = useComptaContext();
+  const { selectedOrg } = useOrgContext();
   const isViewer = comptaRole === 'viewer';
   const isVerificateur = comptaRole === 'verificateur';
   const isCaissier = !isViewer && !isVerificateur; // caissier / comptable / admin
@@ -321,7 +322,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
     setUploadingId(txnId);
     try {
-      const url = await uploadReceipt(file);
+      const url = await uploadReceipt(file, selectedOrg?.id, selectedCompta?.id, user?.uid);
       const txn = transactions.find(t => t.id === txnId);
       if (txn) {
         onUpdateTransaction({ ...txn, receiptUrl: url, receiptFileName: file.name });

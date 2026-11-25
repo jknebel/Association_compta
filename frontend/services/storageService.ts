@@ -13,7 +13,7 @@ const computeHash = async (file: File): Promise<string> => {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
-export const uploadReceipt = async (file: File, orgId?: string, comptaId?: string): Promise<string> => {
+export const uploadReceipt = async (file: File, orgId?: string, comptaId?: string, uid?: string): Promise<string> => {
     // Helper for Base64 (Internal fallback)
     const toBase64 = (f: File): Promise<string> => {
         return new Promise((resolve) => {
@@ -27,7 +27,14 @@ export const uploadReceipt = async (file: File, orgId?: string, comptaId?: strin
         const storage = getStorage();
         const hash = await computeHash(file);
         // Use hash in path to ensure that identical content results in the same URL
-        const basePath = orgId && comptaId ? `receipts/${orgId}/${comptaId}` : 'receipts';
+        const basePath = orgId && comptaId
+            ? `receipts/${orgId}/${comptaId}`
+            : uid
+                ? `receipts/${uid}`
+                : '';
+        if (!basePath) {
+            throw new Error("Contexte organisation/utilisateur manquant pour le stockage.");
+        }
         const storageRef = ref(storage, `${basePath}/${hash}_${file.name}`);
 
         // Dedup: Check if file already exists

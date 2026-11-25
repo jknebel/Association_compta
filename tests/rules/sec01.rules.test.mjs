@@ -594,27 +594,32 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
 });
 
 describe('[SEC-01] storage.rules — justificatifs', () => {
-  const bytes = (size) => new Uint8Array(size);
-  const storageOf = (uid) => (uid ? testEnv.authenticatedContext(uid).storage() : testEnv.unauthenticatedContext().storage());
-  const put = (uid, p, size, contentType) =>
-    storageOf(uid).ref(p).put(bytes(size), contentType === undefined ? undefined : { contentType });
+  beforeEach(seed);
 
-  it('un utilisateur connecté peut déposer une image JPEG ou PNG dans receipts/{orgId}/{comptaId}/', async () => {
+  const bytes = (size) => new Uint8Array(size);
+  const storageOf = (uid, claims) => (uid ? testEnv.authenticatedContext(uid, claims).storage() : testEnv.unauthenticatedContext().storage());
+  const put = (uid, p, size, contentType, claims) =>
+    storageOf(uid, claims).ref(p).put(bytes(size), contentType === undefined ? undefined : { contentType });
+
+  it('un utilisateur autorisé peut déposer une image JPEG ou PNG dans receipts/{orgId}/{comptaId}/', async () => {
     await assertSucceeds(put('upl1', 'receipts/o1/c1/photo1.jpg', 1 * MB, 'image/jpeg'));
     await assertSucceeds(put('upl1', 'receipts/o1/c1/photo2.png', 1000, 'image/png'));
   });
 
-  it('un utilisateur connecté peut déposer un PDF', async () => {
+  it('un utilisateur autorisé peut déposer un PDF', async () => {
     await assertSucceeds(put('upl1', 'receipts/o1/c1/facture.pdf', 2 * MB, 'application/pdf'));
   });
 
-  it('la limite est strictement inférieure à 5 Mo (5 Mo - 1 octet accepté, 5 Mo refusé)', async () => {
+  it('la limite est strictement comprise entre 1 octet et < 5 Mo', async () => {
+    await assertSucceeds(put('upl1', 'receipts/o1/c1/limite_min.jpg', 1, 'image/jpeg'));
     await assertSucceeds(put('upl1', 'receipts/o1/c1/limite_ok.jpg', 5 * MB - 1, 'image/jpeg'));
+    await assertFails(put('upl1', 'receipts/o1/c1/vide.jpg', 0, 'image/jpeg'));
     await assertFails(put('upl1', 'receipts/o1/c1/limite_ko.jpg', 5 * MB, 'image/jpeg'));
     await assertFails(put('upl1', 'receipts/o1/c1/gros.pdf', 6 * MB, 'application/pdf'));
   });
 
-  it('refuse les types de fichiers autres que image/* et application/pdf', async () => {
+  it('refuse les types de fichiers autres que images sûres et application/pdf (dont SVG)', async () => {
+    await assertFails(put('upl1', 'receipts/o1/c1/xss.svg', 100, 'image/svg+xml'));
     await assertFails(put('upl1', 'receipts/o1/c1/script.js', 100, 'application/javascript'));
     await assertFails(put('upl1', 'receipts/o1/c1/note.txt', 100, 'text/plain'));
     await assertFails(put('upl1', 'receipts/o1/c1/app.exe', 100, 'application/octet-stream'));
@@ -637,29 +642,74 @@ describe('[SEC-01] storage.rules — justificatifs', () => {
     await assertFails(put('upl1', 'photo.jpg', 100, 'image/jpeg'));
   });
 
-  it('conserve les anciens chemins receipts/{uid}/ et receipts/public/ avec les mêmes contraintes', async () => {
+  it("espace personnel receipts/{uid}/ limité strictement au propriétaire, receipts/public/ et racine fermés", async () => {
     await assertSucceeds(put('upl1', 'receipts/upl1/old.jpg', 100, 'image/jpeg'));
-    await assertSucceeds(put('upl1', 'receipts/public/old.pdf', 100, 'application/pdf'));
-    await assertSucceeds(put('upl1', 'receipts/fichier.png', 100, 'image/png'));
-    await assertSucceeds(storageOf('cais1').ref('receipts/upl1/old.jpg').getDownloadURL());
-    await assertFails(storageOf(null).ref('receipts/upl1/old.jpg').getDownloadURL());
-    await assertSucceeds(storageOf('cais1').ref('receipts/upl1/old.jpg').delete());
-    await assertSucceeds(storageOf('cais1').ref('receipts/fichier.png').delete());
+    await assertSucceeds(storageOf('upl1').ref('receipts/upl1/old.jpg').getDownloadURL());
     await assertFails(put('upl1', 'receipts/upl1/old.txt', 100, 'text/plain'));
+    await assertFails(put('upl1', 'receipts/upl1/xss.svg', 100, 'image/svg+xml'));
     await assertFails(put('upl1', 'receipts/upl1/gros.jpg', 6 * MB, 'image/jpeg'));
+
+    // Cross-user et chemins publics/racine bloqués (SEC-03)
+    await assertFails(storageOf('cais1').ref('receipts/upl1/old.jpg').getDownloadURL());
+    await assertFails(put('cais1', 'receipts/upl1/intrusion.jpg', 100, 'image/jpeg'));
+    await assertFails(storageOf('cais1').ref('receipts/upl1/old.jpg').delete());
+    await assertSucceeds(storageOf('upl1').ref('receipts/upl1/old.jpg').delete());
+
+    await assertFails(put('upl1', 'receipts/public/old.pdf', 100, 'application/pdf'));
+    await assertFails(put('public', 'receipts/public/old.jpg', 100, 'image/jpeg'));
+    await assertFails(put('upl1', 'receipts/fichier.png', 100, 'image/png'));
   });
 
-  it('la lecture exige une authentification et la suppression reste possible pour les connectés', async () => {
+  it('la lecture et la suppression respectent le RBAC de la comptabilité', async () => {
     await put('upl1', 'receipts/o1/c1/lecture.jpg', 100, 'image/jpeg');
     await assertSucceeds(storageOf('cais1').ref('receipts/o1/c1/lecture.jpg').getDownloadURL());
+    await assertSucceeds(storageOf('viewer1').ref('receipts/o1/c1/lecture.jpg').getDownloadURL());
     await assertFails(storageOf(null).ref('receipts/o1/c1/lecture.jpg').getDownloadURL());
+    await assertFails(storageOf('stranger').ref('receipts/o1/c1/lecture.jpg').getDownloadURL());
+    await assertFails(storageOf('pending1').ref('receipts/o1/c1/lecture.jpg').getDownloadURL());
+
     await assertFails(storageOf(null).ref('receipts/o1/c1/lecture.jpg').delete());
+    await assertFails(storageOf('upl1').ref('receipts/o1/c1/lecture.jpg').delete());
+    await assertFails(storageOf('viewer1').ref('receipts/o1/c1/lecture.jpg').delete());
     await assertSucceeds(storageOf('cais1').ref('receipts/o1/c1/lecture.jpg').delete());
   });
 
-  it("un fichier existant ne peut pas être remplacé par un contenu non conforme", async () => {
+  it("un fichier existant ne peut pas être remplacé par un uploader ni par un contenu non conforme", async () => {
     await put('upl1', 'receipts/o1/c1/remplace.jpg', 100, 'image/jpeg');
+    await assertFails(put('upl1', 'receipts/o1/c1/remplace.jpg', 100, 'image/jpeg'));
     await assertFails(put('upl1', 'receipts/o1/c1/remplace.jpg', 100, 'text/html'));
     await assertFails(put('upl1', 'receipts/o1/c1/remplace.jpg', 6 * MB, 'image/jpeg'));
+    await assertFails(put('cais1', 'receipts/o1/c1/remplace.jpg', 100, 'text/html'));
+    await assertFails(put('cais1', 'receipts/o1/c1/remplace.jpg', 100, 'image/svg+xml'));
+    await assertSucceeds(put('cais1', 'receipts/o1/c1/remplace.jpg', 200, 'image/jpeg'));
+  });
+});
+
+describe('[SEC-03] storage.rules — isolation inter-comptabilités et rôles', () => {
+  beforeEach(seed);
+
+  const bytes = (size) => new Uint8Array(size);
+  const storageOf = (uid, claims) => (uid ? testEnv.authenticatedContext(uid, claims).storage() : testEnv.unauthenticatedContext().storage());
+  const put = (uid, p, size, contentType, claims) =>
+    storageOf(uid, claims).ref(p).put(bytes(size), contentType === undefined ? undefined : { contentType });
+
+  it('POSITIF : responsable_location, orgadmin et superAdmin accèdent conformément à leur rôle', async () => {
+    await assertSucceeds(put('loc1', 'receipts/o1/c1/loc.webp', 512, 'image/webp'));
+    await assertSucceeds(put('orgadmin', 'receipts/o1/c2/admin.png', 512, 'image/png'));
+    await assertSucceeds(put('sa-user', 'receipts/o1/c2/sa.pdf', 512, 'application/pdf', { superAdmin: true }));
+    await assertSucceeds(storageOf('orgadmin').ref('receipts/o1/c2/admin.png').delete());
+  });
+
+  it('NÉGATIF & LIMITES : isolation c1/c2, refus viewer/verificateur/pending/rejected en écriture', async () => {
+    await assertFails(put('upl1', 'receipts/o1/c2/cross.jpg', 100, 'image/jpeg'));
+    await assertFails(put('viewer1', 'receipts/o1/c1/viewer.jpg', 100, 'image/jpeg'));
+    await assertFails(put('verif1', 'receipts/o1/c1/verif.jpg', 100, 'image/jpeg'));
+    await assertFails(put('pending1', 'receipts/o1/c1/pending.jpg', 100, 'image/jpeg'));
+    await assertFails(put('rejected1', 'receipts/o1/c1/rejected.jpg', 100, 'image/jpeg'));
+    await assertFails(put('norole1', 'receipts/o1/c1/norole.jpg', 100, 'image/jpeg'));
+
+    await put('cais1', 'receipts/o1/c1/locked.jpg', 100, 'image/jpeg');
+    await assertFails(storageOf('upl1').ref('receipts/o1/c2/cross_read.jpg').getDownloadURL());
+    await assertFails(put('upl1', 'receipts/o1/c1/img.webp', 0, 'image/webp'));
   });
 });

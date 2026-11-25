@@ -244,7 +244,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
         // 3. Upload TOUS les fichiers valides en Storage D'ABORD
         const uploadedData = await Promise.all(validFiles.map(async (file) => {
             try {
-                const url = await uploadReceipt(file);
+                const url = await uploadReceipt(file, selectedOrg?.id, selectedCompta?.id, user?.uid);
                 return { file, url, success: true };
             } catch (e) {
                 console.error("Error uploading file", file.name, e);
