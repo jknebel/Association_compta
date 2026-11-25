@@ -55,7 +55,7 @@ async function seed() {
 
     // Comptabilités c1 & c2
     for (const c of [C1, C2]) {
-      await db.doc(c).set({ name: c.endsWith('c1') ? 'Compta 1' : 'Compta 2' });
+      await db.doc(c).set({ name: c.endsWith('c1') ? 'Compta 1' : 'Compta 2', createdBy: 'orgadmin' });
       await db.doc(`${c}/accounts/a1`).set({ code: '1000', name: 'Caisse' });
       await db.doc(`${c}/transactions/t1`).set({ amount: 10, description: 'Test' });
       await db.doc(`${c}/settings/aiConfig`).set({ context: 'ctx' });
@@ -76,6 +76,17 @@ async function seed() {
     await db.doc(`${C1}/receipts/r-upl1`).set({ fileName: 'a.jpg', submittedByUid: 'upl1' });
     await db.doc(`${C1}/receipts/r-cais1`).set({ fileName: 'b.jpg', submittedByUid: 'cais1' });
     await db.doc(`${C1}/receipts/r-legacy`).set({ fileName: 'c.jpg' });
+    await db.doc(`${C2}/receipts/r-c2`).set({ fileName: 'c2.jpg', submittedByUid: 'upl2' });
+    await db.doc(`${C1}/rentals/rent1`).set({ renterName: 'Loc', amount: 100 });
+    await db.doc(`${C2}/rentals/rent2`).set({ renterName: 'Loc2', amount: 200 });
+
+    // Membres avec statuts non approuvés / rôles additionnels / utilisateur sans rôle
+    await db.doc(`organizations/${ORG}/members/pending1`).set({ role: 'member', status: 'pending', comptaAccess: { c1: 'caissier' } });
+    await db.doc(`organizations/${ORG}/members/orgpending`).set({ role: 'admin', status: 'pending' });
+    await db.doc(`organizations/${ORG}/members/rejected1`).set({ role: 'member', status: 'rejected', comptaAccess: { c1: 'caissier' } });
+    await db.doc(`organizations/${ORG}/members/loc1`).set({ role: 'member', status: 'approved', comptaAccess: { c1: 'responsable_location' } });
+    await db.doc(`organizations/${ORG}/members/cais3`).set({ role: 'member', status: 'approved', comptaAccess: { c1: ' Caissier ' } });
+    await db.doc(`organizations/${ORG}/members/norole1`).set({ role: 'member', status: 'approved', comptaAccess: {} });
   });
 }
 
@@ -216,8 +227,9 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
       await assertFails(dbOf('upl1').doc(`${C1}/members/autre`).set({ uid: 'autre', role: 'comptable' }));
     });
 
-    it("ne peut pas modifier ou supprimer son propre profil membre d'organisation", async () => {
+    it("un uploader ne peut pas modifier son propre profil membre d'organisation (même displayName)", async () => {
       await assertFails(dbOf('upl1').doc(`organizations/${ORG}/members/upl1`).update({ 'comptaAccess.c1': 'caissier' }));
+      await assertFails(dbOf('upl1').doc(`organizations/${ORG}/members/upl1`).update({ displayName: 'Hack' }));
       await assertFails(dbOf('upl1').doc(`organizations/${ORG}/members/upl1`).delete());
       await assertFails(dbOf('upl1').doc(`organizations/${ORG}/members/upl1`).set({ role: 'admin', comptaAccess: { c1: 'caissier' } }));
     });
@@ -228,8 +240,10 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
       await assertFails(db.doc(`${C1}/transactions/t1`).delete());
     });
 
-    it("un rôle écrit avec espaces/majuscules (' Uploader ') est tout de même restreint", async () => {
+    it("un rôle écrit avec espaces/majuscules (' Uploader ' / ' Caissier ') est correctement normalisé", async () => {
       await assertFails(dbOf('upl3').doc(`${C1}/transactions/t1`).delete());
+      await assertSucceeds(dbOf('upl3').doc(`${C1}/receipts/new-upl3`).set(newReceipt('upl3')));
+      await assertSucceeds(dbOf('cais3').doc(`${C1}/transactions/t1`).update({ amount: 42 }));
     });
 
     it("un uploader ne peut pas contourner la restriction en créant son profil uid (profil e-mail existant)", async () => {
@@ -319,14 +333,18 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
       await assertSucceeds(db.runTransaction(async (tx) => {
         const src = db.doc(`${C1}/receipts/r-cais1`);
         await tx.get(src);
-        tx.set(db.doc(`${C2}/receipts/r-cais1`), newReceipt('cais1'));
+        tx.set(db.doc(`${C2}/receipts/r-cais1`), newReceipt('cais1', { transferRequest: { fromComptaId: 'c1', toComptaId: 'c2', status: 'PENDING_ACCEPTANCE' } }));
         tx.delete(src);
       }));
     });
 
-    it("un vérificateur et un lecteur conservent l'accès d'écriture existant (contrôlé côté UI)", async () => {
-      await assertSucceeds(dbOf('verif1').doc(`${C1}/transactions/t1`).update({ status: 'APPROVED' }));
-      await assertSucceeds(dbOf('viewer1').doc(`${C1}/receipts/rv`).set(newReceipt('viewer1')));
+    it("un vérificateur peut proposer/commenter une écriture sans modifier montant ni date ; un lecteur peut commenter uniquement", async () => {
+      await assertSucceeds(dbOf('verif1').doc(`${C1}/transactions/t1`).update({ status: 'PROPOSED', verifierProposal: { proposedAccountId: 'a1' } }));
+      await assertFails(dbOf('verif1').doc(`${C1}/transactions/t1`).update({ amount: 999 }));
+      await assertFails(dbOf('verif1').doc(`${C1}/transactions/t1`).update({ date: '2026-01-01' }));
+      await assertFails(dbOf('verif1').doc(`${C1}/transactions/t1`).delete());
+      await assertSucceeds(dbOf('viewer1').doc(`${C1}/transactions/t1`).update({ comments: [{ id: 'c1', text: 'note' }] }));
+      await assertFails(dbOf('viewer1').doc(`${C1}/receipts/rv`).set(newReceipt('viewer1')));
     });
 
     it("un uploader sur c1 mais caissier sur c2 peut écrire dans c2 uniquement", async () => {
@@ -360,9 +378,12 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
 
     it("création d'une nouvelle comptabilité et de son premier membre (flux createComptabilite)", async () => {
       const db = dbOf('cais1');
-      await assertSucceeds(db.doc(`organizations/${ORG}/comptabilites/c3`).set({ name: 'Nouvelle' }));
+      await assertSucceeds(db.doc(`organizations/${ORG}/comptabilites/c3`).set({ name: 'Nouvelle', createdBy: 'cais1' }));
       await assertSucceeds(db.doc(`organizations/${ORG}/comptabilites/c3/members/cais1`).set({ uid: 'cais1', role: 'comptable' }));
       await assertSucceeds(db.doc(`organizations/${ORG}/comptabilites/c3/accounts/a1`).set({ code: '1' }));
+      // Impossible de créer une compta avec un createdBy forgé ou absent
+      await assertFails(db.doc(`organizations/${ORG}/comptabilites/c4`).set({ name: 'Forged', createdBy: 'orgadmin' }));
+      await assertFails(db.doc(`organizations/${ORG}/comptabilites/c5`).set({ name: 'NoOwner' }));
     });
 
     it("demande d'adhésion : un nouvel utilisateur crée sa propre fiche membre et invitation", async () => {
@@ -402,6 +423,99 @@ describe('[SEC-01] firestore.rules — rôle uploader', () => {
       await assertFails(dbOf('u8').doc('users/u9').update({ email: 'hack@x.ch' }));
       await assertSucceeds(dbOf('u9').doc('users/u9/accounts/a1').set({ code: '1' }));
       await assertFails(dbOf('u8').doc('users/u9/accounts/a1').get());
+    });
+  });
+
+  describe('[SEC-01] Isolation inter-comptabilités, statuts pending/rejected et moindre privilège', () => {
+    it("isolation stricte : un uploader ou caissier sur c1 n'a aucun accès aux écritures/comptes/paramètres/reçus existants de c2", async () => {
+      // upl1 (uploader c1) bloqué sur c2 (lecture, création reçu, écritures)
+      await assertFails(dbOf('upl1').doc(`${C2}/transactions/t1`).get());
+      await assertFails(dbOf('upl1').doc(`${C2}/accounts/a1`).get());
+      await assertFails(dbOf('upl1').doc(`${C2}/receipts/r-c2`).get());
+      await assertFails(dbOf('upl1').doc(`${C2}/receipts/new-c2`).set(newReceipt('upl1')));
+      await assertFails(dbOf('upl1').doc(`${C2}/transactions/t1`).delete());
+
+      // cais1 (caissier c1) bloqué en lecture/modification/suppression sur c2
+      await assertFails(dbOf('cais1').doc(`${C2}/transactions/t1`).get());
+      await assertFails(dbOf('cais1').doc(`${C2}/transactions/t1`).update({ amount: 999 }));
+      await assertFails(dbOf('cais1').doc(`${C2}/transactions/t1`).delete());
+      await assertFails(dbOf('cais1').doc(`${C2}/accounts/a1`).get());
+      await assertFails(dbOf('cais1').doc(`${C2}/accounts/a1`).delete());
+      await assertFails(dbOf('cais1').doc(`${C2}/receipts/r-c2`).get());
+      await assertFails(dbOf('cais1').doc(`${C2}/receipts/r-c2`).delete());
+      await assertFails(dbOf('cais1').doc(C2).update({ name: 'Hijack' }));
+      await assertFails(dbOf('cais1').doc(`${C2}/members/cais1`).set({ uid: 'cais1', role: 'caissier' }));
+    });
+
+    it("un inscrit sans rôle ni membre pending/rejected ne peut rien lire ni écrire dans c1", async () => {
+      for (const uid of ['norole1', 'pending1', 'orgpending', 'rejected1', 'stranger99']) {
+        await assertFails(dbOf(uid).doc(`${C1}/transactions/t1`).get());
+        await assertFails(dbOf(uid).doc(`${C1}/accounts/a1`).get());
+        await assertFails(dbOf(uid).doc(`${C1}/settings/aiConfig`).get());
+        await assertFails(dbOf(uid).doc(`${C1}/receipts/r-upl1`).get());
+        await assertFails(dbOf(uid).doc(`${C1}/receipts/x-${uid}`).set(newReceipt(uid)));
+        await assertFails(dbOf(uid).doc(`${C1}/rentals/rent1`).get());
+        await assertFails(dbOf(uid).doc(`organizations/${ORG}/comptabilites/c-new-${uid}`).set({ name: 'Rogue', createdBy: uid }));
+      }
+    });
+
+    it("moindre privilège : viewer est strictement lecture seule (+ commentaires sur transactions)", async () => {
+      const db = dbOf('viewer1');
+      await assertSucceeds(db.doc(`${C1}/transactions/t1`).get());
+      await assertSucceeds(db.doc(`${C1}/accounts/a1`).get());
+      await assertSucceeds(db.doc(`${C1}/settings/aiConfig`).get());
+      await assertSucceeds(db.doc(`${C1}/rentals/rent1`).get());
+      await assertSucceeds(db.doc(`${C1}/transactions/t1`).update({ comments: [{ id: '1', text: 'ok' }] }));
+
+      await assertFails(db.doc(`${C1}/transactions/t-new`).set({ amount: 5 }));
+      await assertFails(db.doc(`${C1}/transactions/t1`).update({ amount: 500 }));
+      await assertFails(db.doc(`${C1}/transactions/t1`).update({ status: 'APPROVED' }));
+      await assertFails(db.doc(`${C1}/transactions/t1`).delete());
+      await assertFails(db.doc(`${C1}/accounts/a1`).update({ code: '9999' }));
+      await assertFails(db.doc(`${C1}/settings/aiConfig`).set({ context: 'evil' }));
+      await assertFails(db.doc(`${C1}/members/viewer1`).update({ role: 'caissier' }));
+      await assertFails(db.doc(`${C1}/rentals/rent1`).update({ amount: 0 }));
+      await assertFails(db.doc(C1).update({ name: 'Hijack' }));
+      await assertFails(db.doc(`organizations/${ORG}/comptabilites/c-new`).set({ name: 'No' }));
+    });
+
+    it("moindre privilège : verificateur peut proposer/commenter/lier mais ne peut pas altérer montants, dates, comptes ou membres", async () => {
+      const db = dbOf('verif1');
+      await assertSucceeds(db.doc(`${C1}/transactions/t1`).update({ status: 'PROPOSED', accountId: 'a1' }));
+      await assertSucceeds(db.doc(`${C1}/receipts/r-cais1`).update({ linkedTransactionId: 't1' }));
+
+      await assertFails(db.doc(`${C1}/transactions/t-new`).set({ amount: 5 }));
+      await assertFails(db.doc(`${C1}/transactions/t1`).update({ amount: 123 }));
+      await assertFails(db.doc(`${C1}/transactions/t1`).update({ date: '2020-01-01' }));
+      await assertFails(db.doc(`${C1}/transactions/t1`).update({ id: 'fake' }));
+      await assertFails(db.doc(`${C1}/transactions/t1`).update({ runningBalance: 0 }));
+      await assertFails(db.doc(`${C1}/transactions/t1`).delete());
+      await assertFails(db.doc(`${C1}/receipts/r-cais1`).update({ reimbursementStatus: 'REIMBURSED' }));
+      await assertFails(db.doc(`${C1}/receipts/r-cais1`).delete());
+      await assertFails(db.doc(`${C1}/accounts/a1`).update({ code: '9999' }));
+      await assertFails(db.doc(`${C1}/members/verif1`).update({ role: 'caissier' }));
+    });
+
+    it("moindre privilège : responsable_location gère rentals/reçus propres/notifications mais pas les écritures ni la compta", async () => {
+      const db = dbOf('loc1');
+      await assertSucceeds(db.doc(`${C1}/rentals/rent1`).get());
+      await assertSucceeds(db.doc(`${C1}/rentals/rent-new`).set({ renterName: 'A', amount: 50 }));
+      await assertSucceeds(db.doc(`${C1}/notifications/n1`).set({ type: 'RENTAL' }));
+      await assertSucceeds(db.doc(`${C1}/receipts/r-loc1`).set(newReceipt('loc1')));
+      await assertSucceeds(db.doc(`${C1}/accounts/a1`).get());
+
+      await assertFails(db.doc(`${C1}/transactions/t1`).get());
+      await assertFails(db.doc(`${C1}/transactions/t1`).update({ amount: 1 }));
+      await assertFails(db.doc(`${C1}/accounts/a1`).update({ code: '9999' }));
+      await assertFails(db.doc(`${C1}/receipts/r-cais1`).get());
+      await assertFails(db.doc(`${C1}/members/loc1`).set({ uid: 'loc1', role: 'caissier' }));
+    });
+
+    it("valeurs limites : rôle 'admin' interdit en écriture dans comptabilites/{comptaId}/members par un caissier", async () => {
+      await assertFails(dbOf('cais1').doc(`${C1}/members/upl1`).update({ role: 'admin' }));
+      await assertFails(dbOf('cais1').doc(`${C1}/members/newadmin`).set({ uid: 'newadmin', role: 'admin' }));
+      await assertFails(dbOf('cais1').doc(`${C1}/members/bad`).set({ uid: 'bad', role: '' }));
+      await assertFails(dbOf('cais1').doc(`${C1}/members/bad2`).set({ uid: 'bad2', role: 123 }));
     });
   });
 });
@@ -454,6 +568,10 @@ describe('[SEC-01] storage.rules — justificatifs', () => {
     await assertSucceeds(put('upl1', 'receipts/upl1/old.jpg', 100, 'image/jpeg'));
     await assertSucceeds(put('upl1', 'receipts/public/old.pdf', 100, 'application/pdf'));
     await assertSucceeds(put('upl1', 'receipts/fichier.png', 100, 'image/png'));
+    await assertSucceeds(storageOf('cais1').ref('receipts/upl1/old.jpg').getDownloadURL());
+    await assertFails(storageOf(null).ref('receipts/upl1/old.jpg').getDownloadURL());
+    await assertSucceeds(storageOf('cais1').ref('receipts/upl1/old.jpg').delete());
+    await assertSucceeds(storageOf('cais1').ref('receipts/fichier.png').delete());
     await assertFails(put('upl1', 'receipts/upl1/old.txt', 100, 'text/plain'));
     await assertFails(put('upl1', 'receipts/upl1/gros.jpg', 6 * MB, 'image/jpeg'));
   });

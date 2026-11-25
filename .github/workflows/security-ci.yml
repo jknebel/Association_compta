@@ -1,0 +1,91 @@
+name: Security CI
+
+on:
+  pull_request:
+    branches:
+      - ameliorationv2
+  push:
+    branches:
+      - ameliorationv2
+
+permissions:
+  contents: read
+
+jobs:
+  unit-and-build:
+    name: Unit Tests, Mutations & Frontend Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Unit Tests
+        run: node --experimental-transform-types --test frontend/types/__tests__/*.test.mjs frontend/services/__tests__/*.test.mjs
+
+      - name: Run Mutation Tests (TypeScript logic)
+        run: |
+          node frontend/services/__tests__/mutation.web03.mjs
+          node frontend/services/__tests__/mutation.web04.mjs
+
+      - name: Build Frontend
+        run: npm run build
+        env:
+          VITE_API_URL: https://example.invalid
+          VITE_FIREBASE_API_KEY: dummy
+          VITE_FIREBASE_AUTH_DOMAIN: dummy.firebaseapp.com
+          VITE_FIREBASE_PROJECT_ID: demo-sec01
+          VITE_FIREBASE_STORAGE_BUCKET: demo-sec01.appspot.com
+          VITE_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+          VITE_FIREBASE_APP_ID: 1:000000000000:web:dummy
+
+  firebase-rules:
+    name: Firebase Rules & Mutation (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: rules-and-F0-F1
+            filter: '^F[01]'
+            run_base: true
+          - shard: F2-F4
+            filter: '^F[234]'
+            run_base: false
+          - shard: Storage-S
+            filter: '^S'
+            run_base: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Java 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install Dependencies & Rules Test Tooling
+        run: |
+          npm ci
+          npm install --no-save --legacy-peer-deps @firebase/rules-unit-testing@3.0.4 firebase-tools@13.30.0
+
+      - name: Run Firebase Rules Tests & Mutation Shard
+        run: |
+          if [ "${{ matrix.run_base }}" = "true" ]; then
+            npx firebase-tools emulators:exec --only firestore,storage --project demo-sec01 "node --test tests/rules/sec01.rules.test.mjs && node tests/rules/mutation.sec01.mjs '${{ matrix.filter }}'"
+          else
+            npx firebase-tools emulators:exec --only firestore,storage --project demo-sec01 "node tests/rules/mutation.sec01.mjs '${{ matrix.filter }}'"
+          fi
