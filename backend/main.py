@@ -1146,10 +1146,27 @@ compiled_app = workflow.compile()
 
 import time as _time
 
+try:
+    from email_security import (
+        EmailRateLimiter,
+        user_can_send_email,
+        validate_and_sanitize_email_payload,
+        verify_mailer_secret,
+    )
+except ImportError:
+    from backend.email_security import (
+        EmailRateLimiter,
+        user_can_send_email,
+        validate_and_sanitize_email_payload,
+        verify_mailer_secret,
+    )
+
 _SUPER_ADMIN_EMAILS = {
     "jean.francois.knebel@gmail.com",
     "jean-francois@knebel.ch",
+    "quokka@tdgl.ch",
 }
+_EMAIL_RATE_LIMITER = EmailRateLimiter()
 _VALID_ROLES = {
     "admin",
     "caissier",
@@ -1192,7 +1209,7 @@ def _user_has_any_role(uid: str, email: str) -> bool:
                 has_role = True
                 break
 
-        # 2. Check organization members and direct comptabilit� members via collection_group("members")
+        # 2. Check organization members and direct comptabilité members via collection_group("members")
         if not has_role:
             for m_doc in db.collection_group("members").stream():
                 m_data = m_doc.to_dict() or {}
@@ -1743,54 +1760,132 @@ def _send_smtp_email_sync(
         server.send_message(msg)
 
 
+def _log_mail_audit(
+    recipients: List[str],
+    smtp_user: str,
+    from_name: str,
+    subject: str,
+    text: str,
+    html: Optional[str],
+    state: str,
+    error_msg: Optional[str] = None,
+    actor_uid: Optional[str] = None,
+) -> None:
+    if not db:
+        return
+    try:
+        db.collection("mail").add({
+            "to": recipients,
+            "from": f"{from_name} <{smtp_user}>",
+            "message": {
+                "subject": subject,
+                "text": text,
+                "html": html,
+            },
+            "delivery": {
+                "state": state,
+                "error": error_msg,
+                "endTime": datetime.utcnow().isoformat() + "Z",
+            },
+            "actorUid": actor_uid,
+            "createdAt": datetime.utcnow().isoformat() + "Z",
+        })
+    except Exception as log_err:
+        print(f"Unable to write server mail audit log: {log_err}")
+
+
 @app.post("/api/send-email")
 async def send_email_endpoint(
     request: SendEmailRequest,
     authorization: Optional[str] = Header(default=None),
     x_mailer_secret: Optional[str] = Header(default=None),
 ):
+    # SEC-04 : Authentification stricte (secret interne dédié OU Firebase ID Token + rôle privilégié)
+    actor_key: Optional[str] = None
+    actor_uid: Optional[str] = None
+    if x_mailer_secret is not None:
+        internal_secret = os.getenv("MAILER_INTERNAL_SECRET", "")
+        if not verify_mailer_secret(x_mailer_secret, internal_secret):
+            raise HTTPException(status_code=401, detail="Invalid internal mailer secret.")
+        actor_key = "internal:mailer"
+    elif authorization and authorization.startswith("Bearer "):
+        token = authorization.split("Bearer ", 1)[1].strip()
+        if not token:
+            raise HTTPException(status_code=401, detail="Empty Bearer token.")
+        if not firebase_admin._apps:
+            raise HTTPException(status_code=500, detail="Firebase Admin not initialized on server.")
+        try:
+            decoded = firebase_auth.verify_id_token(token)
+        except Exception as auth_err:
+            print(f"Firebase token verification failed: {auth_err}")
+            raise HTTPException(status_code=401, detail="Invalid or expired Firebase ID token.")
+
+        uid = decoded.get("uid") or ""
+        email = decoded.get("email") or ""
+        if not uid:
+            raise HTTPException(status_code=401, detail="Invalid Firebase token payload.")
+        if not (decoded.get("superAdmin") is True or user_can_send_email(uid, email, _SUPER_ADMIN_EMAILS, db)):
+            raise HTTPException(status_code=403, detail="Insufficient permissions to send email.")
+        actor_key = f"uid:{uid}"
+        actor_uid = uid
+    else:
+        raise HTTPException(status_code=401, detail="Unauthorized email dispatch request.")
+
+    if not _EMAIL_RATE_LIMITER.allow(actor_key):
+        raise HTTPException(status_code=429, detail="Too many email requests. Please retry later.")
+
+    try:
+        sanitized = validate_and_sanitize_email_payload(
+            to=request.to,
+            subject=request.subject,
+            text=request.text,
+            html=request.html,
+            from_name=request.from_name,
+            reply_to=request.reply_to,
+            default_from_name=os.getenv("SMTP_FROM_NAME", "AssoCompta (Ne pas répondre)"),
+        )
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
+
     smtp_user = os.getenv("SMTP_USER", "").strip()
     smtp_pass = os.getenv("SMTP_PASS", "").strip()
     if not smtp_user or not smtp_pass:
         raise HTTPException(status_code=500, detail="SMTP credentials not configured on server.")
-
-    # Verify caller: either valid Firebase ID Token or matching X-Mailer-Secret
-    authorized = False
-    if x_mailer_secret and x_mailer_secret == smtp_pass:
-        authorized = True
-    elif authorization and authorization.startswith("Bearer "):
-        token = authorization.split("Bearer ", 1)[1].strip()
-        if token and firebase_admin._apps:
-            try:
-                firebase_auth.verify_id_token(token)
-                authorized = True
-            except Exception as auth_err:
-                print(f"Firebase token verification failed: {auth_err}")
-
-    if not authorized:
-        raise HTTPException(status_code=401, detail="Unauthorized email dispatch request.")
-
-    clean_recipients = [
-        r.strip() for r in (request.to or []) if isinstance(r, str) and "@" in r and "." in r
-    ]
-    if not clean_recipients:
-        raise HTTPException(status_code=400, detail="No valid recipient email addresses provided.")
-
-    from_name = (request.from_name or os.getenv("SMTP_FROM_NAME", "AssoCompta (Ne pas répondre)")).strip()
 
     try:
         await asyncio.to_thread(
             _send_smtp_email_sync,
             smtp_user,
             smtp_pass,
-            from_name,
-            clean_recipients,
-            request.subject,
-            request.text or "",
-            request.html,
-            request.reply_to,
+            sanitized["from_name"],
+            sanitized["to"],
+            sanitized["subject"],
+            sanitized["text"],
+            sanitized["html"],
+            sanitized["reply_to"],
         )
-        return {"status": "sent", "to": clean_recipients, "from": smtp_user}
+        _log_mail_audit(
+            sanitized["to"],
+            smtp_user,
+            sanitized["from_name"],
+            sanitized["subject"],
+            sanitized["text"],
+            sanitized["html"],
+            "SUCCESS",
+            actor_uid=actor_uid,
+        )
+        return {"status": "sent", "to": sanitized["to"], "from": smtp_user}
     except Exception as e:
         print(f"SMTP send failed: {e}")
+        _log_mail_audit(
+            sanitized["to"],
+            smtp_user,
+            sanitized["from_name"],
+            sanitized["subject"],
+            sanitized["text"],
+            sanitized["html"],
+            "ERROR",
+            error_msg=str(e),
+            actor_uid=actor_uid,
+        )
         raise HTTPException(status_code=500, detail=f"SMTP send failed: {e}")
