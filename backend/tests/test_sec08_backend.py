@@ -131,20 +131,20 @@ def test_validate_base64_receipt_payload_bounds():
     valid_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\npayload").decode("ascii")
     assert request_security.validate_base64_receipt_payload(valid_b64, "image/png").startswith(b"\x89PNG")
 
-    # Pre-decode base64 char boundary (> MAX_RECEIPT_BASE64_CHARS -> PayloadTooLargeError before decoding)
-    huge_b64 = "A" * (request_security.MAX_RECEIPT_BASE64_CHARS + 1)
+    # Pre-decode base64 char boundary (> 7_000_000 chars -> PayloadTooLargeError before decoding)
+    huge_b64 = "A" * 7_000_001
     with pytest.raises(request_security.PayloadTooLargeError):
         request_security.validate_base64_receipt_payload(huge_b64, "image/jpeg")
 
     # Decoded bytes boundary: 5 MiB + 1 encodes to 6,990,512 chars (< 7_000_000) -> caught after decode!
-    over_5mib_b64 = base64.b64encode(b"x" * (request_security.MAX_RECEIPT_BYTES + 1)).decode("ascii")
-    assert len(over_5mib_b64) <= request_security.MAX_RECEIPT_BASE64_CHARS
+    over_5mib_b64 = base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode("ascii")
+    assert len(over_5mib_b64) <= 7_000_000
     with pytest.raises(request_security.PayloadTooLargeError):
         request_security.validate_base64_receipt_payload(over_5mib_b64, "image/jpeg")
 
     # Exact 5 MiB decoded succeeds
-    exact_5mib_b64 = base64.b64encode(b"x" * request_security.MAX_RECEIPT_BYTES).decode("ascii")
-    assert len(request_security.validate_base64_receipt_payload(exact_5mib_b64, "image/png")) == request_security.MAX_RECEIPT_BYTES
+    exact_5mib_b64 = base64.b64encode(b"x" * (5 * 1024 * 1024)).decode("ascii")
+    assert len(request_security.validate_base64_receipt_payload(exact_5mib_b64, "image/png")) == 5 * 1024 * 1024
 
     with pytest.raises(request_security.InvalidUploadMediaError):
         request_security.validate_base64_receipt_payload(valid_b64, "image/svg+xml")
@@ -257,7 +257,7 @@ def test_process_bank_statement_idor_fix_size_and_pdf_limits(monkeypatch):
 
     # Exact 10 MiB succeeds; 10 MiB + 1 returns 413
     monkeypatch.setattr(main.fitz, "open", lambda stream, filetype="pdf": _FakePdfDoc(1))
-    ok_10m = b"%PDF-" + (b"a" * (request_security.MAX_STATEMENT_BYTES - 5))
+    ok_10m = b"%PDF-" + (b"a" * (10 * 1024 * 1024 - 5))
     assert client.post(
         "/process-bank-statement",
         headers=headers,
@@ -306,7 +306,7 @@ def test_process_receipt_and_analyze_receipt_bounds_and_mime(monkeypatch):
     assert client.post(
         "/process-receipt",
         headers=headers,
-        files={"file": ("big.png", b"a" * (request_security.MAX_RECEIPT_BYTES + 1), "image/png")},
+        files={"file": ("big.png", b"a" * (5 * 1024 * 1024 + 1), "image/png")},
         data={"transactions": "[]"},
     ).status_code == 413
 
@@ -342,7 +342,7 @@ def test_process_receipt_and_analyze_receipt_bounds_and_mime(monkeypatch):
         json={"base64Data": ok_img, "mimeType": "image/svg+xml"},
     ).status_code == 400
 
-    over_b64 = "A" * (request_security.MAX_RECEIPT_BASE64_CHARS + 1)
+    over_b64 = "A" * 7_000_001
     assert client.post(
         "/analyze-receipt",
         headers=headers,
