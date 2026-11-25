@@ -41,6 +41,7 @@ jobs:
           node tests/mutation.sec09.mjs
           node tests/mutation.sec10.mjs
           node tests/mutation.sec12.mjs
+          node tests/mutation.sec13.mjs
 
       - name: Build Frontend
         run: npm run build
