@@ -5,6 +5,7 @@ import { analyzeReceipt, processReceiptBackend } from '../services/geminiService
 import { uploadReceipt } from '../services/storageService';
 import { formatDate } from '../services/formatUtils';
 import { useComptaContext, useAuthContext, useOrgContext } from '../contexts/AppContext';
+import { sanitizeReceiptUrl } from '../services/urlAndHtmlSanitizer';
 import { listComptabilites, transferReceiptToComptabilite } from '../services/organizationService';
 import { findPotentialMatchesForReceipt } from '../services/reimbursementMatching';
 import {
@@ -173,27 +174,14 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
         }
     };
 
-    // Open receipt file (handles both URLs and base64 data URIs incl. PDFs)
-    const openReceipt = (url: string, fileName: string) => {
-        if (url.startsWith('data:')) {
-            // Convert base64 data URI to blob and open in new tab
-            try {
-                const [header, b64] = url.split(',');
-                const mimeMatch = header.match(/data:(.*?);/);
-                const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
-                const byteChars = atob(b64);
-                const byteArray = new Uint8Array(byteChars.length);
-                for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
-                const blob = new Blob([byteArray], { type: mime });
-                const blobUrl = URL.createObjectURL(blob);
-                window.open(blobUrl, '_blank');
-            } catch (e) {
-                console.error('Failed to open data URI', e);
-                window.open(url, '_blank');
-            }
-        } else {
-            window.open(url, '_blank');
+    // Open receipt file strictly via allowlisted HTTPS Firebase Storage URLs
+    const openReceipt = (url: string, _fileName: string) => {
+        const safeUrl = sanitizeReceiptUrl(url);
+        if (!safeUrl) {
+            console.warn('Blocked unsafe receipt URL');
+            return;
         }
+        window.open(safeUrl, '_blank', 'noopener,noreferrer');
     };
 
     // Filter out receipts that are already linked to APPROVED or ARCHIVED transactions
@@ -483,14 +471,17 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                     onClick={() => openReceipt(receipt.url, receipt.fileName)}
                                     title="Cliquer pour ouvrir le fichier"
                                 >
-                                    {receipt.url.startsWith('data:image') || receipt.fileName.match(/\.(jpg|jpeg|png)$/i) ? (
-                                        <img src={receipt.url} alt="receipt" className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
-                                    ) : (
-                                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 group-hover:text-blue-400 transition-colors">
-                                            <FileText size={48} />
-                                            <span className="text-xs mt-2 text-slate-500 group-hover:text-blue-300">Cliquer pour ouvrir</span>
-                                        </div>
-                                    )}
+                                    {(() => {
+                                        const safeThumbUrl = sanitizeReceiptUrl(receipt.url);
+                                        return safeThumbUrl && receipt.fileName.match(/\.(jpg|jpeg|png)$/i) ? (
+                                            <img src={safeThumbUrl} referrerPolicy="no-referrer" alt="receipt" className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
+                                        ) : (
+                                            <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 group-hover:text-blue-400 transition-colors">
+                                                <FileText size={48} />
+                                                <span className="text-xs mt-2 text-slate-500 group-hover:text-blue-300">Cliquer pour ouvrir</span>
+                                            </div>
+                                        );
+                                    })()}
                                     <div className="absolute top-2 right-2 p-1.5 bg-black/50 group-hover:bg-blue-600/80 rounded text-white backdrop-blur-sm transition-colors">
                                         <ExternalLink size={14} />
                                     </div>

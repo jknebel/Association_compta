@@ -7,6 +7,7 @@ import { auditLedger } from '../services/geminiService';
 import { AuditModal } from './AuditModal';
 import { Check, X, AlertTriangle, Search, Filter, Calendar, Coins, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck, Plus, MessageSquare, CheckCircle, Send } from 'lucide-react';
 import { formatDate, dateToTimestamp } from '../services/formatUtils';
+import { sanitizeReceiptUrl } from '../services/urlAndHtmlSanitizer';
 import { useAuthContext, useComptaContext, useOrgContext } from '../contexts/AppContext';
 import { TransactionCommentsModal } from './TransactionCommentsModal';
 import { TransactionComment } from '../types/rbac';
@@ -282,25 +283,12 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
   // --- RECEIPT LOGIC ---
 
   const openReceipt = (url: string) => {
-    if (url.startsWith('data:')) {
-        // Convert base64 data URI to blob and open in new tab
-        try {
-            const [header, b64] = url.split(',');
-            const mimeMatch = header.match(/data:(.*?);/);
-            const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
-            const byteChars = atob(b64);
-            const byteArray = new Uint8Array(byteChars.length);
-            for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
-            const blob = new Blob([byteArray], { type: mime });
-            const blobUrl = URL.createObjectURL(blob);
-            window.open(blobUrl, '_blank');
-        } catch (e) {
-            console.error('Failed to open data URI', e);
-            window.open(url, '_blank');
-        }
-    } else {
-        window.open(url, '_blank');
+    const safeUrl = sanitizeReceiptUrl(url);
+    if (!safeUrl) {
+        console.warn('Blocked unsafe receipt URL');
+        return;
     }
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
   };
 
   const handleAttachClick = (txnId: string) => {

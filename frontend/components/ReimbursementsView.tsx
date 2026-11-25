@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useComptaContext, useAuthContext, useOrgContext } from '../contexts/AppContext';
 import { formatDate } from '../services/formatUtils';
+import { sanitizeReceiptUrl } from '../services/urlAndHtmlSanitizer';
 import {
   splitSubmitterIdentity,
   findPotentialMatchesForReceipt,
@@ -598,19 +599,28 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
               </button>
             </div>
             <div className="flex-1 overflow-auto p-4 bg-slate-950 flex items-center justify-center">
-              {isPdfReceipt(selectedReceipt) ? (
-                <iframe
-                  src={selectedReceipt.url}
-                  title={selectedReceipt.fileName}
-                  className="w-full h-[75vh] rounded border border-slate-800 bg-white"
-                />
-              ) : (
-                <img
-                  src={selectedReceipt.url}
-                  alt="Justificatif de remboursement"
-                  className="max-w-full max-h-[75vh] object-contain shadow-lg rounded"
-                />
-              )}
+              {(() => {
+                const safeSelectedUrl = sanitizeReceiptUrl(selectedReceipt.url);
+                if (!safeSelectedUrl) {
+                  return <p className="text-sm text-rose-400 italic">URL de justificatif invalide ou non autorisée.</p>;
+                }
+                return isPdfReceipt(selectedReceipt) ? (
+                  <iframe
+                    src={safeSelectedUrl}
+                    sandbox="allow-same-origin"
+                    referrerPolicy="no-referrer"
+                    title={selectedReceipt.fileName}
+                    className="w-full h-[75vh] rounded border border-slate-800 bg-white"
+                  />
+                ) : (
+                  <img
+                    src={safeSelectedUrl}
+                    referrerPolicy="no-referrer"
+                    alt="Justificatif de remboursement"
+                    className="max-w-full max-h-[75vh] object-contain shadow-lg rounded"
+                  />
+                );
+              })()}
             </div>
           </div>
         </div>

@@ -9,6 +9,7 @@ import {
     buildPeriodFromClosingDate,
     parseComptaDisplay
 } from '../services/organizationService';
+import { sanitizeReceiptUrl } from '../services/urlAndHtmlSanitizer';
 
 interface AuditModalProps {
     isOpen: boolean;
@@ -646,11 +647,17 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                                                         <span className="bg-slate-200 text-slate-600 text-xs px-2 py-1 rounded">Réf: {t.id.slice(0, 8)}</span>
                                                     </div>
                                                     <div className="flex justify-center bg-white border border-slate-200 rounded p-2">
-                                                        {t.receiptUrl?.toLowerCase().endsWith('.pdf') ? (
-                                                            <iframe src={t.receiptUrl} className="w-full h-[600px] border-none" title={`Justificatif ${t.id}`} />
-                                                        ) : (
-                                                            <img src={t.receiptUrl} alt="Justificatif" className="max-h-[800px] object-contain" />
-                                                        )}
+                                                        {(() => {
+                                                            const safeReceiptUrl = sanitizeReceiptUrl(t.receiptUrl);
+                                                            if (!safeReceiptUrl) {
+                                                                return <p className="text-sm text-rose-500 italic py-4">URL de justificatif invalide ou non autorisée.</p>;
+                                                            }
+                                                            return safeReceiptUrl.toLowerCase().includes('.pdf') ? (
+                                                                <iframe src={safeReceiptUrl} sandbox="allow-same-origin" referrerPolicy="no-referrer" className="w-full h-[600px] border-none" title={`Justificatif ${t.id}`} />
+                                                            ) : (
+                                                                <img src={safeReceiptUrl} referrerPolicy="no-referrer" alt="Justificatif" className="max-h-[800px] object-contain" />
+                                                            );
+                                                        })()}
                                                     </div>
                                                 </div>
                                             ))}
