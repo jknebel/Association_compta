@@ -141,10 +141,10 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
             <span className="p-2 rounded-lg bg-amber-950/60 border border-amber-700/50 text-amber-300">
               💶
             </span>
-            Gestion des Remboursements
+            Gestion des Remboursements &amp; Factures
           </h2>
           <p className="text-sm text-slate-400 mt-1">
-            Suivez les justificatifs marqués « À rembourser », vérifiez le nom, prénom, e-mail et IBAN du membre, et biffez les remboursements effectués.
+            Suivez les justificatifs marqués « À rembourser » ou « Facture à payer », vérifiez les coordonnées ou la pièce jointe (photo/PDF), et marquez-les comme payés.
           </p>
           <p className="text-xs text-amber-300/90 mt-1.5 flex items-center gap-1.5">
             <Mail size={13} className="text-amber-400 shrink-0" />
@@ -283,8 +283,8 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
               <thead className="bg-slate-950 border-b border-slate-800 text-xs uppercase tracking-wider text-slate-400">
                 <tr>
                   <th className="px-4 py-3.5 w-32">Statut / Biffer</th>
-                  <th className="px-4 py-3.5">Personne à rembourser (Nom, Prénom, E-mail)</th>
-                  <th className="px-4 py-3.5">IBAN</th>
+                  <th className="px-4 py-3.5">Personne / Type</th>
+                  <th className="px-4 py-3.5">IBAN / Paiement</th>
                   <th className="px-4 py-3.5">Justificatif & Motif</th>
                   <th className="px-4 py-3.5 w-32">Montant</th>
                   <th className="px-4 py-3.5 w-64">Rapprochement Bancaire</th>
@@ -293,6 +293,7 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
               <tbody className="divide-y divide-slate-800">
                 {filteredReimbursements.map((receipt) => {
                   const isReimbursed = receipt.reimbursementStatus === 'REIMBURSED';
+                  const isInvoicePayment = receipt.expenseType === 'INVOICE_PAYMENT';
                   const identity = splitSubmitterIdentity(
                     receipt.submittedByName,
                     receipt.submittedByEmail
@@ -332,12 +333,12 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
                           {isReimbursed ? (
                             <>
                               <CheckSquare size={15} className="text-emerald-400 shrink-0" />
-                              <span>Remboursé ✓</span>
+                              <span>{isInvoicePayment ? 'Payée ✓' : 'Remboursé ✓'}</span>
                             </>
                           ) : (
                             <>
                               <Square size={15} className="text-amber-400 shrink-0" />
-                              <span>Marquer fait</span>
+                              <span>{isInvoicePayment ? 'Marquer payée' : 'Marquer fait'}</span>
                             </>
                           )}
                         </button>
@@ -368,6 +369,17 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
                       {/* PERSONNE À REMBOURSER : NOM, PRÉNOM, EMAIL */}
                       <td className="px-4 py-4 align-top">
                         <div className="space-y-1">
+                          <div>
+                            {isInvoicePayment ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-violet-950/70 text-violet-300 border border-violet-700/50">
+                                📄 Facture à payer
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-950/70 text-amber-300 border border-amber-700/50">
+                                💶 Remboursement
+                              </span>
+                            )}
+                          </div>
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                             <span
                               className={`text-xs text-slate-400 ${
@@ -409,9 +421,24 @@ export const ReimbursementsView: React.FC<ReimbursementsViewProps> = ({
                         </div>
                       </td>
 
-                      {/* IBAN */}
+                      {/* IBAN / PAIEMENT SUR FACTURE */}
                       <td className="px-4 py-4 align-top">
-                        {receipt.reimbursementIban ? (
+                        {isInvoicePayment ? (
+                          <div className="flex flex-col items-start gap-1.5">
+                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded bg-violet-950/50 border border-violet-800/60 text-violet-200">
+                              <FileText size={12} className="shrink-0" />
+                              <span>Paiement sur facture (PDF / photo)</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedReceipt(receipt)}
+                              className="inline-flex items-center gap-1 text-[11px] text-violet-300 hover:text-white bg-violet-900/40 hover:bg-violet-800/60 border border-violet-700/50 px-2 py-0.5 rounded transition-colors cursor-pointer"
+                            >
+                              <Eye size={11} />
+                              <span>Ouvrir la facture</span>
+                            </button>
+                          </div>
+                        ) : receipt.reimbursementIban ? (
                           <div className="flex flex-col items-start gap-1.5">
                             <span
                               className={`font-mono text-xs px-2 py-1 rounded bg-slate-950 border border-slate-800 text-amber-200 ${

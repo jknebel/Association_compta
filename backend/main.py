@@ -1169,6 +1169,9 @@ import time as _time
 try:
     from email_security import (
         EmailRateLimiter,
+        build_invoice_payment_email,
+        is_safe_firestore_segment,
+        resolve_compta_caissier_emails_from_db,
         user_can_send_email,
         validate_and_sanitize_email_payload,
         verified_token_email,
@@ -1193,6 +1196,9 @@ try:
 except ImportError:
     from backend.email_security import (
         EmailRateLimiter,
+        build_invoice_payment_email,
+        is_safe_firestore_segment,
+        resolve_compta_caissier_emails_from_db,
         user_can_send_email,
         validate_and_sanitize_email_payload,
         verified_token_email,
@@ -2019,3 +2025,141 @@ async def send_email_endpoint(
             actor_uid=actor_uid,
         )
         raise HTTPException(status_code=500, detail=build_safe_500_detail(e, "send-email"))
+
+
+class NotifyInvoicePaymentRequest(BaseModel):
+    orgId: str
+    comptaId: str
+    receiptId: str
+
+
+@app.post("/api/notify-invoice-payment")
+async def notify_invoice_payment_endpoint(
+    request: NotifyInvoicePaymentRequest,
+    decoded: dict = Depends(verify_firebase_token),
+):
+    """Notifie immédiatement le(s) caissier(s) par e-mail lors de l'envoi d'une facture à payer (INVOICE_PAYMENT)."""
+    uid = (decoded.get("uid") or "").strip()
+    email = verified_token_email(decoded)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid Firebase token payload.")
+
+    if not _EMAIL_RATE_LIMITER.allow(f"uid:{uid}"):
+        raise HTTPException(status_code=429, detail="Too many email requests. Please retry later.")
+
+    org_id = (request.orgId or "").strip()
+    compta_id = (request.comptaId or "").strip()
+    receipt_id = (request.receiptId or "").strip()
+    if not (
+        is_safe_firestore_segment(org_id)
+        and is_safe_firestore_segment(compta_id)
+        and is_safe_firestore_segment(receipt_id)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid organization, compta, or receipt identifier.")
+
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable on server.")
+
+    compta_ref = (
+        db.collection("organizations")
+        .document(org_id)
+        .collection("comptabilites")
+        .document(compta_id)
+    )
+    receipt_ref = compta_ref.collection("receipts").document(receipt_id)
+    receipt_snap = receipt_ref.get()
+    if not getattr(receipt_snap, "exists", False):
+        raise HTTPException(status_code=404, detail="Receipt not found.")
+
+    receipt_data = receipt_snap.to_dict() or {}
+    if receipt_data.get("expenseType") != "INVOICE_PAYMENT":
+        raise HTTPException(status_code=400, detail="Receipt is not marked as INVOICE_PAYMENT.")
+
+    submitted_uid = str(receipt_data.get("submittedByUid") or "").strip()
+    is_owner = bool(submitted_uid and submitted_uid == uid)
+    is_privileged = decoded.get("superAdmin") is True or user_can_send_email(uid, email, _SUPER_ADMIN_EMAILS, db)
+    if not (is_owner or is_privileged):
+        raise HTTPException(status_code=403, detail="Insufficient permissions to notify for this invoice.")
+
+    if receipt_data.get("invoiceNotificationSentAt"):
+        return {"status": "already_sent"}
+
+    compta_name = compta_id
+    try:
+        compta_snap = compta_ref.get()
+        if getattr(compta_snap, "exists", False):
+            c_data = compta_snap.to_dict() or {}
+            if c_data.get("name"):
+                compta_name = str(c_data["name"]).strip()
+    except Exception:
+        pass
+
+    fallback_env = os.getenv("FALLBACK_CAISSIER_EMAIL", "").strip()
+    fallback_set = {fallback_env.lower()} if fallback_env and "@" in fallback_env else set(_SUPER_ADMIN_EMAILS)
+    recipients = resolve_compta_caissier_emails_from_db(db, org_id, compta_id, fallback_emails=fallback_set)
+    if not recipients:
+        return {"status": "skipped", "reason": "no_recipients"}
+
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_pass = os.getenv("SMTP_PASS", "").strip()
+    if not smtp_user or not smtp_pass:
+        raise HTTPException(status_code=500, detail="SMTP credentials not configured on server.")
+
+    email_content = build_invoice_payment_email(
+        compta_name=compta_name,
+        receipt_data=receipt_data,
+        fallback_submitter_name=str(decoded.get("name") or ""),
+        fallback_submitter_email=email,
+    )
+
+    try:
+        sanitized = validate_and_sanitize_email_payload(
+            to=recipients,
+            subject=email_content["subject"],
+            text=email_content["text"],
+            html=email_content["html"],
+            default_from_name=os.getenv("SMTP_FROM_NAME", "AssoCompta (Ne pas répondre)"),
+        )
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
+
+    try:
+        await asyncio.to_thread(
+            _send_smtp_email_sync,
+            smtp_user,
+            smtp_pass,
+            sanitized["from_name"],
+            sanitized["to"],
+            sanitized["subject"],
+            sanitized["text"],
+            sanitized["html"],
+            sanitized["reply_to"],
+        )
+        _log_mail_audit(
+            sanitized["to"],
+            smtp_user,
+            sanitized["from_name"],
+            sanitized["subject"],
+            sanitized["text"],
+            sanitized["html"],
+            "SUCCESS",
+            actor_uid=uid,
+        )
+        try:
+            receipt_ref.update({"invoiceNotificationSentAt": datetime.utcnow().isoformat() + "Z"})
+        except Exception:
+            pass
+        return {"status": "sent", "recipientsCount": len(sanitized["to"])}
+    except Exception as e:
+        _log_mail_audit(
+            sanitized["to"],
+            smtp_user,
+            sanitized["from_name"],
+            sanitized["subject"],
+            sanitized["text"],
+            sanitized["html"],
+            "ERROR",
+            error_msg=str(e),
+            actor_uid=uid,
+        )
+        raise HTTPException(status_code=500, detail=build_safe_500_detail(e, "notify-invoice-payment"))

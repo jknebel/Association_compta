@@ -547,29 +547,47 @@ export const notifyMemberOnReimbursementDone = async (
     return false;
   }
 
+  const isInvoicePayment = receipt.expenseType === 'INVOICE_PAYMENT';
   const amount = Number(receipt.extractedAmount || 0);
   const motif = receipt.merchantName || receipt.description || receipt.fileName || 'Votre justificatif';
   const dateStr = receipt.extractedDate || (receipt.uploadDate ? receipt.uploadDate.split('T')[0] : '—');
   const ibanStr = receipt.reimbursementIban || 'votre compte bancaire enregistré';
 
-  const subject = `[AssoCompta — ${comptaName}] Votre remboursement a été effectué (CHF ${amount.toFixed(2)})`;
+  const subject = isInvoicePayment
+    ? `[AssoCompta — ${comptaName}] Votre facture a été payée (CHF ${amount.toFixed(2)})`
+    : `[AssoCompta — ${comptaName}] Votre remboursement a été effectué (CHF ${amount.toFixed(2)})`;
 
-  const textBody = `Bonjour ${memberName || 'Membre'},\n\nBonne nouvelle ! Le caissier (${caissierName}) vient d'indiquer que votre demande de remboursement a été effectuée :\n\n• Comptabilité : ${comptaName}\n• Motif / Commerce : ${motif}\n• Date du justificatif : ${dateStr}\n• Montant remboursé : CHF ${amount.toFixed(2)}\n• IBAN crédité : ${ibanStr}\n\nVous pouvez vérifier la bonne réception du virement sur votre compte bancaire ainsi que le statut « ✅ Remboursé » dans l'onglet « Mes envois » de votre application mobile :\nhttps://justificatifs-tdgl.web.app\n\nCordialement,\nL'équipe AssoCompta TDGL`;
+  const textBody = isInvoicePayment
+    ? `Bonjour ${memberName || 'Membre'},\n\nBonne nouvelle ! Le caissier (${caissierName}) vient d'indiquer que votre facture a été payée :\n\n• Comptabilité : ${comptaName}\n• Commerce / Motif : ${motif}\n• Date de la facture : ${dateStr}\n• Montant payé : CHF ${amount.toFixed(2)}\n\nLe statut de votre justificatif est également passé à « ✅ Payée » dans l'onglet « Mes envois » de votre application mobile :\nhttps://justificatifs-tdgl.web.app\n\nCordialement,\nL'équipe AssoCompta TDGL`
+    : `Bonjour ${memberName || 'Membre'},\n\nBonne nouvelle ! Le caissier (${caissierName}) vient d'indiquer que votre demande de remboursement a été effectuée :\n\n• Comptabilité : ${comptaName}\n• Motif / Commerce : ${motif}\n• Date du justificatif : ${dateStr}\n• Montant remboursé : CHF ${amount.toFixed(2)}\n• IBAN crédité : ${ibanStr}\n\nVous pouvez vérifier la bonne réception du virement sur votre compte bancaire ainsi que le statut « ✅ Remboursé » dans l'onglet « Mes envois » de votre application mobile :\nhttps://justificatifs-tdgl.web.app\n\nCordialement,\nL'équipe AssoCompta TDGL`;
+
+  const htmlHeading = isInvoicePayment
+    ? '✅ Votre facture a été payée'
+    : '✅ Votre remboursement a été effectué';
+  const htmlIntro = isInvoicePayment
+    ? 'vient de confirmer le paiement de la facture que vous avez transmise :'
+    : "vient de valider et d'exécuter votre demande de remboursement :";
+  const htmlDateLabel = isInvoicePayment ? 'Date de la facture :' : 'Date du justificatif :';
+  const htmlAmountLabel = isInvoicePayment ? 'Montant payé :' : 'Montant remboursé :';
+  const htmlStatusLabel = isInvoicePayment ? '« ✅ Payée »' : '« ✅ Remboursé »';
+  const htmlIbanRow = isInvoicePayment
+    ? ''
+    : `<p style="margin: 4px 0;"><strong>IBAN :</strong> <span style="font-family: monospace;">${escapeHtml(ibanStr)}</span></p>`;
 
   const htmlBody = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #a7f3d0; border-radius: 12px; background: #ffffff;">
-      <h2 style="color: #059669; margin-top: 0;">✅ Votre remboursement a été effectué</h2>
+      <h2 style="color: #059669; margin-top: 0;">${escapeHtml(htmlHeading)}</h2>
       <p>Bonjour <strong>${escapeHtml(memberName || 'Membre')}</strong>,</p>
-      <p>Le caissier (<strong>${escapeHtml(caissierName)}</strong>) vient de valider et d'exécuter votre demande de remboursement :</p>
+      <p>Le caissier (<strong>${escapeHtml(caissierName)}</strong>) ${escapeHtml(htmlIntro)}</p>
       <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #10b981; padding: 14px 16px; margin: 16px 0; border-radius: 8px;">
         <p style="margin: 4px 0;"><strong>Comptabilité :</strong> ${escapeHtml(comptaName)}</p>
         <p style="margin: 4px 0;"><strong>Commerce / Motif :</strong> ${escapeHtml(motif)}</p>
-        <p style="margin: 4px 0;"><strong>Date du justificatif :</strong> ${escapeHtml(dateStr)}</p>
-        <p style="margin: 4px 0;"><strong>IBAN :</strong> <span style="font-family: monospace;">${escapeHtml(ibanStr)}</span></p>
-        <p style="margin: 6px 0 0 0;"><strong>Montant remboursé :</strong> <span style="color: #059669; font-weight: bold; font-size: 17px;">CHF ${escapeHtml(amount.toFixed(2))}</span></p>
+        <p style="margin: 4px 0;"><strong>${escapeHtml(htmlDateLabel)}</strong> ${escapeHtml(dateStr)}</p>
+        ${htmlIbanRow}
+        <p style="margin: 6px 0 0 0;"><strong>${escapeHtml(htmlAmountLabel)}</strong> <span style="color: #059669; font-weight: bold; font-size: 17px;">CHF ${escapeHtml(amount.toFixed(2))}</span></p>
       </div>
       <p style="color: #334155; font-size: 13px;">
-        Vous pouvez vérifier la réception du virement sur votre compte bancaire. Le statut de votre justificatif est également passé à <strong>« ✅ Remboursé »</strong> dans votre application mobile (<a href="https://justificatifs-tdgl.web.app" style="color: #059669;">justificatifs-tdgl.web.app</a>).
+        Le statut de votre justificatif est également passé à <strong>${escapeHtml(htmlStatusLabel)}</strong> dans votre application mobile (<a href="https://justificatifs-tdgl.web.app" style="color: #059669;">justificatifs-tdgl.web.app</a>).
       </p>
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
       <p style="color: #94a3b8; font-size: 11px; margin: 0;">Notification automatique envoyée par AssoCompta TDGL.</p>
@@ -586,7 +604,7 @@ export const notifyMemberOnReimbursementDone = async (
       });
 
       await addDoc(collection(db, 'organizations', orgId, 'comptabilites', comptaId, 'notifications'), {
-        type: 'REIMBURSEMENT_DONE_MEMBER_NOTIFIED',
+        type: isInvoicePayment ? 'INVOICE_PAYMENT_DONE_MEMBER_NOTIFIED' : 'REIMBURSEMENT_DONE_MEMBER_NOTIFIED',
         recipientEmail,
         recipientName: memberName,
         receiptId: receipt.id,
