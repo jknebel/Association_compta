@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tests/
+.env
+.env.*
+*Copie*
+.git/
+*.md
+serviceAccount*.json
