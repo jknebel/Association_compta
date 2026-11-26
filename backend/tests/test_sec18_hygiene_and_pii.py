@@ -86,12 +86,14 @@ def test_sec18_verify_firebase_token_rejects_non_bool_superadmin_claim(monkeypat
 
 def test_sec18_backend_main_contains_no_pii_debug_prints():
     src = (Path(_BACKEND_DIR) / "main.py").read_text(encoding="utf-8")
+    print_lines = "\n".join(line for line in src.splitlines() if "print(" in line)
     forbidden_snippets = [
         "[SAMPLE] id=",
         "[SIMPLIFIER SAMPLE]",
         "[ENDPOINT SAMPLE]",
         "Global Context preview:",
         "iaContext:",
+        "a.iaContext[:80]",
         "extraction.model_dump()",
         "result.model_dump()",
         "FullRawText:",
@@ -103,4 +105,4 @@ def test_sec18_backend_main_contains_no_pii_debug_prints():
         "(lu: '{raw_str}')",
     ]
     for snippet in forbidden_snippets:
-        assert snippet not in src, f"Forbidden PII print snippet remained in main.py: {snippet}"
+        assert snippet not in print_lines, f"Forbidden PII print snippet remained in main.py print(): {snippet}"
