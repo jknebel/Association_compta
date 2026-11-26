@@ -1103,8 +1103,8 @@ def robust_parsing_node(state: AgentState):
                 description = re.sub(re.escape(noise), "", description, flags=re.IGNORECASE)
             description = description.strip()
             
-            # Stable unique ID based on content
-            txn_id = hashlib.md5(f"{date_str}|{description}|{amount}".encode()).hexdigest()
+            # Stable unique ID based on content (SHA-256)
+            txn_id = hashlib.sha256(f"{date_str}|{description}|{amount}".encode("utf-8")).hexdigest()[:32]
             
             final_txns.append(Transaction(
                 id=f"tx_{txn_id}",

@@ -4,6 +4,7 @@ import { app } from './dataService';
 import { Organization, Comptabilite, CustomField, Invitation, OrgRole, ComptaRole, OrganizationMember } from '../types/rbac';
 import { Account, AccountType, Transaction, TransactionStatus, Receipt } from '../../types';
 import { performReceiptTransfer, type TransferActor, type TransferTxAdapter } from './receiptTransfer';
+import { generateSecureInviteCode, generateSecureHexToken } from './cryptoRandom.ts';
 
 export const getDb = () => {
     if (!app) throw new Error("Firebase app not initialized");
@@ -32,7 +33,7 @@ export const createOrganization = async (
         customFields: []
     };
 
-    const initialInviteCode = Math.random().toString(36).substring(2, 10);
+    const initialInviteCode = generateSecureInviteCode();
     await setDoc(orgRef, newOrg);
     await setDoc(doc(db, 'organizations', orgId, 'private', 'invite'), {
         inviteCode: initialInviteCode,
@@ -750,7 +751,7 @@ export const generateInviteLink = async (orgId: string, forceNew = false): Promi
         }
     }
 
-    const newCode = Math.random().toString(36).substring(2, 10);
+    const newCode = generateSecureInviteCode();
     await setDoc(privateRef, { inviteCode: newCode, updatedAt: Date.now() });
     await setDoc(doc(db, 'inviteCodes', newCode), {
         orgId,
@@ -1266,7 +1267,7 @@ export const listOrganizationMembers = async (orgId: string): Promise<Organizati
         }
 
         if (!existingKey) {
-            const key = emailKey || uidKey || Math.random().toString();
+            const key = emailKey || uidKey || `unknown-${generateSecureHexToken(8)}`;
             mergedByKey.set(key, {
                 ...m,
                 comptaAccess: { ...(m.comptaAccess || {}) }

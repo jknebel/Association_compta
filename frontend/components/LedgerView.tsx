@@ -8,6 +8,7 @@ import { AuditModal } from './AuditModal';
 import { Check, X, AlertTriangle, Search, Filter, Calendar, Coins, XCircle, Eye, Edit2, Save, FileSpreadsheet, Paperclip, Loader2, Image as ImageIcon, Trash2, RefreshCw, RotateCcw, Archive, ShieldCheck, Plus, MessageSquare, CheckCircle, Send } from 'lucide-react';
 import { formatDate, dateToTimestamp } from '../services/formatUtils';
 import { sanitizeReceiptUrl } from '../services/urlAndHtmlSanitizer';
+import { generateSecureEntityId } from '../services/cryptoRandom.ts';
 import { useAuthContext, useComptaContext, useOrgContext } from '../contexts/AppContext';
 import { TransactionCommentsModal } from './TransactionCommentsModal';
 import { TransactionComment } from '../types/rbac';
@@ -318,7 +319,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         // Ensure the receipt is added to the global `receipts` state!
         if (onAddReceipt) {
            onAddReceipt({
-               id: `rcpt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+               id: generateSecureEntityId('rcpt'),
                url: url,
                fileName: file.name,
                uploadDate: new Date().toISOString().split('T')[0],

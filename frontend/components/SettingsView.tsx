@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { useComptaContext } from '../contexts/AppContext';
+import { generateSecureShortToken } from '../services/cryptoRandom.ts';
 
 interface SettingsViewProps {
   accounts: Account[];
@@ -370,7 +371,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             // Determine ID
             let safeId = a.id ? String(a.id).trim() : `imported-${index}`;
             if (existingIds.has(safeId)) {
-              safeId = `${safeId}-${Math.random().toString(36).substr(2, 5)}`;
+              safeId = `${safeId}-${generateSecureShortToken(6)}`;
             }
             existingIds.add(safeId);
 

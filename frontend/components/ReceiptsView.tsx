@@ -8,6 +8,7 @@ import { useComptaContext, useAuthContext, useOrgContext } from '../contexts/App
 import { sanitizeReceiptUrl } from '../services/urlAndHtmlSanitizer';
 import { listComptabilites, transferReceiptToComptabilite } from '../services/organizationService';
 import { findPotentialMatchesForReceipt } from '../services/reimbursementMatching';
+import { generateSecureEntityId } from '../services/cryptoRandom.ts';
 import {
     MAX_TRANSFER_NOTE_LENGTH,
     canTransferReceipt,
@@ -267,7 +268,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
             }
 
             const newReceipt: Receipt = {
-                id: `rcpt-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                id: generateSecureEntityId('rcpt'),
                 url: url,
                 fileName: file.name,
                 uploadDate: new Date().toISOString().split('T')[0],
