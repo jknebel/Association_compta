@@ -36,8 +36,8 @@ const mutants = [
     replacement: "reimbursementStatus: 'PENDING',",
   },
   {
-    name: 'M6: Suppression du filtre expenseType === REIMBURSEMENT dans computeReimbursementStats',
-    target: "const reimbursements = receipts.filter((r) => r.expenseType === 'REIMBURSEMENT');",
+    name: 'M6: Suppression du filtre payable (REIMBURSEMENT/INVOICE_PAYMENT) dans computeReimbursementStats',
+    target: 'const reimbursements = receipts.filter((r) => isPayableExpenseType(r.expenseType));',
     replacement: 'const reimbursements = receipts;',
   },
   {

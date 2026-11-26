@@ -378,7 +378,7 @@ function App() {
     const handleUpdateReceipt = (updatedReceipt: Receipt) => {
         const previousReceipt = receipts.find(r => r.id === updatedReceipt.id);
         const becameReimbursed =
-            updatedReceipt.expenseType === 'REIMBURSEMENT' &&
+            (updatedReceipt.expenseType === 'REIMBURSEMENT' || updatedReceipt.expenseType === 'INVOICE_PAYMENT') &&
             updatedReceipt.reimbursementStatus === 'REIMBURSED' &&
             previousReceipt?.reimbursementStatus !== 'REIMBURSED';
 
@@ -407,7 +407,8 @@ function App() {
 
             // Si c'est un remboursement lié à une écriture bancaire, le marquer aussi comme remboursé et notifier le membre
             const currentActorName = userProfile?.displayName || user?.displayName || user?.email || 'Caissier';
-            const isReimbursement = receipt.expenseType === 'REIMBURSEMENT';
+            const isReimbursement =
+                receipt.expenseType === 'REIMBURSEMENT' || receipt.expenseType === 'INVOICE_PAYMENT';
             const wasAlreadyReimbursed = receipt.reimbursementStatus === 'REIMBURSED';
 
             const updatedReceipt: Receipt = {
@@ -792,7 +793,7 @@ function App() {
     }
 
     const pendingReimbursementsCount = receipts.filter(
-        r => r.expenseType === 'REIMBURSEMENT' && r.reimbursementStatus !== 'REIMBURSED'
+        r => (r.expenseType === 'REIMBURSEMENT' || r.expenseType === 'INVOICE_PAYMENT') && r.reimbursementStatus !== 'REIMBURSED'
     ).length;
 
     const pendingRentalsCount = rentals.filter(r => r.status === 'PENDING').length;

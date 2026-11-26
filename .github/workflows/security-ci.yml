@@ -45,6 +45,7 @@ jobs:
           node tests/mutation.sec16.mjs
           node tests/mutation.sec17.mjs
           node tests/mutation.sec18.mjs
+          node tests/mutation.invoicePayment.mjs
 
       - name: Build Frontend
         run: npm run build
@@ -86,6 +87,7 @@ jobs:
           python backend/tests/mutation_sec08.py
           python backend/tests/mutation_sec14.py
           python backend/tests/mutation_sec18.py
+          python backend/tests/mutation_invoice_notification.py
 
       - name: Verify Backend Dockerfile Non-Root Runtime
         run: |

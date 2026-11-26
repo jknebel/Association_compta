@@ -55,7 +55,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
     { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
     ...(isCaissier ? [{ id: 'upload', label: 'Import & Traitement', icon: Upload }] : []),
     { id: 'receipts', label: 'Pièces Comptables', icon: Receipt },
-    { id: 'reimbursements', label: 'Remboursements', icon: Wallet, badge: pendingReimbursementsCount },
+    { id: 'reimbursements', label: 'Remboursements & Factures', icon: Wallet, badge: pendingReimbursementsCount },
     ...(isGroupeCompta ? [{ id: 'rentals', label: 'Locations', icon: Building2, badge: pendingRentalsCount }] : []),
     { id: 'ledger', label: 'Journal / Transactions', icon: BookOpen },
     { id: 'members', label: 'Membres / Payeurs', icon: Users },

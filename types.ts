@@ -59,7 +59,7 @@ export interface Transaction {
   verifierProposal?: TransactionVerifierProposal; // Proposition du vérificateur en attente de validation par le caissier
 }
 
-export type ReceiptExpenseType = 'DEBIT_CARD' | 'REIMBURSEMENT';
+export type ReceiptExpenseType = 'DEBIT_CARD' | 'REIMBURSEMENT' | 'INVOICE_PAYMENT';
 export type ReceiptReimbursementStatus = 'PENDING' | 'REIMBURSED' | 'REJECTED';
 export type ReceiptTransferStatus = 'PENDING_ACCEPTANCE' | 'ACCEPTED';
 

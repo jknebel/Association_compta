@@ -58,7 +58,7 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
         canTransferReceipt(comptaRole, orgRole === OrgRole.ADMIN, isSuperAdmin);
     const [isProcessing, setIsProcessing] = useState(false);
     const [dragActive, setDragActive] = useState(false);
-    const [filterType, setFilterType] = useState<'ALL' | 'DEBIT_CARD' | 'REIMBURSEMENT' | 'RENTALS'>('ALL');
+    const [filterType, setFilterType] = useState<'ALL' | 'DEBIT_CARD' | 'REIMBURSEMENT' | 'INVOICE_PAYMENT' | 'RENTALS'>('ALL');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // --- WEB-03 : transfert vers une autre comptabilité ---
@@ -307,20 +307,26 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
         if (filterType === 'RENTALS') return false;
         if (filterType === 'DEBIT_CARD') return r.expenseType === 'DEBIT_CARD';
         if (filterType === 'REIMBURSEMENT') return r.expenseType === 'REIMBURSEMENT';
+        if (filterType === 'INVOICE_PAYMENT') return r.expenseType === 'INVOICE_PAYMENT';
         return true;
     });
 
     const debitCardCount = unlinkedReceipts.filter(r => r.expenseType === 'DEBIT_CARD').length;
     const reimbursementCount = unlinkedReceipts.filter(r => r.expenseType === 'REIMBURSEMENT').length;
+    const invoicePaymentCount = unlinkedReceipts.filter(r => r.expenseType === 'INVOICE_PAYMENT').length;
     const rentalsCount = rentals.length;
 
     const handleToggleReimbursed = (receipt: Receipt) => {
         if (isViewer) return;
         const isCurrentlyReimbursed = receipt.reimbursementStatus === 'REIMBURSED';
+        const isInvoicePayment = receipt.expenseType === 'INVOICE_PAYMENT';
         if (!isCurrentlyReimbursed) {
-            const recipientText = receipt.submittedByName ? ` à ${receipt.submittedByName}` : '';
+            const recipientText = receipt.submittedByName ? ` (${receipt.submittedByName})` : '';
             const amountText = receipt.extractedAmount ? ` de CHF ${receipt.extractedAmount.toFixed(2)}` : '';
-            if (!window.confirm(`Confirmer le remboursement${amountText}${recipientText} ?`)) return;
+            const confirmMsg = isInvoicePayment
+                ? `Confirmer le paiement de la facture${amountText}${recipientText} ?`
+                : `Confirmer le remboursement${amountText}${recipientText} ?`;
+            if (!window.confirm(confirmMsg)) return;
             const updated: Receipt = {
                 ...receipt,
                 reimbursementStatus: 'REIMBURSED',
@@ -446,6 +452,18 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                         </button>
                         <button
                             type="button"
+                            onClick={() => setFilterType('INVOICE_PAYMENT')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                filterType === 'INVOICE_PAYMENT'
+                                    ? 'bg-violet-600 text-white shadow-sm'
+                                    : 'bg-slate-800/90 text-violet-300 hover:bg-slate-800 hover:text-violet-200 border border-slate-700/60'
+                            }`}
+                        >
+                            <FileText size={13} />
+                            Factures à payer ({invoicePaymentCount})
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => setFilterType('RENTALS')}
                             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
                                 filterType === 'RENTALS'
@@ -546,6 +564,16 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                                     <Wallet size={12} /> 💶 À rembourser
                                                 </span>
                                             )
+                                        ) : receipt.expenseType === 'INVOICE_PAYMENT' ? (
+                                            receipt.reimbursementStatus === 'REIMBURSED' ? (
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-900/40 text-emerald-300 border border-emerald-700/50 flex items-center gap-1">
+                                                    <CheckCircle size={12} /> ✅ Facture payée
+                                                </span>
+                                            ) : (
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-violet-900/40 text-violet-300 border border-violet-700/50 flex items-center gap-1">
+                                                    <FileText size={12} /> 📄 Facture à payer
+                                                </span>
+                                            )
                                         ) : null}
                                         {receipt.merchantName && (
                                             <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700 truncate max-w-[140px]" title={receipt.merchantName}>
@@ -592,13 +620,20 @@ export const ReceiptsView: React.FC<ReceiptsViewProps> = ({
                                         </div>
                                     )}
 
-                                    {/* Reimbursement Details & Action */}
-                                    {receipt.expenseType === 'REIMBURSEMENT' && (
-                                        <div className="mb-2 p-2 rounded bg-slate-950/80 border border-amber-900/30 text-xs">
-                                            <div className="flex justify-between items-center text-[11px] text-slate-400">
-                                                <span>IBAN :</span>
-                                                <span className="font-mono text-amber-300/90 select-all font-medium">{receipt.reimbursementIban || 'Non spécifié'}</span>
-                                            </div>
+                                    {/* Reimbursement / Invoice Payment Details & Action */}
+                                    {(receipt.expenseType === 'REIMBURSEMENT' || receipt.expenseType === 'INVOICE_PAYMENT') && (
+                                        <div className={`mb-2 p-2 rounded bg-slate-950/80 border text-xs ${receipt.expenseType === 'INVOICE_PAYMENT' ? 'border-violet-900/40' : 'border-amber-900/30'}`}>
+                                            {receipt.expenseType === 'INVOICE_PAYMENT' ? (
+                                                <div className="flex justify-between items-center text-[11px] text-violet-300">
+                                                    <span>Paiement :</span>
+                                                    <span className="font-medium">Sur facture (photo/PDF)</span>
+                                                </div>
+                                            ) : (
+                                                <div className="flex justify-between items-center text-[11px] text-slate-400">
+                                                    <span>IBAN :</span>
+                                                    <span className="font-mono text-amber-300/90 select-all font-medium">{receipt.reimbursementIban || 'Non spécifié'}</span>
+                                                </div>
+                                            )}
                                             {receipt.reimbursementStatus === 'REIMBURSED' ? (
                                                 <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[11px] text-emerald-400">
                                                     <span>Payé {receipt.reimbursedByName ? `par ${receipt.reimbursedByName}` : ''}</span>

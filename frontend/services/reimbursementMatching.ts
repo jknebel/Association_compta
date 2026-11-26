@@ -100,6 +100,10 @@ export function splitSubmitterIdentity(
  *   de remboursement. Aucun malus de délai tant que le remboursement n'est pas antérieur de plus de 7 jours,
  *   et bonus fort si le nom/prénom/email du membre ou le mot "remboursement" apparaît dans le libellé.
  */
+export function isPayableExpenseType(expenseType?: string | null): boolean {
+  return expenseType === 'REIMBURSEMENT' || expenseType === 'INVOICE_PAYMENT';
+}
+
 export function scoreReceiptTransactionMatch(
   receipt: Receipt,
   transaction: Transaction
@@ -108,7 +112,7 @@ export function scoreReceiptTransactionMatch(
   if (receipt.extractedAmount === null || receipt.extractedAmount === undefined) return -1;
 
   const isExpenseReceipt =
-    receipt.expenseType === 'DEBIT_CARD' || receipt.expenseType === 'REIMBURSEMENT';
+    receipt.expenseType === 'DEBIT_CARD' || isPayableExpenseType(receipt.expenseType);
 
   if (isExpenseReceipt && transaction.amount > 0) {
     return -1;
@@ -155,7 +159,7 @@ export function scoreReceiptTransactionMatch(
         return -1;
       }
     }
-  } else if (receipt.expenseType === 'REIMBURSEMENT') {
+  } else if (isPayableExpenseType(receipt.expenseType)) {
     if (diffDays !== null) {
       if (diffDays < -7 || diffDays > 365) {
         return -1;
@@ -280,7 +284,7 @@ export function filterReimbursementReceipts(
   const query = normalizeText(searchQuery);
 
   return receipts
-    .filter((r) => r.expenseType === 'REIMBURSEMENT')
+    .filter((r) => isPayableExpenseType(r.expenseType))
     .filter((r) => {
       const isReimbursed = r.reimbursementStatus === 'REIMBURSED';
       if (statusFilter === 'PENDING') return !isReimbursed;
@@ -325,7 +329,7 @@ export function filterReimbursementReceipts(
  * Calcule les totaux de remboursements (en attente vs biffés/remboursés).
  */
 export function computeReimbursementStats(receipts: Receipt[]): ReimbursementStats {
-  const reimbursements = receipts.filter((r) => r.expenseType === 'REIMBURSEMENT');
+  const reimbursements = receipts.filter((r) => isPayableExpenseType(r.expenseType));
   let pendingCount = 0;
   let pendingTotalChf = 0;
   let reimbursedCount = 0;
