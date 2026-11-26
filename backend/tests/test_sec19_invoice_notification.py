@@ -98,6 +98,8 @@ def test_safe_firestore_segment_and_email_builder_escape_html():
     assert es.is_safe_firestore_segment("TDGL") is True
     assert es.is_safe_firestore_segment("rcpt-1700000000000-ab12cd") is True
     assert es.is_safe_firestore_segment("../etc") is False
+    assert es.is_safe_firestore_segment("..") is False
+    assert es.is_safe_firestore_segment("a..b") is False
     assert es.is_safe_firestore_segment("a/b") is False
     assert es.is_safe_firestore_segment("") is False
 
