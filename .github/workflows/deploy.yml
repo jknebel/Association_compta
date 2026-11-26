@@ -77,10 +77,12 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: Run SEC-07 Workflow & Mutation Tests
+      - name: Run SEC-07 & SEC-18 Workflow & Mutation Tests
         run: |
           node --test tests/sec07.workflows.test.mjs
           node tests/mutation.sec07.mjs
+          node --test tests/sec18.mainHygiene.test.mjs
+          node tests/mutation.sec18.mjs
 
       - name: Build Frontend (Safe Check)
         run: npm run build
