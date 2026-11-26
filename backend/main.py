@@ -478,8 +478,6 @@ async def classification_consensus_node(state: AgentState):
     # Log simplified descriptions before classification
     simplified_count = sum(1 for t in all_txns if t.simplifiedDescription)
     print(f"[CLASSIFIER] Input: {len(all_txns)} txns, {simplified_count} with simplifiedDescription")
-    for t in all_txns[:3]:
-        print(f"  [SAMPLE] id={t.id}, simplified='{t.simplifiedDescription}', desc='{t.description[:60]}...'")
 
     # Build shared context once
     accounts_info = "\n".join([
@@ -712,9 +710,7 @@ TRANSACTIONS : {wrap_untrusted_data("simplifier_transactions", json.dumps([{'id'
         t.simplifiedDescription = simplified
         t.description = simplified
 
-    # DEBUG: show sample results
-    for t in all_txns[:3]:
-        print(f"[SIMPLIFIER SAMPLE] id={t.id}, simplified='{t.simplifiedDescription}', original='{t.description[:60]}...'")
+    print(f"[SIMPLIFIER] Sample count checked: {min(3, len(all_txns))} txns")
 
     return {
         "extracted_transactions": all_txns,
@@ -834,7 +830,7 @@ def robust_parsing_node(state: AgentState):
         """
         flash_llm = get_llm()
         labels = flash_llm.with_structured_output(HeaderLabels).invoke([HumanMessage(content=prompt_header)])
-        print(f"    [ANCRAGE IA] {labels.reasoning}")
+        print("    [ANCRAGE IA] Labels anchored")
 
         anchors = {}
         target_y = -1
@@ -1084,7 +1080,7 @@ def robust_parsing_node(state: AgentState):
                 for num_val, raw_str in real_numbers_pdf:
                     if round(num_val * 100) % 5 == 0 and abs(num_val - abs_amt) <= 0.02:
                         corrected_amount = sign * num_val
-                        print(f"  [VÉRIFICATION PDF 5 CTS] Rectifié avec le VRAI nombre du PDF : {amount} -> {corrected_amount} CHF (lu: '{raw_str}')")
+                        print("  [VÉRIFICATION PDF 5 CTS] Montant rectifié via ancrage PDF.")
                         amount = corrected_amount
                         rectified_5cts_count += 1
                         corrected = True
@@ -1094,7 +1090,7 @@ def robust_parsing_node(state: AgentState):
                 if not corrected:
                     exact_match = any(num_val == abs_amt for num_val, _ in real_numbers_pdf)
                     if exact_match:
-                        print(f"  [VÉRIFICATION PDF 5 CTS] Confirmé avec le VRAI nombre du PDF : {amount} CHF est bien le montant imprimé.")
+                        print("  [VÉRIFICATION PDF 5 CTS] Montant confirmé via ancrage PDF.")
 
             description = " ".join(t["desc"]).replace("\n", " ").strip()
             
@@ -1219,11 +1215,26 @@ except ImportError:
         validate_upload_mime,
     )
 
-_SUPER_ADMIN_EMAILS = {
+_DEFAULT_SUPER_ADMIN_EMAILS = frozenset({
     "jean.francois.knebel@gmail.com",
     "jean-francois@knebel.ch",
     "quokka@tdgl.ch",
-}
+})
+
+
+def _load_super_admin_emails(raw_env: Optional[str] = None) -> set[str]:
+    """Charge la liste des e-mails super-admin depuis SUPER_ADMIN_EMAILS (ou valeurs par défaut)."""
+    val = os.getenv("SUPER_ADMIN_EMAILS") if raw_env is None else raw_env
+    if isinstance(val, str) and val.strip():
+        return {
+            item.strip().lower()
+            for item in val.replace(";", ",").split(",")
+            if "@" in item.strip()
+        }
+    return set(_DEFAULT_SUPER_ADMIN_EMAILS)
+
+
+_SUPER_ADMIN_EMAILS = _load_super_admin_emails()
 _EMAIL_RATE_LIMITER = EmailRateLimiter()
 _AI_RATE_LIMITER = EmailRateLimiter(
     max_requests=AI_RATE_LIMIT_MAX_REQUESTS,
@@ -1320,6 +1331,9 @@ async def verify_firebase_token(authorization: Optional[str] = Header(default=No
         print(f"Firebase token verification failed: {auth_err}")
         raise HTTPException(status_code=401, detail="Invalid or expired Firebase ID token.")
 
+    if decoded.get("superAdmin") is True:
+        return decoded
+
     uid = decoded.get("uid") or ""
     email = verified_token_email(decoded)
     if not _user_has_any_role(uid, email):
@@ -1357,10 +1371,7 @@ async def process_statement(
         effective_user_id = (decoded_token.get("uid") or "").strip()
         if not effective_user_id:
             raise HTTPException(status_code=401, detail="Authenticated token missing uid.")
-        print(f"Processing file: {file.filename} for user: {effective_user_id}")
-        print(f"Global Context length: {len(context) if context else 0}")
-        if context:
-            print(f"Global Context preview: {context[:200]}...")
+        print(f"Processing bank statement upload (context_len={len(context) if context else 0})")
         content = await read_upload_bounded(file, MAX_STATEMENT_BYTES)
         validate_upload_mime(file.content_type, ALLOWED_STATEMENT_MIMES, content)
         validate_pdf_page_count(content, MAX_PDF_PAGES, open_pdf_fn=fitz.open)
@@ -1373,8 +1384,6 @@ async def process_statement(
             # Log accounts with iaContext for debugging
             accounts_with_context = [a for a in accounts_list if a.iaContext]
             print(f"Accounts received: {len(accounts_list)} total, {len(accounts_with_context)} with iaContext")
-            for a in accounts_with_context:
-                print(f"  Account '{a.label}' (ID: {a.id}) iaContext: {a.iaContext[:80]}...")
         except Exception as e:
             print(f"Account parsing error: {e}")
             raise HTTPException(status_code=400, detail="Invalid accounts JSON format")
@@ -1392,9 +1401,6 @@ async def process_statement(
         txns_out = output["extracted_transactions"]
         simplified_count = sum(1 for t in txns_out if getattr(t, 'simplifiedDescription', None))
         print(f"[ENDPOINT] Returning {len(txns_out)} transactions, {simplified_count} with simplifiedDescription")
-        if txns_out:
-            sample = txns_out[0]
-            print(f"[ENDPOINT SAMPLE] id={sample.id}, simplified='{getattr(sample, 'simplifiedDescription', 'MISSING')}', desc='{sample.description[:80]}...'")
         
         return {
             "transactions": txns_out,
@@ -1418,7 +1424,7 @@ async def process_receipt(
     transactions: str = Form(...) 
 ):
     try:
-        print(f"Processing receipt: {file.filename} ({file.content_type})")
+        print(f"Processing receipt ({file.content_type})")
         content = await read_upload_bounded(file, MAX_RECEIPT_BYTES)
         norm_mime = validate_upload_mime(file.content_type, ALLOWED_RECEIPT_MIMES, content)
         
@@ -1474,7 +1480,7 @@ async def process_receipt(
         )
         
         extraction = structured_llm.invoke([message])
-        print(f"Extracted from receipt: {extraction.model_dump()}")
+        print(f"Receipt extracted (has_amount={extraction.amount is not None}, is_refund={getattr(extraction, 'isRefund', False)})")
         
         matched_id = None
         
@@ -1484,10 +1490,10 @@ async def process_receipt(
             
             # 3. Sécurité sur les Signes : On cherche des débits (-) par défaut, sauf si isRefund
             if getattr(extraction, "isRefund", False):
-                print(f"Reçu de type Remboursement/Avoir détecté. Recherche de Crédit (montant > 0) pour {target_amount}")
+                print("Reçu de type Remboursement/Avoir détecté. Recherche de Crédit (montant > 0).")
                 filtered_txns = [t for t in unlinked_txns if t.amount is not None and t.amount > 0]
             else:
-                print(f"Reçu standard détecté. Recherche de Débit (montant < 0) pour {target_amount}")
+                print("Reçu standard détecté. Recherche de Débit (montant < 0).")
                 filtered_txns = [t for t in unlinked_txns if t.amount is not None and t.amount < 0]
             
             # 2. Matching Multi-Critères avec Pondération
@@ -1688,8 +1694,8 @@ async def chat_agent(request: ChatRequest):
 async def suggest_category(request: SuggestCategoryRequest):
     try:
         print("--- [Agent: SUGGEST_CATEGORY][INPUT_START] ---")
-        print(f"Description: {request.description}")
-        print(f"FullRawText: {request.fullRawText[:100] if request.fullRawText else 'N/A'}...")
+        print(f"Description length: {len(request.description or '')}")
+        print(f"FullRawText length: {len(request.fullRawText) if request.fullRawText else 0}")
         print(f"Accounts Count: {len(request.accounts)}")
         print("--- [Agent: SUGGEST_CATEGORY][INPUT_END] ---")
 
@@ -1768,7 +1774,7 @@ async def suggest_category(request: SuggestCategoryRequest):
         result = structured_llm.invoke(prompt)
         
         print("--- [Agent: SUGGEST_CATEGORY][OUTPUT_START] ---")
-        print(f"Result: {result.model_dump()}")
+        print(f"Suggested accountId present: {result.accountId is not None}, memberName present: {result.memberName is not None}")
         print("--- [Agent: SUGGEST_CATEGORY][OUTPUT_END] ---")
 
         return result

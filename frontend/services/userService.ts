@@ -4,13 +4,16 @@ import { UserProfile, Comptabilite, ComptaRole, OrgRole } from '../types/rbac';
 
 export const UNVERIFIED_EXPIRATION_MS = 10 * 24 * 60 * 60 * 1000; // 10 jours
 
-export const isExemptFromEmailVerification = (email?: string | null): boolean => {
+export const isExemptFromEmailVerification = (email?: string | null, rawExemptEnv?: string | null): boolean => {
     const normalized = (email || '').trim().toLowerCase();
-    return (
-        normalized === 'jean.francois.knebel@gmail.com' ||
-        normalized === 'jean-francois@knebel.ch' ||
-        normalized === 'quokka@tdgl.ch'
-    );
+    if (!normalized) return false;
+    const raw = rawExemptEnv !== undefined
+        ? rawExemptEnv
+        : (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_EXEMPT_VERIFICATION_EMAILS;
+    const configured = typeof raw === 'string' && raw.trim().length > 0
+        ? raw.split(/[,;]/).map((item) => item.trim().toLowerCase()).filter((item) => item.includes('@'))
+        : ['jean.francois.knebel@gmail.com', 'jean-francois@knebel.ch', 'quokka@tdgl.ch'];
+    return configured.includes(normalized);
 };
 
 export const createUserProfile = async (
