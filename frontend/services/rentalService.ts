@@ -9,6 +9,7 @@ import {
   orderBy,
   type Unsubscribe,
 } from 'firebase/firestore';
+import { generateSecureEntityId } from './cryptoRandom.ts';
 import { getFirestore } from 'firebase/firestore';
 import { app } from './dataService';
 import type { Rental, RentalStatus } from '../../types';
@@ -185,7 +186,7 @@ export const createRentalWeb = async (
   const cleanOrg = (orgId || 'TDGL').trim();
   const cleanCompta = (comptaId || 'default').trim();
   const db = getDb();
-  const rentalId = `rental-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  const rentalId = generateSecureEntityId('rental');
 
   const newRental: Rental = {
     id: rentalId,

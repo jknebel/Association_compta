@@ -5,6 +5,11 @@ import { createUserProfile } from '../services/userService';
 import { Organization } from '../types/rbac';
 import { getAuth, sendEmailVerification } from 'firebase/auth';
 import { app } from '../services/dataService';
+import {
+  MIN_SIGNUP_PASSWORD_LENGTH,
+  MIN_LOGIN_PASSWORD_LENGTH,
+  validateSignupPasswordPolicy,
+} from '../services/cryptoRandom.ts';
 
 const GoogleIcon: React.FC<{ className?: string }> = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24">
@@ -93,6 +98,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
     setMessage(null);
 
     try {
+      const pwCheck = validateSignupPasswordPolicy(password, isSignUp);
+      if (!pwCheck.valid) {
+        throw new Error(pwCheck.error);
+      }
       if (isSignUp) {
         if (!firstName.trim() || !lastName.trim()) {
           throw new Error("Veuillez saisir votre prénom et nom.");
@@ -292,7 +301,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onGuestAccess }) => {
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   placeholder="••••••••"
                   required
-                  minLength={6}
+                  minLength={isSignUp ? MIN_SIGNUP_PASSWORD_LENGTH : MIN_LOGIN_PASSWORD_LENGTH}
                 />
               </div>
             </div>

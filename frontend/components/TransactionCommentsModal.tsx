@@ -3,6 +3,7 @@ import { Transaction } from '../../types';
 import { TransactionComment } from '../types/rbac';
 import { X, MessageSquare, Send, User } from 'lucide-react';
 import { formatDate } from '../services/formatUtils';
+import { generateSecureEntityId } from '../services/cryptoRandom.ts';
 
 interface TransactionCommentsModalProps {
   isOpen: boolean;
@@ -40,7 +41,7 @@ export const TransactionCommentsModal: React.FC<TransactionCommentsModalProps> =
         : 'Lecteur';
 
     const commentItem: TransactionComment = {
-      id: `comm-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      id: generateSecureEntityId('comm'),
       authorEmail: currentUserEmail,
       authorName: currentUserName || currentUserEmail.split('@')[0] || 'Utilisateur',
       authorRole: roleLabel,
