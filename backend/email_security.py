@@ -279,7 +279,7 @@ def resolve_compta_caissier_emails_from_db(
             if getattr(org_snap, "exists", False):
                 org_data = org_snap.to_dict() or {}
                 admin_email = (org_data.get("adminEmail") or "").strip().lower()
-                if admin_email and _is_valid_email(admin_email):
+                if admin_email and is_valid_email_address(admin_email):
                     recipients.add(admin_email)
 
             for m_doc in org_ref.collection("members").stream():
@@ -287,7 +287,7 @@ def resolve_compta_caissier_emails_from_db(
                 if (m_data.get("status") or "approved").strip().lower() != "approved":
                     continue
                 m_email = (m_data.get("email") or "").strip().lower()
-                if not m_email or not _is_valid_email(m_email):
+                if not m_email or not is_valid_email_address(m_email):
                     continue
                 has_org_role = _norm_role(m_data.get("role")) in _CAISSIER_NOTIFICATION_ROLES
                 compta_access = m_data.get("comptaAccess")
@@ -304,7 +304,7 @@ def resolve_compta_caissier_emails_from_db(
         for item in fallback_emails:
             if isinstance(item, str):
                 norm = item.strip().lower()
-                if norm and _is_valid_email(norm):
+                if norm and is_valid_email_address(norm):
                     recipients.add(norm)
 
     return sorted(recipients)
