@@ -172,10 +172,13 @@ export const checkAndAlertCaissierPendingRentals5Days = async (
   orgId: string,
   comptaId: string,
   rentals: Rental[],
-  caissierEmail: string = 'jean.francois.knebel@gmail.com'
+  caissierEmail: string = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_FALLBACK_CAISSIER_EMAIL || ''
 ): Promise<number> => {
   const db = getDb();
-  if (!db || !rentals || rentals.length === 0) return 0;
+  const normalizedCaissierEmail = (caissierEmail || '').trim().toLowerCase();
+  if (!db || !rentals || rentals.length === 0 || !normalizedCaissierEmail || !normalizedCaissierEmail.includes('@')) {
+    return 0;
+  }
 
   const now = Date.now();
   const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
@@ -280,7 +283,7 @@ export const isPastFriday12hForCurrentWeek = (now: Date = new Date()): boolean =
 export const resolveComptaCaissierEmails = async (
   orgId: string,
   comptaId: string,
-  fallbackEmail: string = 'jean.francois.knebel@gmail.com'
+  fallbackEmail: string = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_FALLBACK_CAISSIER_EMAIL || ''
 ): Promise<string[]> => {
   const db = getDb();
   const emails = new Set<string>();
@@ -471,7 +474,7 @@ export const checkAndSendFriday12hReimbursementDigest = async (
   comptaId: string,
   comptaName: string,
   receipts: Receipt[],
-  fallbackEmail: string = 'jean.francois.knebel@gmail.com'
+  fallbackEmail: string = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_FALLBACK_CAISSIER_EMAIL || ''
 ): Promise<boolean> => {
   const db = getDb();
   if (!db || !orgId || !comptaId) return false;

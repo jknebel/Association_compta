@@ -124,9 +124,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             
             try {
                 const idTokenResult = await user.getIdTokenResult();
-                // Override for development/admin setup
-                const isHardcodedAdmin = user.email === 'jean.francois.knebel@gmail.com' || user.email === 'jean-francois@knebel.ch';
-                setIsSuperAdmin(!!idTokenResult.claims.superAdmin || isHardcodedAdmin);
+                const { resolveSuperAdminAccess } = await import('../services/adminConfig');
+                const envSuperAdmins = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_SUPER_ADMIN_EMAILS;
+                setIsSuperAdmin(resolveSuperAdminAccess({
+                    claims: idTokenResult.claims,
+                    email: user.email,
+                    rawSuperAdminEmailsEnv: envSuperAdmins,
+                }));
             } catch (e) {
                 console.error("Failed to get token claims", e);
             }
