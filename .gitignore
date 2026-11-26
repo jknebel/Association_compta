@@ -23,8 +23,13 @@ dist-ssr
 *.sln
 *.sw?
 backend/__pycache__/
+__pycache__/
+*.py[cod]
+.firebase/
+* - Copie*
 Script/
 .env
+.env.*
 *.json
 !package.json
 !tsconfig.json
